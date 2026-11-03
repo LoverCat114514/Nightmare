@@ -1,0 +1,2691 @@
+package com.abrah.nightmare.canvas
+
+import com.abrah.nightmare.ui.StudioButton
+import com.abrah.nightmare.ui.StudioOutlinedButton
+import com.abrah.nightmare.ui.StudioTextButton
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.border
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.ui.semantics.selected
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.horizontalScroll
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
+import com.abrah.nightmare.R
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionOnScreen
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.withFrameMillis
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.sp
+import com.abrah.nightmare.NodeType
+import com.abrah.nightmare.ui.MeasureTextStyle
+import com.abrah.nightmare.ui.NoteTextStyle
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+
+/**
+ * The canvas, with the run bar over it.
+ *
+ * ⚠ Stateless, like `HarnessContent`, so the goldens can put it in states the
+ * app is hard to hold still in — mid-render, failed, mid-wire. A composable that
+ * can only be reached by driving the real app is a composable nobody pins.
+ */
+@Composable
+fun CanvasScreen(
+    state: CanvasState,
+    types: Map<String, NodeType>,
+    /** ⭐ What Add node offers — [types] less anything this phone cannot run (VideoGate). */
+    paletteTypes: Map<String, NodeType> = types,
+    status: Map<String, NodeStatus>,
+    busy: Boolean,
+    image: ImageBitmap?,
+    /**
+     * A whole new state, from the GESTURE LOOP only.
+     *
+     * ⚠⚠ Named for the one caller it may have. A gesture threads its own state
+     * for its duration and publishes each step immediately, so its value is
+     * never stale (`CanvasGestures.kt`). Everything else must use [onEdit]: a
+     * state captured at composition time and written back late reverts the
+     * whole graph, which is what took the chosen photo and the dragged crop
+     * rect away on sheet dismissal. `HarnessViewModel.editCanvas` has the log.
+     */
+    onGesture: (CanvasState) -> Unit,
+    onRun: () -> Unit,
+    /** ⭐ Stop the run in flight. Null hides the affordance (previews, goldens). */
+    onCancelRun: (() -> Unit)? = null,
+    /** ⭐ Open the Batch sheet. See `BatchSheet.kt`. */
+    onBatch: () -> Unit = {},
+    /** ⭐ Which run of how many, while a sweep is going. Null when it is not. */
+    batchProgress: Pair<Int, Int>? = null,
+    onCancelBatch: () -> Unit = {},
+    /** ⭐ Knobs armed for a sweep, read from the graph. See `BatchParams`. */
+    armedSweeps: List<ArmedSweep> = emptyList(),
+    onReleaseSweep: (ArmedSweep) -> Unit = {},
+    onBack: () -> Unit,
+    /**
+     * ⚠ Why the LAST RUN failed, shown here rather than only in the harness log.
+     * A user on the canvas cannot see that log, so a refused graph looked
+     * exactly like a button that did nothing.
+     */
+    runError: String? = null,
+    /** ⭐ The ✕ on that error. */
+    onDismissRunError: () -> Unit = {},
+    /** ⭐ What is running now, and what the last run cost — `RunLog.kt`. */
+    runLog: RunLogState = RunLogState(),
+    /** Dismiss the run log. ⚠ Hides it; it does not cancel the render. */
+    onCloseRunLog: () -> Unit = {},
+    /** The model in use, so the user can see WHAT will render before pressing Run. */
+    modelLabel: String = "",
+    backendUp: Boolean = false,
+    /** ⭐ The active flow's name, and whether it has unsaved edits. */
+    flowName: String? = null,
+    flowDirty: Boolean = false,
+    /** ⭐ "free / total" RAM, already worded — the pill beside the seed (the sidebar mock). */
+    ram: String? = null,
+    /** ⭐ Open the sidebar (`ui/ShellDrawer.kt`, drawn by `MainActivity`). */
+    onMenu: () -> Unit = {},
+    /** ⭐ What the view toggle shows while a sidebar tap is on its way somewhere — see `MainActivity`. */
+    toggleView: com.abrah.nightmare.MainView? = null,
+    /** ⭐ Bumped by the sidebar's Save flow: opens THIS screen's save dialog, the one ⭐ save uses. */
+    saveRequest: Int = 0,
+    /** The save dialog closed without saving — a pending "save, then open" is dropped. */
+    onSaveDismiss: () -> Unit = {},
+    onModels: () -> Unit = {},
+    onResults: () -> Unit = {},
+    onWorkflows: () -> Unit = {},
+    /** ⭐⭐ Which of the three views shows (`com.abrah.nightmare.MainView`) and how to switch. */
+    mainView: com.abrah.nightmare.MainView = com.abrah.nightmare.MainView.GRAPH,
+    onView: (com.abrah.nightmare.MainView) -> Unit = {},
+    /** ⭐ The Nodes view top to bottom (Settings). */
+    nodesVertical: Boolean = false,
+    /** ⭐ Settings' "Hide chat view": the view button offers Default and Advanced only. */
+    hideChat: Boolean = false,
+    /** ⭐ The Agent view's body, below the top bar (`ui/AgentScreen.kt`). */
+    agentContent: @Composable (Modifier) -> Unit = {},
+    /** ⭐ The shell's height, for a destination drawn below it from outside (the library). */
+    onShellHeight: (androidx.compose.ui.unit.Dp) -> Unit = {},
+    /**
+     * Save the canvas under this name.
+     *
+     * ⚠ [savedAs] is the workflow it came from, and the dialog offers it
+     * rather than an empty box: saving over your own graph should not require
+     * remembering what you called it.
+     */
+    onSave: (String) -> Unit = {},
+    savedAs: String? = null,
+    /**
+     * ⭐ What the save dialog offers when this flow has no name yet — the recipe
+     * it came from plus the first free index, `t2i_01`.
+     *
+     * ⚠ A suggestion in an editable box, never a silent filename.
+     */
+    suggestedName: String = "",
+    /** ⭐ Installed checkpoints as `id to label`, for a sampler's own picker. */
+    installedModels: List<CheckpointChoice> = emptyList(),
+    onSetModel: (String, String) -> Unit = { _, _ -> },
+    /** ⭐ Backend relaunches this graph will cost, said before Run. */
+    plannedLoads: Int = 0,
+    /** ⭐ A family swap waiting on a yes, or null. */
+    pendingSwap: com.abrah.nightmare.HarnessViewModel.ModelSwap? = null,
+    /** @param takeRecipe / takePrompt — the two boxes in [ModelSwapDialog]. */
+    onConfirmSwap: (
+        com.abrah.nightmare.HarnessViewModel.ModelSwap, Boolean, Boolean,
+    ) -> Unit = { _, _, _ -> },
+    onCancelSwap: () -> Unit = {},
+    /** Resolves an image id to pixels, for node previews and the viewer. */
+    imageFor: (String) -> ImageBitmap? = { null },
+    /**
+     * ⭐⭐ Apply a change to the canvas **as it is when the change happens**,
+     * rather than to the one this composition was given.
+     *
+     * ⚠⚠ Everything that is not a gesture goes through here, and that is a
+     * bug fix rather than a style. `onGesture(state.something())` captures the
+     * WHOLE graph at composition time, so a callback that fires late -- a sheet
+     * dismissal, a result from the image picker (which runs while this activity
+     * is stopped), the end of a dismiss animation -- writes back a snapshot
+     * that undoes every edit made since. On the phone that reverted the `uri`
+     * the user had just chosen, and the crop rect they had just dragged, the
+     * instant the sheet closed. `HarnessViewModel.editCanvas` has the log.
+     *
+     * ⚠ The default keeps the old behaviour for the goldens, which fire no
+     * callbacks at all.
+     */
+    onEdit: ((CanvasState) -> CanvasState) -> Unit = { change -> onGesture(change(state)) },
+    /**
+     * ⭐⭐ A mask edit, as a transform of the node's OWN ops.
+     *
+     * ⚠⚠ Separate from [onEdit] because the staleness that bit here was in the
+     * VALUE, not the write: rebuilding the whole ops string from a captured
+     * node and handing it over as an absolute loses any stroke made since.
+     * `HarnessViewModel.editMask` has the measurement.
+     */
+    /**
+     * ⭐⭐ Set ONE node's render size.
+     *
+     * ⚠ Not an `onEdit` transform like [onSetParam] is: the size is checked
+     * against the node's model and every derived picture is re-derived — which
+     * a pure `CanvasState` edit cannot do. `HarnessViewModel.setNodeResolution`.
+     */
+    onSetResolution: (node: String, com.abrah.nightmare.Res) -> Unit = { _, _ -> },
+    /** ⭐ The same for a fixed-canvas family, where the choice is a ratio. */
+    onSetAspect: (String) -> Unit = {},
+    onEditMask: (node: String, (com.abrah.nightmare.MaskState) -> com.abrah.nightmare.MaskState) -> Unit =
+        { _, _ -> },
+    /** ⭐ The mask editor's Tap tool — `HarnessViewModel.tapMask`. */
+    onTapMask: (node: String, x: Float, y: Float, done: (String?) -> Unit) -> Unit =
+        { _, _, _, done -> done(null) },
+    /**
+     * ⭐ Why a workflow name will not do, or null — `WorkflowStore.validName`.
+     * ⚠ Passed IN rather than duplicated here: two copies of a naming rule
+     * disagreeing is how a dialog accepts a name the store then refuses.
+     */
+    validateWorkflowName: (String) -> String? = { null },
+    /**
+     * Forget the picture on a `load_image` node.
+     *
+     * ⚠⚠ Not `onEdit { it.setParam(id, "uri", "") }`, though that is half of it.
+     * Clearing the uri leaves the node's PREVIEW -- and every preview derived
+     * from it downstream -- still hanging on the canvas, because previews are
+     * only ever added (`HarnessViewModel.resolvePreviews`). Dropping them is the
+     * view model's job, and it is the only thing that may touch that map.
+     */
+    onClearImage: (String) -> Unit = {},
+    /** ⭐ The Draw window on an image node — `HarnessViewModel.saveDrawing` / `blankPicture`. */
+    onSaveDrawing: (String, android.graphics.Bitmap?) -> Unit = { _, _ -> },
+    onBlankPicture: (String) -> Unit = {},
+    /** ⭐ A video node's model, as its node type: Wan 2.2, Wan 2.2 14B or Neodragon (`HarnessViewModel.setVideoModel`). */
+    onSetVideoModel: (String, String) -> Unit = { _, _ -> },
+    /** ⭐ The Default view's Swap flow / Remove input ([com.abrah.nightmare.HarnessViewModel.swapFlows]). */
+    swapFlows: List<com.abrah.nightmare.canvas.SwapFlow>? = null,
+    onSwapFlow: (com.abrah.nightmare.canvas.Recipe) -> Unit = {},
+    /** ⭐ Switch which node the inspector shows — the node strip. */
+    onInspectNode: (String) -> Unit = {},
+    /** ⭐ Write a rendered image to the gallery. */
+    onSaveImage: (String) -> Unit = {},
+    /** ⭐ Hand a node's picture to another app. */
+    onShareImage: (String) -> Unit = {},
+    /** ⭐ Send a node's picture into a flow ([com.abrah.nightmare.ui.SendToDialog]). */
+    onSendImage: (String) -> Unit = {},
+    /** ⭐ Keep a rendered image AND the flow that made it, in Results. */
+    onStarImage: (String) -> Unit = {},
+    /** ⚠ Whether the picture behind an id is FLAGGED — the star's tint. */
+    isFavourite: (String) -> Boolean = { false },
+    /** ⚠ Non-null when this flow's autosave keeps every Run — the disk is dimmed. */
+    keepDisabledReason: String? = null,
+    onDisabledAction: ((String) -> Unit)? = null,
+    onKeepImage: (String) -> Unit = {},
+    /** ⭐ Is this picture already kept? Drives the star's filled/outline state. */
+    isKept: (String) -> Boolean = { false },
+    /** ⭐ Drop a render from the node that made it. */
+    onClearOutput: (String) -> Unit = {},
+    /**
+     * ⭐⭐⭐ Enlarge what an output node made — it puts an upscale node into
+     * the flow behind that output and Runs
+     * (`HarnessViewModel.offerUpscaleNode`).
+     */
+    onUpscaleNode: ((String) -> Unit)? = null,
+    onApplyPostNow: ((String) -> Unit)? = null,
+    /** ⭐⭐ What made this node's picture, for the ⓘ dialog. */
+    detailsOfNode: ((String) -> List<Pair<String, String>>)? = null,
+    /** ⭐⭐⭐ Drop the enlargement, keeping what the output received. */
+    onDropEnlargement: ((String) -> Unit)? = null,
+    /** ⭐⭐⭐ Drop what the output received, keeping the enlargement. */
+    onDropReceived: ((String) -> Unit)? = null,
+    /** ⭐⭐ Download the segmenter from an inpaint node's Tap-select row. */
+    onInstallSegmenter: (() -> Unit)? = null,
+    /** ⭐⭐ …and delete it from there. */
+    onDeleteSegmenter: (() -> Unit)? = null,
+    /** ⚠ Whether the segmenter weights are on the phone. */
+    segmenterInstalled: Boolean = true,
+    /** ⭐⭐ The Models tab's own row for the segmenter — see the inspector's copy. */
+    segmenterRow: com.abrah.nightmare.ui.ToolRow? = null,
+    onCancelSegmenter: (() -> Unit)? = null,
+    /** ⭐⭐ …and the PARSER's half of the same, for Pick by name. */
+    onPickMask: ((node: String, target: String, done: (String?) -> Unit) -> Unit)? = null,
+    /** ⭐⭐ Translate a prompt into English — [NodeInspectorBody]'s `onTranslate`. */
+    onTranslate: ((node: String, param: String, done: (String) -> Unit) -> Unit)? = null,
+    /**
+     * ⭐⭐ Describe a picture into words for the prompt (`docs/FLORENCE.md`) —
+     * `HarnessViewModel.describePicture`: a canvas image id or a photo URI and a
+     * [com.abrah.nightmare.DescribeMode]; [done] gets the text or null. ⚠ Null draws no button.
+     */
+    onDescribe: ((picture: String, mode: com.abrah.nightmare.DescribeMode, done: (String?) -> Unit) -> Unit)? = null,
+    parserInstalled: Boolean = true,
+    parserRow: com.abrah.nightmare.ui.ToolRow? = null,
+    onInstallParser: (() -> Unit)? = null,
+    onDeleteParser: (() -> Unit)? = null,
+    onCancelParser: (() -> Unit)? = null,
+    /** ⭐ SD 1.5 Swap's openpose detector — the ControlNet tab offers it. */
+    poseRow: com.abrah.nightmare.ui.ToolRow? = null,
+    onInstallPose: (() -> Unit)? = null,
+    onDeletePose: (() -> Unit)? = null,
+    depthRow: com.abrah.nightmare.ui.ToolRow? = null,
+    onInstallDepth: (() -> Unit)? = null,
+    onDeleteDepth: (() -> Unit)? = null,
+    /** ⭐ SD 1.5 Swap's ControlNet downloads, by type ([com.abrah.nightmare.ControlNetCatalog]). */
+    cnRows: Map<String, com.abrah.nightmare.ui.ToolRow> = emptyMap(),
+    onInstallControlNet: ((String) -> Unit)? = null,
+    onDeleteControlNet: ((String) -> Unit)? = null,
+    /** ⭐⭐ Import a `.safetensors` adapter from inside a node's LoRA picker. */
+    onImportLora: (() -> Unit)? = null,
+    /** ⭐⭐ Get LoRAs — opens the browser on the node's family (`docs/LORA-BROWSER.md`); null hides it. */
+    onBrowseLoras: ((com.abrah.nightmare.LoraSources.Target) -> Unit)? = null,
+    /** ⭐ Delete a LoRA file from a node's picker (`HarnessViewModel.deleteLora`); null hides it. */
+    onDeleteLora: ((String) -> Unit)? = null,
+    /** ⚠⚠ `HarnessViewModel.loraEpoch` — what re-reads `_loras` after an Add. */
+    loraEpoch: Int = 0,
+    /**
+     * ⭐⭐ The build, drawn top right.
+     *
+     * ⚠⚠ A PARAMETER, not `BuildConfig.VERSION_NAME` read inside the body,
+     * and that is the whole point: read inside, it bakes the current version
+     * into every canvas golden, so seven of them break on every release for a
+     * reason that has nothing to do with what they pin. The goldens pass a
+     * fixed string; the app passes its own.
+     */
+    version: String = com.abrah.nightmare.BuildConfig.VERSION_NAME,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current.density
+    // ⚠ The gesture modifier outlives every recomposition (see below), so it
+    // must read these through a stable holder rather than capture them.
+    val liveState = rememberUpdatedState(state)
+    val liveTypes = rememberUpdatedState(types)
+    val liveOnState = rememberUpdatedState(onGesture)
+    // ⚠ Needed so a node from the palette lands where the user is LOOKING.
+    // Placing at the world origin would drop it off screen as soon as the
+    // canvas had been panned once.
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    // ⚠ Local to the screen: a half-typed name and an unanswered "are you
+    // sure" are not graph state, and putting them in `CanvasState` would autosave
+    // them and restore them on a cold start.
+    var saving by remember { mutableStateOf(false) }
+    LaunchedEffect(saveRequest) { if (saveRequest > 0) saving = true }
+    // ⚠ Which node's ⓘ is open in the fullscreen viewer, or null.
+    // ⭐ The chrome's heights, so the Nodes and Agent views sit between the top bar and the Run bar.
+    var topBarPx by remember { mutableIntStateOf(0) }
+    var runBarPx by remember { mutableIntStateOf(0) }
+    val clipNoUpscaleText = stringResource(R.string.output_clip_no_upscale)
+    // ⭐ The Run bar folded to its one row (+ Node, Run, the time, the locks): more canvas on a
+    // big graph (the user, 2026-10-15). ⚠ Hoisted here, not in [RunBar]: the bar leaves the
+    // composition in the library destinations and would come back unfolded.
+    var runBarFolded by rememberSaveable { mutableStateOf(false) }
+    // ⚠ A failure unfolds it: the log lines say which node failed and why.
+    LaunchedEffect(runError) { if (runError != null) runBarFolded = false }
+    val chrome = androidx.compose.ui.platform.LocalDensity.current
+    val topPad = with(chrome) { topBarPx.toDp() }
+    val bottomPad = with(chrome) { runBarPx.toDp() }
+    LaunchedEffect(topPad) { onShellHeight(topPad) }
+    var showingNodeInfo by remember { mutableStateOf<String?>(null) }
+    // ⚠ The add-node offer in flight: the plan and where the node will go.
+    var confirmingDelete by remember { mutableStateOf(false) }
+
+    Box(
+        modifier
+            .fillMaxSize()
+            .background(CanvasColors.background)
+            .onSizeChanged { canvasSize = it },
+    ) {
+        // ⭐⭐ **The loop's clock.** One ticker for the whole screen, driving both
+        // the thumbnails on the canvas and the one in the open sheet.
+        //
+        // ⚠⚠ It only runs while a clip is actually on the canvas. A permanent
+        // 12 Hz invalidation would redraw every node, every wire and the grid
+        // forever on a graph that has no video in it at all — on battery, for
+        // nothing. `state.videos.isEmpty()` is the whole condition.
+        //
+        // ⚠ `withFrameMillis` rather than `delay`: it ties the tick to the
+        // display's own frame callback, so the loop pauses with the window
+        // instead of waking a backgrounded app twelve times a second.
+        // ⚠ The TERMINAL clips only -- see [clipNodes]. A sampler feeding an
+        // output node draws its poster still and lets the end of the chain play.
+        // ⚠ Remembered: this walks every node's inputs, and it is read from a
+        // draw scope that runs at 12 Hz while a clip is on the canvas.
+        val playing = remember(state.workflow.graph, state.videos) {
+            clipNodes(state.workflow.graph, state.videos)
+        }
+        // ⚠ [ANIMATED]: an endless frame loop under Robolectric stalls every later test.
+        val animate = (playing.isNotEmpty() || DrivingLoops.frames.isNotEmpty()) && ANIMATED
+        var clipTick by remember { mutableIntStateOf(0) }
+        LaunchedEffect(animate) {
+            if (!animate) return@LaunchedEffect
+            var last = 0L
+            while (true) {
+                withFrameMillis { now ->
+                    if (now - last >= 1000L / com.abrah.nightmare.ClipStore.FPS) {
+                        last = now
+                        clipTick++
+                    }
+                }
+            }
+        }
+
+        // ⚠ Reads `clipTick` INSIDE the lambda, which is what makes the canvas
+        // redraw — a draw scope records its state reads. Hoisting the frame out
+        // here would animate nothing.
+        val clipFrameFor: (String) -> androidx.compose.ui.graphics.ImageBitmap? = { id ->
+            state.videos[id]?.takeIf { id in playing }?.let { path ->
+                com.abrah.nightmare.ClipStore.get(path)?.let { f ->
+                    f[clipTick % f.size]
+                }
+            }
+        }
+
+        // ⭐ The first time Advanced shows this flow, frame the whole graph ([CanvasState.framedIn]).
+        // ⚠ Waits for both bars to be measured: they sit OVER the canvas, so the visible part is
+        // what lies between them.
+        val graphShown = mainView == com.abrah.nightmare.MainView.GRAPH
+        LaunchedEffect(graphShown, state.framePending, canvasSize, topBarPx, runBarPx) {
+            if (graphShown && state.framePending && canvasSize.width > 0 && topBarPx > 0 && runBarPx > 0) {
+                onEdit { s ->
+                    s.framedIn(
+                        types, canvasSize.width.toFloat(), canvasSize.height.toFloat(), chrome.density,
+                        topPx = topBarPx.toFloat(), bottomPx = runBarPx.toFloat(),
+                    )
+                }
+            }
+        }
+
+        if (mainView == com.abrah.nightmare.MainView.GRAPH) GraphCanvas(
+            workflow = state.workflow,
+            types = types,
+            viewport = state.viewport,
+            selected = state.selection,
+            wire = state.wire,
+            wireConfirming = state.wireConfirming,
+            status = status,
+            pending = state.pending,
+            previews = state.previews,
+            beforePreviews = state.beforePreviews,
+            controlHints = state.controlHints,
+            imageFor = imageFor,
+            clipFrameFor = clipFrameFor,
+            // ⚠ Reads `clipTick` inside, like [clipFrameFor], so the loop animates.
+            controlClipFor = { id -> DrivingLoops.frames[id]?.let { f -> f[(clipTick / 2) % f.size] } },
+            modifier = Modifier
+                .fillMaxSize()
+                .canvasGestures(
+                    // ⚠⚠ Read through `rememberUpdatedState`, NOT `{ state }`.
+                    //
+                    // `state` is a function parameter, so `{ state }` captures
+                    // its VALUE at the composition that created the lambda —
+                    // and `pointerInput(Unit)` keeps the block it was first
+                    // given. The gesture loop therefore read the canvas as it
+                    // was when the screen opened, forever: press/drag/release
+                    // all computed against a stale Idle state, so nothing moved,
+                    // nothing zoomed and a tap opened nothing.
+                    //
+                    // ⚠ It looked correct — the old comment here even argued for
+                    // lambdas — and it survived a touch test, because that test
+                    // passed a delegated local `var` whose closure reads the
+                    // MutableState live. Only `CanvasTouchTest` driving THIS
+                    // composable catches it. Measured on device 2026-09-08: a
+                    // pan swipe moved the canvas by exactly zero pixels.
+                    state = { liveState.value },
+                    types = { liveTypes.value },
+                    density = density,
+                    onGesture = { liveOnState.value(it) },
+                ),
+        )
+
+        // ⚠ The old floating corner preview is GONE. A picture in the corner
+        // belongs to no node, so with more than one image node on a canvas it
+        // could not say which had produced it -- and it covered whatever was
+        // underneath. Previews are drawn ON the node that made them.
+
+        // ⚠⚠ Anything that must not be squeezed out goes in the SAME container as what would
+        // squeeze it: the save icon vanished once as a sibling of an unweighted brand card.
+        TopBar(
+            onMenu = onMenu,
+            onSave = { saving = true },
+            onResults = onResults,
+            onModels = onModels,
+            hideChat = hideChat,
+            modelLabel = modelLabel,
+            mainView = toggleView ?: mainView,
+            version = version,
+            onView = onView,
+            modifier = Modifier.align(Alignment.TopStart).onSizeChanged { topBarPx = it.height }
+                .background(MaterialTheme.colorScheme.background).statusBarsPadding(),
+        )
+
+        // ⭐ The three flow views share the Run bar (seeds, Run / Cancel); Nodes and Agent drop the
+        // graph's own buttons, and Agent its log — the chat shows the run as it goes. ⚠ None in
+        // the library destinations.
+        if (mainView.isCanvas) RunBar(
+            graphControls = mainView == com.abrah.nightmare.MainView.GRAPH,
+            folded = runBarFolded,
+            onToggleFold = { runBarFolded = !runBarFolded },
+            ram = ram,
+            plannedLoads = plannedLoads,
+            onResults = onResults,
+            state = state,
+            busy = busy,
+            onRun = onRun,
+            onCancelRun = onCancelRun,
+            onBatch = onBatch,
+            batchProgress = batchProgress,
+            onCancelBatch = onCancelBatch,
+            armedSweeps = armedSweeps,
+            onReleaseSweep = onReleaseSweep,
+            onAdd = { onEdit { s -> s.openPalette() } },
+            onBack = onBack,
+            onToggleZoomLock = { onEdit { s -> s.toggleZoomLock() } },
+            onTogglePanLock = { onEdit { s -> s.togglePanLock() } },
+            onSelectAll = { onEdit { s -> s.selectAll() } },
+            onDeleteSelected = { confirmingDelete = true },
+            // ⚠ No confirm: a clone is undone by deleting it, which is the
+            // control right beside it. `ConfirmDelete` is for what cannot be
+            // taken back (`docs/UI.md` §8.2).
+            onCloneSelected = { onEdit { s -> s.cloneSelected() } },
+            onClearSelection = { onEdit { s -> s.clearSelection() } },
+            runError = runError.takeIf { mainView != com.abrah.nightmare.MainView.AGENT },
+            onDismissRunError = onDismissRunError,
+            onDismissMessage = { onEdit { s -> s.copy(message = null) } },
+            runLog = if (mainView == com.abrah.nightmare.MainView.AGENT) RunLogState() else runLog,
+            // ⭐ The frame carries the lines while it runs ([RunFrame]); the panel shows them after.
+            logInFrame = mainView == com.abrah.nightmare.MainView.NODES,
+            onCloseRunLog = onCloseRunLog,
+            // ⚠⚠ ANY sampler ([com.abrah.nightmare.SAMPLER_TYPES]), not just
+            // `sd.sample`: the text-to-video recipe rolls a seed like every
+            // other recipe and had no lock at all, so a clip worth keeping
+            // could not be asked for again. Reported from the phone, 2026-09-12.
+            // ⭐⭐ EVERY sampler, in graph order — one lock each (2026-09-17). The
+            // label only appears when there is more than one to tell apart.
+            // ⚠ No seed row in the Agent view — the chat is the space there (the user, 2026-10-09).
+            seeds = if (mainView == com.abrah.nightmare.MainView.AGENT) emptyList() else state.workflow.graph.nodes.filter {
+                com.abrah.nightmare.isSampler(it.type)
+            }.let { samplers ->
+                samplers.flatMap { n ->
+                    val picture = SeedState(
+                        value = n.params["seed"]?.trim()?.takeIf { it.isNotEmpty() && it != "0" },
+                        lastRolled = seedFor(state.workflow.graph, n.id) { status[it]?.detail },
+                        nodeId = n.id,
+                        label = n.id.takeIf { samplers.size > 1 },
+                    )
+                    // ⭐ A second lock while Fix faces or Fix hands is on (com.abrah.nightmare.detail.Detailer.FIX_SEED, the user's call
+                    // 2026-10-23): the picture's seed locked and this one free, each Run keeps the picture and tries
+                    // another face.
+                    val fixOn = listOf(com.abrah.nightmare.detail.Detailer.FIX_FACES, com.abrah.nightmare.detail.Detailer.FIX_HANDS).any { n.params[it].equals("true", ignoreCase = true) }
+                    if (!fixOn) listOf(picture) else listOf(
+                        picture,
+                        SeedState(
+                            value = n.params[com.abrah.nightmare.detail.Detailer.FIX_SEED]?.trim()?.takeIf { it.isNotEmpty() && it != "0" },
+                            lastRolled = fixSeedFor(state.workflow.graph, n.id) { status[it]?.detail },
+                            nodeId = n.id,
+                            label = n.id.takeIf { samplers.size > 1 },
+                            param = com.abrah.nightmare.detail.Detailer.FIX_SEED,
+                        ),
+                    )
+                }
+            },
+            onToggleSeed = { chip ->
+                state.workflow.graph.byId[chip.nodeId]?.let { n ->
+                    val pinned = n.params[chip.param]?.trim()?.takeIf { it.isNotEmpty() && it != "0" }
+                    if (pinned != null) {
+                        onEdit { st -> st.setParam(n.id, chip.param, "0") }
+                    } else {
+                        // ⚠ Only when there IS a rolled seed to pin. Locking
+                        // before anything has run would pin nothing.
+                        (if (chip.isFix) fixSeedFor(state.workflow.graph, n.id) { status[it]?.detail }
+                        else seedFor(state.workflow.graph, n.id) { status[it]?.detail })
+                            ?.let { rolled -> onEdit { st -> st.setParam(n.id, chip.param, rolled) } }
+                    }
+                }
+            },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .onSizeChanged { runBarPx = it.height }
+                // ⚠⚠ The app is edge-to-edge (`enableEdgeToEdge`), so without
+                // this the whole bar sits UNDER the navigation bar: on a gesture
+                // -nav phone the buttons are half-covered and the bottom strip
+                // belongs to the system, which is why "Run did nothing" and
+                // "+ node" could not be pressed at all. Reported from a real
+                // phone, 2026-09-08 -- no golden caught it, because the goldens
+                // render GraphCanvas without the bar.
+                .windowInsetsPadding(com.abrah.nightmare.ui.BottomSafe)
+                // Gesture-nav phones report a small navigation inset but still
+                // reserve a taller strip for the back gesture; the extra keeps
+                // the row clear of it.
+                .padding(bottom = 8.dp),
+        )
+    }
+
+    if (mainView == com.abrah.nightmare.MainView.AGENT) {
+        agentContent(Modifier.fillMaxSize().padding(top = topPad).windowInsetsPadding(belowChrome(bottomPad)))
+    }
+    // ⚠ Outside the Box, so the sheet's scrim covers the run bar too. Inside it
+    // the bar would sit on top of the scrim and still be tappable, which is how
+    // a graph gets run while its own inspector is open.
+    // ⭐ The SAME dialog Results and the inspector open.
+    showingNodeInfo?.let { n ->
+        detailsOfNode?.let { d ->
+            com.abrah.nightmare.ui.ResultInfoDialog(d(n)) { showingNodeInfo = null }
+        }
+    }
+    // ⭐⭐ An empty image node tapped on the canvas: the file picker, directly
+    // ([CanvasState.pickImageFor]). ⚠ The SAME launcher the sheet's + uses
+    // ([rememberImagePick]), and the pick lands through the same setParam.
+    // ⚠ Saveable: the picker is another activity, and a recreation while it is open dropped the chosen photo.
+    val pickTarget = androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    val launchImagePick = rememberImagePick { uri ->
+        pickTarget.value?.let { id -> onEdit { s -> s.setParam(id, "uri", uri) } }
+    }
+    LaunchedEffect(state.pickImageFor) {
+        val id = state.pickImageFor ?: return@LaunchedEffect
+        pickTarget.value = id
+        onEdit { s -> s.consumePickRequest() }
+        launchImagePick()
+    }
+    // ⚠ Only where a node page belongs: the Nodes view draws it inline, Graph as a sheet.
+    if (mainView == com.abrah.nightmare.MainView.GRAPH || mainView == com.abrah.nightmare.MainView.NODES) NodeInspector(
+        // ⭐⭐ A Default view run: the output page shows the run's FRAME, log inside ([RunFrame]).
+        // The pages stay — the run opens on the output, and a swipe still leaves it (2026-10-10).
+        runFrame = runLog.takeIf { mainView == com.abrah.nightmare.MainView.NODES && it.running },
+        runFrameAspect = runAspect(state.workflow.graph, types),
+        state = state,
+        types = types,
+        onUpscale = onUpscaleNode,
+        onApplyPostNow = onApplyPostNow,
+        detailsOf = detailsOfNode,
+        onDropEnlargement = onDropEnlargement,
+        onDropReceived = onDropReceived,
+        onReset = { id -> onEdit { st -> st.resetNodeForItsModel(id, types) } },
+        onResetDefaults = { id -> onEdit { st -> st.resetSamplerDefaults(id, types) } },
+        onAddReference = { id, uri -> onEdit { st -> st.addReference(id, uri, types) } },
+        onRemoveReference = { id, port -> onEdit { st -> st.removeReference(id, port, types) } },
+        onInstallSegmenter = onInstallSegmenter,
+        onDeleteSegmenter = onDeleteSegmenter,
+        segmenterInstalled = segmenterInstalled,
+        segmenterRow = segmenterRow,
+        onCancelSegmenter = onCancelSegmenter,
+        onPickMask = onPickMask,
+        onTranslate = onTranslate,
+        onDescribe = onDescribe,
+        parserInstalled = parserInstalled,
+        parserRow = parserRow,
+        onInstallParser = onInstallParser,
+        onDeleteParser = onDeleteParser,
+        onCancelParser = onCancelParser,
+        poseRow = poseRow,
+        onInstallPose = onInstallPose,
+        onDeletePose = onDeletePose,
+        depthRow = depthRow,
+        onInstallDepth = onInstallDepth,
+        onDeleteDepth = onDeleteDepth,
+        cnRows = cnRows,
+        onInstallControlNet = onInstallControlNet,
+        onDeleteControlNet = onDeleteControlNet,
+        busy = busy,
+        // ⚠ Inline, the canvas's Run bar sits under the pages; a second Run would be one too many.
+        onRun = onRun.takeIf { mainView == com.abrah.nightmare.MainView.GRAPH },
+        onCancelRun = onCancelRun,
+        onInspectNode = onInspectNode,
+        inline = if (mainView == com.abrah.nightmare.MainView.NODES) {
+            Modifier.fillMaxSize().padding(top = topPad + 8.dp).windowInsetsPadding(belowChrome(bottomPad))
+        } else null,
+        // ⭐ The Default view's layout only; Advanced's inspector stays left-right cards (2026-10-10).
+        vertical = nodesVertical && mainView == com.abrah.nightmare.MainView.NODES,
+        onImportLora = onImportLora,
+        onBrowseLoras = onBrowseLoras,
+        onDeleteLora = onDeleteLora,
+        loraEpoch = loraEpoch,
+        status = status,
+        onClearImage = onClearImage,
+        onSaveDrawing = onSaveDrawing,
+        onBlankPicture = onBlankPicture,
+        onSetVideoModel = onSetVideoModel,
+        swapFlows = swapFlows,
+        onSwapFlow = onSwapFlow,
+        onSaveImage = onSaveImage,
+        onShareImage = onShareImage,
+        onSendImage = onSendImage,
+        onKeepImage = onKeepImage,
+        isKept = isKept,
+        installedModels = installedModels,
+        onSetModel = onSetModel,
+        // ⚠⚠⚠ **All four, or the two surfaces disagree.** The inspector and the
+        // fullscreen viewer draw the SAME [PictureActions]; these were wired
+        // into the viewer and not here, so in the node view the star did nothing
+        // and the save tick stayed live while autosave dimmed it one tap away.
+        // Reported 2026-09-15 — *"the ticks in fullscreen view and node view
+        // aren't same behavior"*. ⚠ The rule this broke is the oldest one in
+        // `docs/ARCHITECTURE.md` §5.6: a rule honoured in N−1 of N places is a
+        // bug, and the missed place is the one the user opens first.
+        onStarImage = onStarImage,
+        isFavourite = isFavourite,
+        keepDisabledReason = keepDisabledReason,
+        onDisabledAction = onDisabledAction,
+        onClearOutput = onClearOutput,
+        imageFor = imageFor,
+        // ⚠ `s.editing` IS the node whose inspector is open, so the viewer
+        // opened from it knows its node too — same reason the canvas tap does.
+        // ⚠⚠ The Default view keeps its page open UNDER the viewer (GitHub #66): `editing = null` there made the
+        // pages fall back to the FIRST node, so closing the viewer landed on the prompt, and the `focusField` a
+        // prompt tap had left behind brought the keyboard up on it. The canvas still closes its sheet.
+        onViewFullscreen = { id ->
+            onEdit { s ->
+                s.copy(
+                    editing = s.editing.takeIf { mainView == com.abrah.nightmare.MainView.NODES },
+                    focusField = null,
+                    viewing = id,
+                    viewingNode = s.editing,
+                )
+            }
+        },
+        // ⭐ Through [swapWired]: a Swap node's ControlNet / IP-Adapter pictures
+        // are wired image nodes, kept in step with the tiles (`SwapWiring.kt`).
+        onSetParam = { node, name, value -> onEdit { s -> s.setParam(node, name, value).swapWired(node, name, value, s) } },
+        onSetParams = { node, values -> onEdit { s -> s.setParams(node, values) } },
+        onEditMask = onEditMask,
+        onTapMask = onTapMask,
+        onSetResolution = onSetResolution,
+        onSetAspect = onSetAspect,
+        // ⚠ A pure state edit, like every other canvas change: renameNode
+        // rewires the graph and moves every id-keyed map with it.
+        onRename = { from, to -> onEdit { s -> s.renameNode(from, to) } },
+        onDelete = { id -> onEdit { s -> s.removeNode(id) } },
+        onDismiss = { onEdit { s -> s.closeInspector() } },
+    )
+
+    // ⭐⭐⭐ **The checkpoint swap's question**, over the inspector it came from.
+    //
+    // ⚠⚠⚠ It did not exist until 2026-09-15, while `pendingSwap` had been a
+    // parameter of this function for a day — declared, passed in from
+    // `MainActivity`, and read by nothing. So a cross-family pick set the state
+    // and drew no dialog: on the phone the picker simply did nothing. ⚠ A
+    // parameter no line of the body mentions is dead wiring, and the compiler
+    // says nothing about it; the golden below is what will notice next time.
+    pendingSwap?.let { swap ->
+        ModelSwapDialog(swap, onConfirmSwap, onCancelSwap)
+    }
+
+    // ⭐ Fullscreen. A 190-unit node preview is a thumbnail; this is where a
+    // person actually looks at what they made.
+    //
+    // ⚠⚠ WHICH NODE is showing this picture, found by reversing `previews`
+    // rather than carried in `viewing`. The viewer needs it for two things a
+    // picture alone cannot answer -- whether this is a photo the user chose (so
+    // it can be swapped or dropped) and which sampler made it (so it can show
+    // the seed) -- and the reverse lookup keeps `viewing` a plain image id, so
+    // nothing has to keep the two halves in step.
+    // ⚠⚠ The node the TAP named, and only as a fallback the reverse lookup —
+    // which is ambiguous whenever two nodes hold the same picture (see
+    // [CanvasState.viewingNode]). The fallback covers a viewer opened from
+    // somewhere that has no node, and nothing else.
+    val viewedNode = state.viewingNode
+        ?: state.viewing?.let { id ->
+            state.previews.entries.firstOrNull { it.value.first == id }?.key
+        }
+    val viewedType = viewedNode?.let { state.workflow.graph.byId[it] }?.type
+    val viewedIsPhoto = viewedType == "core.image"
+    /**
+     * ⭐⭐ A SAMPLER's picture is an INPUT, not a result — it is the framed
+     * photo going in ([applyFramedPreviews]) — so the viewer offers nothing.
+     *
+     * ⚠⚠ Every action in that row acts on a RESULT: keep it, download it, share
+     * it, delete it. Offering them over a crop preview means "delete" clears a
+     * render that was never made and "keep" files an input as if it were
+     * output. The user's call, 2026-09-15: *"in sample fullscreen view, don't
+     * need any btns."*
+     */
+    // ⭐⭐⭐ **A RECEIVED picture is NOT an input** — reversed 2026-09-22 at
+    // the user's ask: *"why the fuck dont the icons show in fullscreen"*.
+    //
+    // ⚠⚠ The rule used to add `beforePreviews[viewedNode] == viewing` here,
+    // on the argument that the picture belongs to the node upstream. It does not
+    // on the node that actually has one: an auto-upscaling `core.output` MADE
+    // both halves in one run, so its Received picture is its own result at an
+    // earlier stage — savable, sharable, keepable, and deletable. Every
+    // callback below already binds to `id`, the picture being VIEWED, so they
+    // act on the right one.
+    // ⚠ FRAMING_TYPES, not the image samplers: a Wan node previews its framed picture too (the user, 2026-10-16).
+    val viewedIsInput = viewedType in com.abrah.nightmare.PICKED_TYPES || viewedType in com.abrah.nightmare.FRAMING_TYPES
+
+    // ⭐⭐ **The pictures this node holds, in the order they were made** — what
+    // a swipe moves between. Received first, Made second; one entry for every
+    // other node, which turns the pager off.
+    val viewedPages: List<String> = viewedNode?.let { n ->
+        listOfNotNull(
+            state.beforePreviews[n]?.first,
+            state.previews[n]?.first ?: state.rendered[n],
+        ).distinct()
+    }.orEmpty()
+    // ⚠⚠ Hoisted OUT of the `let` below: `rememberImagePick` registers an
+    // activity-result launcher, and a launcher registered inside a conditional
+    // is registered and torn down as the condition flips -- which is exactly
+    // when the result comes back, since the picker runs while this activity is
+    // stopped.
+    val pickForViewed = rememberImagePick { uri ->
+        viewedNode?.let { n -> onEdit { s -> s.setParam(n, "uri", uri) } }
+        // ⚠ Back to the canvas, because the picture on screen is now the OLD
+        // one: the new photo resolves into a new image id a moment later, and a
+        // viewer still holding the previous id would sit there showing the
+        // thing the user just replaced.
+        onEdit { s -> s.copy(viewing = null, viewingNode = null) }
+    }
+    state.viewing?.let { id ->
+        imageFor(id)?.let { bmp ->
+            FullscreenImage(
+                bmp,
+                onDismiss = { onEdit { s -> s.copy(viewing = null, viewingNode = null) } },
+                // ⭐⭐ The clip, when the node being viewed is the one that OWNS
+                // it. ⚠ Found through `viewedNode` rather than carried in
+                // `viewing`, for the reason the block above gives: `viewing`
+                // stays a plain image id and nothing has to keep two halves in
+                // step.
+                //
+                // ⚠⚠⚠ **Filtered by [clipNodes], exactly as the canvas and the
+                // sheet are.** Without the filter, opening the SAMPLER full
+                // screen played the finished video — and once Save and Share
+                // learned about clips, the sampler shared it too. Reported from
+                // the phone, 2026-09-13: *"i still don't get why the sample in
+                // fullscreen/share is showing the video output"*. The `VIDEO`
+                // value flows sampler → output so every node on the chain holds
+                // the same path; `clipNodes` picking the END is the ONE rule
+                // that decides what a node shows, saves and sends, and a
+                // surface that opts out of it is a surface that disagrees with
+                // the three that do.
+                // ⚠⚠ Resolved from the image id AGAIN rather than from
+                // `viewedNode`, and not for tidiness: several nodes share one
+                // poster (the clip flows sampler → output and both record it),
+                // so `viewedNode` is whichever the map yielded first and may
+                // not be the one that owns the clip. Asking for the OWNER is
+                // the same question `HarnessViewModel.clipForImage` asks, and
+                // the two must agree or the button and the picture disagree.
+                videoPath = clipNodes(state.workflow.graph, state.videos).let { owners ->
+                    state.previews.entries
+                        .filter { it.value.first == id }
+                        .map { it.key }
+                        .firstOrNull { it in owners }
+                        ?.let { state.videos[it] }
+                },
+                seed = viewedNode?.let { n ->
+                    seedFor(state.workflow.graph, n) { status[it]?.detail }
+                },
+                hasSampler = viewedNode?.let { samplerFor(state.workflow.graph, it) } != null,
+                // ⚠ The SAMPLER only, not every input. A photo's viewer keeps
+                // its pick and bin — choosing the picture IS what that viewer is
+                // for. The sampler's preview is a derived crop with nothing to
+                // act on.
+                chromeless = viewedType in com.abrah.nightmare.FRAMING_TYPES,
+                onPick = if (viewedIsPhoto) pickForViewed else null,
+                onClear = if (viewedIsPhoto && viewedNode != null) {
+                    {
+                        onClearImage(viewedNode)
+                        onEdit { s -> s.copy(viewing = null, viewingNode = null) }
+                    }
+                } else null,
+                // ⚠ Only for a RENDER. A photo the user chose is already in
+                // their gallery, and offering to save it back would make a
+                // second copy of a file they already have.
+                onSave = if (!viewedIsInput) {
+                    { onSaveImage(id) }
+                } else null,
+                // ⭐ Share, wherever Save is offered. ⚠ Including an UPSCALE's
+                // output: the whole point of a 4x is sending it somewhere.
+                onShare = if (!viewedIsInput) {
+                    { onShareImage(id) }
+                } else null,
+                // ⭐ Send into a flow — the viewer closes, the choice pops up.
+                onSendTo = if (!viewedIsInput) {
+                    {
+                        onEdit { s -> s.copy(viewing = null, viewingNode = null) }
+                        onSendImage(id)
+                    }
+                } else null,
+                // ⭐⭐ Keep it, WITH the graph. ⚠ Distinct from the gallery
+                // button beside it and the difference is the whole point: the
+                // gallery gets a picture, this gets a picture you can reopen as
+                // a flow.
+                onKeep = if (!viewedIsInput) {
+                    { onKeepImage(id) }
+                } else null,
+                // ⭐ The STAR keeps it too — the difference is the flag Results
+                // filters on ([PictureActions]).
+                onStar = if (!viewedIsInput) {
+                    { onStarImage(id) }
+                } else null,
+                kept = isKept(id),
+                favourite = isFavourite(id),
+                keepDisabledReason = keepDisabledReason,
+                onDisabledAction = onDisabledAction,
+                // ⭐⭐⭐ **The bin here drops the picture ON SCREEN**, the same
+                // as the row in the sheet — the Received one or the enlargement,
+                // not both. ⚠ Which one is decided by IDENTITY against
+                // `beforePreviews`, never by node type.
+                onDeleteOutput = if (!viewedIsInput && viewedNode != null) {
+                    val isReceived = state.beforePreviews[viewedNode]?.first == id
+                    val hasPair = state.beforePreviews[viewedNode] != null
+                    {
+                        when {
+                            isReceived -> onDropReceived?.invoke(viewedNode)
+                            hasPair -> onDropEnlargement?.invoke(viewedNode)
+                            else -> onClearImage(viewedNode)
+                        }
+                        onEdit { s -> s.copy(viewing = null, viewingNode = null) }
+                    }
+                } else null,
+                // ⚠ Offered only when there IS a rolled seed and it is not
+                // already pinned — a lock button that is already locked says
+                // nothing, and the release lives in the run bar where it stays
+                // visible after this closes.
+                seedLock = viewedNode?.let { n -> seedLock(state.workflow.graph, n) { status[it]?.detail } },
+                onToggleSeedLock = { lock ->
+                    val (k, v) = toggleSeedLock(lock)
+                    onEdit { s -> s.setParam(lock.sampler, k, v) }
+                },
+                // ⭐⭐ The same two the inspector's row offers — one picture,
+                // one set of actions, whichever surface it is on.
+                // ⚠ Only on an OUTPUT this node made, never on a photo the user
+                // picked: there is no wire behind an input to trace.
+                // ⚠⚠ **Dimmed, not gone**, when the node already auto-upscales
+                // — the same rule and the same words the inspector's row uses.
+                onUpscale = viewedNode
+                    ?.takeIf { !viewedIsInput && onUpscaleNode != null }
+                    ?.let { n -> { onUpscaleNode?.invoke(n) } },
+                upscaleDisabledReason = viewedNode
+                    ?.let { state.workflow.graph.byId[it] }
+                    ?.let { n ->
+                        when {
+                            com.abrah.nightmare.MediaOutputNode.takesVideo(state.workflow.graph, n, types) ->
+                                clipNoUpscaleText
+                            com.abrah.nightmare.MediaOutputNode.autoUpscales(n) ->
+                                "this output already enlarges every render. Untick auto upscale to choose"
+                            else -> null
+                        }
+                    },
+                onInfo = viewedNode
+                    ?.takeIf { !viewedIsInput && detailsOfNode != null }
+                    ?.let { n -> { showingNodeInfo = n } },
+                // ⭐⭐ Received ⇄ Made, to swipe between while zoomed out.
+                // ⚠ Only when every page has a bitmap: a pager with a hole in
+                // it swipes to a black screen.
+                pages = viewedPages.mapNotNull(imageFor).takeIf {
+                    it.size == viewedPages.size && viewedPages.size > 1
+                }.orEmpty(),
+                pageIndex = viewedPages.indexOf(id).coerceAtLeast(0),
+                // ⚠⚠ A swipe moves `viewing`, and `viewingNode` STAYS put —
+                // it is the node whose pictures these are, and recomputing it
+                // from the image id would be the ambiguous reverse lookup the
+                // comment above warns about.
+                onPage = { i ->
+                    viewedPages.getOrNull(i)?.let { next ->
+                        if (next != id) onEdit { st -> st.copy(viewing = next) }
+                    }
+                },
+            )
+        }
+    }
+
+    // ⭐⭐ A confirm before deleting nodes, because delete is the one canvas
+    // action with no undo -- the wires that pointed at those nodes go with them.
+    if (confirmingDelete && state.selection.isNotEmpty()) {
+        ConfirmDeleteNodes(
+            ids = state.selection.sorted(),
+            onConfirm = { onEdit { s -> s.removeSelected() } },
+            onDismiss = { confirmingDelete = false },
+        )
+    }
+
+    if (saving) {
+        SaveWorkflowDialog(
+            initial = savedAs.orEmpty(),
+            suggested = suggestedName,
+            onDismiss = { saving = false; onSaveDismiss() },
+            onSave = { saving = false; onSave(it) },
+            validate = validateWorkflowName,
+        )
+    }
+
+    if (state.showPalette) {
+        NodePalette(
+            types = paletteTypes,
+            onPick = { type ->
+                // The middle of what is on screen, in world units.
+                val centre = state.viewport.forDevice(density).toWorld(
+                    Pt(canvasSize.width / 2f, canvasSize.height / 2f)
+                )
+                // ⚠ Offset by half a node so the node is centred rather than
+                // starting at the centre, which puts most of it off to one side.
+                val at = Pt(centre.x - Sizes.NODE_WIDTH / 2f, centre.y - Sizes.HEADER_HEIGHT)
+                // ⚠⚠⚠ **A pick ADDS the node, and nothing else.** The
+                // helper/snap assist sheet that sat here was REVERTED on
+                // 2026-09-22 at the user's ask — `docs/ROADMAP.md` §5 keeps the
+                // idea. It is not a bad idea; it was decided before the shape
+                // of the problem was settled, and half-built it cost more to
+                // keep correct than it gave back.
+                onEdit { s -> s.addNode(type, at) }
+            },
+            onDismiss = { onEdit { s -> s.closePalette() } },
+        )
+    }
+}
+
+/**
+ * ⭐⭐⭐ The shell (the user's sidebar mock, 2026-10-09): ☰ · the brand · Save · Results, then the three VIEWS
+ * as one segmented toggle with an ⓘ that says what each is. Models / Flows / Results, the flow's
+ * name, the model and RAM moved to the sidebar (`ui/ShellDrawer.kt`); RAM also sits beside the
+ * seed. ⚠ It replaced a 3 × 2 tile grid and a status row (`docs/LEGACY.md` §9).
+ * ⚠ The recipes' TOP clears this header (`Workflows.kt`): chrome and node positions go together.
+ */
+@Composable
+private fun TopBar(
+    onMenu: () -> Unit,
+    onSave: () -> Unit,
+    /** ⭐ Results, right of Save (the user, 2026-10-11): the sidebar's row, one tap closer. */
+    onResults: () -> Unit,
+    /** ⭐ The model the flow renders with, beside the view button (the user's mock, 2026-10-11). */
+    modelLabel: String,
+    mainView: com.abrah.nightmare.MainView,
+    onView: (com.abrah.nightmare.MainView) -> Unit,
+    modifier: Modifier = Modifier,
+    /** ⭐ A tap on CURRENT MODEL opens Models: the sidebar's row (the user, 2026-10-13). */
+    onModels: () -> Unit = {},
+    hideChat: Boolean = false,
+    /** ⭐ The build, beside the name (the user, 2026-10-09: "show version number in main page"). */
+    version: String = "",
+) {
+    var explaining by remember { mutableStateOf(false) }
+    Column(
+        modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(start = 4.dp, end = 8.dp, top = 4.dp, bottom = 8.dp),
+        // ⚠ 12dp under the brand: at 6 the views row sat against the logo (the user, 2026-10-09).
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onMenu,
+                // ⭐ Reported for the sheets' live copy ([com.abrah.nightmare.ui.ShellAnchors]).
+                modifier = Modifier.onGloballyPositioned { c ->
+                    val p = c.positionOnScreen()
+                    com.abrah.nightmare.ui.ShellAnchors.menu = androidx.compose.ui.geometry.Rect(
+                        p.x, p.y, p.x + c.size.width, p.y + c.size.height,
+                    )
+                },
+            ) {
+                Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.shell_menu))
+            }
+            // ⭐ Clear of the ☰ (the user's mock, 2026-10-10: the logo touched it).
+            Spacer(Modifier.width(8.dp))
+            // ⚠ The ONLY weighted child: with a weighted Spacer beside it the two split the room and
+            // the wordmark was cut to "Nightma" at 320dp. `BrandMark` shrinks its own type to fit.
+            com.abrah.nightmare.ui.BrandMark(Modifier.weight(1f), version = version)
+            IconButton(onClick = onSave) {
+                Icon(
+                    com.abrah.nightmare.ui.SaveIcon,
+                    contentDescription = stringResource(R.string.canvas_cd_save_flow),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            // ⚠ The sidebar's own icon and words ([com.abrah.nightmare.ui.ShellDrawer]), so the two
+            // ways in look like one thing.
+            IconButton(onClick = onResults) {
+                Icon(
+                    com.abrah.nightmare.ui.ResultsIcon,
+                    contentDescription = stringResource(R.string.nav_results),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        // ⭐⭐ The toggle lights on the TAP's frame; the view is switched on the next one — drawing a
+        // whole view in the same frame held the highlight back (the user, 2026-10-08).
+        // ⚠ The tap's own pick wins until the view has changed; otherwise the view itself. Never a
+        // copy updated by an effect: that lagged a frame, the slow frame (2026-10-09).
+        var tapped by remember { mutableStateOf<com.abrah.nightmare.MainView?>(null) }
+        LaunchedEffect(mainView) { tapped = null }
+        val picked = tapped ?: mainView
+        val tileScope = rememberCoroutineScope()
+        val go: (com.abrah.nightmare.MainView) -> Unit = { v ->
+            tapped = v
+            tileScope.launch {
+                androidx.compose.runtime.withFrameNanos { }
+                onView(v)
+            }
+        }
+        // ⭐ Only on the three views: Models, Flows and Results get the room (the user, 2026-10-09);
+        // Back or the sidebar leaves them.
+        if (mainView.isCanvas) Row(
+            Modifier.fillMaxWidth().padding(start = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ViewSwitch(picked, go, hideChat)
+            // ⭐ The model, back on the main screen (the user, 2026-10-11; it left with the status
+            // row in 1.6.117). ⚠ WRAPPED, never cut: most names are long, and the old row's rule
+            // was "do not ... the held model" (2026-09-10).
+            Column(
+                Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
+                    .clickable(onClickLabel = stringResource(R.string.nav_models), onClick = onModels)
+                    .padding(start = 4.dp),
+            ) {
+                if (modelLabel.isNotBlank()) Text(
+                    stringResource(R.string.current_model).uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    letterSpacing = 1.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    modelLabel,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = { explaining = true }) {
+                Icon(
+                    Icons.Outlined.Info, contentDescription = stringResource(R.string.views_info_cd),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(28.dp),
+                )
+            }
+        }
+    }
+    if (explaining) ViewsInfoDialog { explaining = false }
+}
+
+/** ⭐ The ⓘ beside the views: what Chat, Default and Advanced each are. */
+@Composable
+private fun ViewsInfoDialog(onDismiss: () -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { com.abrah.nightmare.ui.StudioButton(onClick = onDismiss) { Text(stringResource(R.string.ok)) } },
+        title = { Text(stringResource(R.string.views_info_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                for ((icon, name, body) in listOf(
+                    Triple(com.abrah.nightmare.ui.NodesIcon, R.string.view_nodes, R.string.views_info_default),
+                    Triple(com.abrah.nightmare.ui.GraphIcon, R.string.view_graph, R.string.views_info_advanced),
+                    // ⚠ Chat last: it is optional (Settings), the other two are the app (the user's call, 2026-10-16).
+                    Triple(com.abrah.nightmare.ui.AgentIcon, R.string.agent_title, R.string.views_info_chat),
+                )) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 2.dp).size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(stringResource(name), style = MaterialTheme.typography.titleSmall)
+                            Text(stringResource(body), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                Text(stringResource(R.string.views_info_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+    )
+}
+
+/**
+ * ⭐⭐ The bottom of a page drawn over the canvas (Agent, Nodes): the Run bar, or the keyboard when
+ * it is up — whichever is TALLER, never both. ⚠ Both were added once (the bar's height outside, an
+ * `imePadding` inside), and with the keyboard up the Agent's chat and text box got zero height —
+ * the keyboard already covers the bar (phone screenshot, 2026-10-09).
+ */
+@Composable
+internal fun belowChrome(runBar: androidx.compose.ui.unit.Dp): WindowInsets =
+    WindowInsets.ime.union(WindowInsets(bottom = runBar))
+
+/**
+ * ⭐⭐ The view button (the user's mock, 2026-10-11): the CURRENT view, filled violet, so the model
+ * name gets the room the three-part toggle took. ⚠ Two targets in one pill, the user's call: the
+ * ⇄ steps to the next view (Chat, Default, Advanced, round again); the icon and name open a menu
+ * of all three. It replaced the segmented toggle (`docs/LEGACY.md` §9).
+ */
+@Composable
+private fun ViewSwitch(
+    selected: com.abrah.nightmare.MainView,
+    onPick: (com.abrah.nightmare.MainView) -> Unit,
+    hideChat: Boolean = false,
+) {
+    val views = com.abrah.nightmare.MainView.entries.filter {
+        it.isCanvas && !(hideChat && it == com.abrah.nightmare.MainView.AGENT)
+    }
+    fun glyph(v: com.abrah.nightmare.MainView) = when (v) {
+        com.abrah.nightmare.MainView.AGENT -> com.abrah.nightmare.ui.AgentIcon to R.string.agent_title
+        com.abrah.nightmare.MainView.NODES -> com.abrah.nightmare.ui.NodesIcon to R.string.view_nodes
+        else -> com.abrah.nightmare.ui.GraphIcon to R.string.view_graph
+    }
+    var menu by remember { mutableStateOf(false) }
+    val outer = RoundedCornerShape(12.dp)
+    val on = MaterialTheme.colorScheme.onPrimary
+    Box {
+        Row(
+            Modifier.height(48.dp).clip(outer)
+                .border(1.dp, MaterialTheme.colorScheme.outline, outer)
+                .padding(3.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(MaterialTheme.colorScheme.primary),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val choose = stringResource(R.string.views_choose_cd)
+            // ⭐ ONE width for every view (the user, 2026-10-14: "remain the same size"): every
+            // view's icon and name are laid out in the same Box, the others invisible, so the
+            // widest name in this locale sets it and the current one is centred in it.
+            Box(
+                Modifier.fillMaxHeight()
+                    .clickable(onClickLabel = choose) { menu = true }
+                    .padding(start = 12.dp, end = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                for (v in views) {
+                    val (icon, label) = glyph(v)
+                    Row(
+                        Modifier.alpha(if (v == selected) 1f else 0f),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(icon, contentDescription = null, tint = on, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            stringResource(label), style = MaterialTheme.typography.labelLarge, color = on, maxLines = 1,
+                            modifier = if (v == selected) Modifier else Modifier.clearAndSetSemantics { },
+                        )
+                    }
+                }
+            }
+            Box(
+                Modifier.fillMaxHeight()
+                    .clickable { onPick(views[(views.indexOf(selected) + 1) % views.size]) }
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    com.abrah.nightmare.ui.SwapIcon,
+                    contentDescription = stringResource(R.string.views_next_cd),
+                    tint = on, modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+        androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            for (v in views) {
+                val (icon, label) = glyph(v)
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(stringResource(label)) },
+                    leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    onClick = { menu = false; onPick(v) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Name it, with the name it already has.
+ *
+ * ⚠ Pre-populated from the workflow the canvas was opened from, and the field
+ * starts SELECTED so overwriting is one keystroke and keeping it is none.
+ */
+@Composable
+private fun SaveWorkflowDialog(
+    initial: String,
+    /** ⚠ Used only when [initial] is blank — a re-save keeps its own name. */
+    suggested: String = "",
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+    /**
+     * ⭐⭐ Why this name will not do, or null. ⚠ Checked HERE so the dialog can
+     * refuse and stay open.
+     */
+    validate: (String) -> String? = { null },
+) {
+    // ⚠ The suggestion only when there is nothing to keep: re-saving an
+    // existing flow must offer ITS name, or Save quietly becomes Save As.
+    //
+    // ⭐⭐ A [TextFieldValue] with the caret at the END, and the keyboard up on
+    // open. The user's call, 2026-09-15: the box arrives pre-filled with
+    // `t2i_01`, and the next thing anyone does is type — so a dialog that
+    // needs a tap to focus and another to reach the end of the word is two taps
+    // of nothing.
+    //
+    // ⚠ The caret at the END rather than a full selection, unlike the node
+    // rename: a suggested name is usually kept and EXTENDED ("t2i_01" →
+    // "t2i_01 harbour"), where a node's existing id is usually replaced.
+    val focus = remember { FocusRequester() }
+    var field by remember {
+        val text = initial.ifBlank { suggested }
+        mutableStateOf(TextFieldValue(text, TextRange(text.length)))
+    }
+    val name = field.text
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    // ⚠⚠ **The reason this exists.** Save used to close the dialog and call the
+    // view model, which set `workflowError` — a field rendered ONLY on the
+    // Workflows screen. So an invalid name closed the dialog, saved nothing,
+    // and said nothing anywhere the user was looking. Reported from the phone
+    // as "flows with invalid names don't save at all, nothing happens",
+    // 2026-09-10.
+    val why = validate(name)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                if (initial.isBlank()) stringResource(R.string.save_workflow)
+                else stringResource(R.string.save_workflow_named, initial)
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedTextField(
+                    value = field,
+                    onValueChange = { field = it },
+                    label = { Text(stringResource(R.string.name)) },
+                    singleLine = true,
+                    modifier = Modifier.focusRequester(focus),
+                )
+                // ⚠ The rule is stated BEFORE it is broken, not only after:
+                // "letters, digits, spaces, - and _ only" is not guessable, and
+                // a user who has just been refused wants to know what to type,
+                // not what they typed.
+                if (why != null && name.isNotBlank()) {
+                    Text(
+                        why,
+                        style = NoteTextStyle,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                } else if (initial.isNotBlank() && name.trim() == initial) {
+                    Text(
+                        stringResource(R.string.save_replaces),
+                        style = NoteTextStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            // ⚠ Disabled while the name is refused, so "save" never does
+            // nothing. A button that is enabled and silently no-ops is worse
+            // than one that is visibly unavailable with the reason above it.
+            StudioButton(
+                onClick = { onSave(name) },
+                enabled = name.isNotBlank() && why == null,
+            ) { Text(stringResource(R.string.save)) }
+        },
+        dismissButton = { StudioOutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+@Composable
+private fun RunBar(
+    state: CanvasState,
+    busy: Boolean,
+    onRun: () -> Unit,
+    /** ⚠ The SAME callback the top bar uses, so the run log's "in Results" row
+     *  and the Results button cannot land anywhere different. */
+    onResults: () -> Unit = {},
+    onCancelRun: (() -> Unit)? = null,
+    onBatch: () -> Unit,
+    /** ⭐ Which run of how many, while a sweep is going. Null when it is not. */
+    batchProgress: Pair<Int, Int>? = null,
+    onCancelBatch: () -> Unit = {},
+    armedSweeps: List<ArmedSweep> = emptyList(),
+    onReleaseSweep: (ArmedSweep) -> Unit = {},
+    onAdd: () -> Unit,
+    onBack: () -> Unit,
+    onToggleZoomLock: () -> Unit,
+    onTogglePanLock: () -> Unit,
+    onSelectAll: () -> Unit,
+    onDeleteSelected: () -> Unit,
+    onClearSelection: () -> Unit,
+    /** ⭐⭐ Duplicate the selection — [CanvasState.cloneSelected]. */
+    onCloneSelected: () -> Unit = {},
+    runError: String? = null,
+    onDismissRunError: () -> Unit = {},
+    onDismissMessage: () -> Unit = {},
+    runLog: RunLogState = RunLogState(),
+    /** ⭐ True when a [RunFrame] shows the log's lines during a run, so the panel leaves them out. */
+    logInFrame: Boolean = false,
+    onCloseRunLog: () -> Unit = {},
+    /**
+     * ⚠ Computed by the caller, which is the only scope with the run status and
+     * an editor. This composable draws the bar; it does not know how a seed is
+     * found or written.
+     */
+    seeds: List<SeedState> = emptyList(),
+    onToggleSeed: (SeedState) -> Unit = {},
+    /** ⭐ Backend relaunches this graph will cost. 0 on a single-checkpoint one. */
+    plannedLoads: Int = 0,
+    /** ⚠ False in the Nodes view: no + Node, no zoom or pan locks — there is no graph on screen. */
+    graphControls: Boolean = true,
+    /** ⭐ The RAM pill beside the seed — [RunLogPanel]. */
+    ram: String? = null,
+    /** ⭐ Folded to the one row: no log panel, the run's time in place of the zoom readout. */
+    folded: Boolean = false,
+    /** ⭐ The chevron at the top of the card. Null draws none. */
+    onToggleFold: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    // ⭐⭐ Its own card (`PanelCard`), the page's card's edges: [SCREEN_GUTTER] out, [PANEL_PAD] in
+    // (the user, 2026-10-10: containers, and one margin from both edges).
+    com.abrah.nightmare.ui.PanelCard(
+        modifier.fillMaxWidth().padding(horizontal = com.abrah.nightmare.ui.SCREEN_GUTTER).padding(top = 8.dp),
+    ) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            // ⚠ The chevron strip IS the top padding, so it costs the bar ~6dp, not a row.
+            .padding(
+                start = com.abrah.nightmare.ui.PANEL_PAD, end = com.abrah.nightmare.ui.PANEL_PAD,
+                bottom = com.abrah.nightmare.ui.PANEL_PAD,
+                top = if (onToggleFold != null) 0.dp else com.abrah.nightmare.ui.PANEL_PAD,
+            ),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // ⭐⭐ A sheet's handle: the whole strip toggles, the chevron says which way. ⚠ Full width,
+        // so an 18dp-tall target is still easy to hit; nothing else in the bar moves.
+        if (onToggleFold != null) Box(
+            Modifier
+                .fillMaxWidth()
+                .height(18.dp)
+                .clickable(onClick = onToggleFold),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (folded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = stringResource(if (folded) R.string.cd_open_bar else R.string.cd_fold_bar),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        // ⚠ The refusal from the last gesture, shown here rather than as a
+        // transient toast. "That would make a loop" is a rule the user is
+        // learning; a message that vanishes teaches nothing.
+        // ⚠ Run failures first: they are the ones a user is waiting on.
+        // ⚠ Both through [ErrorNotice]: a refused wire and a failed Run are the
+        // same kind of news and were drawn two ways (`docs/UI.md` §8.5).
+        runError?.let { com.abrah.nightmare.ui.ErrorNotice(it, reportable = true, onClose = onDismissRunError) }
+        state.message?.let { com.abrah.nightmare.ui.ErrorNotice(it, onClose = onDismissMessage) }
+        // ⭐⭐ What is happening RIGHT NOW, directly above the button that
+        // started it. ⚠ Below the errors and above the controls: a failure is
+        // the more urgent thing to read, and Run must stay at the bottom edge
+        // where the thumb already is.
+        // ⭐⭐ The locked seed, wherever it is. ⚠ Read from the GRAPH rather
+        // than remembered: the lock IS the sampler's `seed` param, so there is
+        // one copy of the fact and no way for the badge and the render to
+        // disagree.
+        // ⚠ One per sampler, named when there are several — see the caller.
+        if (!folded) RunLogPanel(
+            runLog,
+            onClose = onCloseRunLog,
+            linesInFrame = logInFrame,
+            // ⚠ The same callback the top bar's Results button uses, so the
+            // two cannot land anywhere different.
+            onResults = onResults,
+            // ⚠⚠ Present whenever there IS a sampler, locked or not: a user
+            // cannot tell "a new picture every Run" from "the same one" by
+            // looking at the canvas, and that is the most confusing thing about
+            // Run. `null` here means the graph has no sampler at all.
+            seeds = seeds,
+            onToggleSeed = onToggleSeed,
+            // ⚠ The seed axis is pulled OUT of the chip row: it has its own
+            // row already, and showing it twice would be two controls for one
+            // fact. ⚠ Per sampler, on that sampler's own seed chip.
+            seedSweeps = armedSweeps.filter { it.param == "seed" },
+            onReleaseSeedSweep = onReleaseSweep,
+            armed = armedSweeps.filterNot { it.param == "seed" },
+            onRelease = onReleaseSweep,
+            batch = batchProgress,
+            onCancelBatch = onCancelBatch,
+            ram = ram,
+        )
+        // ⭐ Folded, the bar still shows the seed locks ([SeedChipRow]; the user's call, 2026-10-23): a locked or
+        // random seed changes what Run does, so it is never folded away with the log.
+        else SeedChipRow(
+            seeds, onToggleSeed,
+            seedSweeps = armedSweeps.filter { it.param == "seed" },
+            onReleaseSeedSweep = onReleaseSweep,
+            ram = null,
+        )
+
+        // ⭐⭐⭐ **What the relaunches will cost, BEFORE the button is pressed.**
+        //
+        // `docs/ARCHITECTURE.md` §4: a graph using two checkpoints is scheduled
+        // rather than refused now, and each switch is a kill + relaunch of the
+        // backend costing 2.3–5 s — about a whole render. ⚠ The user's own rule
+        // for this feature: *no refusal and no silent reorder*, which only works
+        // if the cost is visible while they can still change the graph.
+        //
+        // ⚠ Hidden at zero, which is every single-checkpoint graph: a row that
+        // always says "0 model loads" is a row people stop reading.
+        if (plannedLoads > 0 && !busy && !folded) {
+            Text(
+                // ⚠ ~3.5 s, the middle of the measured 2.3–5 s. Said as "about"
+                // because it is a range and a precise-looking number would be a
+                // promise the backend does not make.
+                "$plannedLoads model load${if (plannedLoads == 1) "" else "s"} this run " +
+                    "(about ${plannedLoads * 7 / 2} s of loading)",
+                style = NoteTextStyle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+            )
+        }
+
+        // ⭐⭐ A CONTEXTUAL row while multi-select is on, replacing the normal
+        // one rather than crowding beside it. Four controls already fill this
+        // row on a phone; a fifth and a sixth would ellipsise the lot, and the
+        // golden that caught exactly that is `screen-zoom-locked`.
+        //
+        // ⚠⚠ Keyed on the MODE, not on `selection.isNotEmpty()`. Two reasons,
+        // and both were bugs: an ordinary tap used to select, so the run bar
+        // vanished on every tap and the user was offered Delete when all they
+        // did was open a node; and un-toggling the last selected node used to
+        // put Run back while taps were still toggling — an invisible mode with
+        // no way out, since the way out is the Done in this very row.
+        if (state.multiSelect) {
+            SelectionBar(
+                count = state.selection.size,
+                total = state.workflow.graph.nodes.size,
+                onSelectAll = onSelectAll,
+                onClone = onCloneSelected,
+                onDelete = onDeleteSelected,
+                onDone = onClearSelection,
+            )
+            return@Column
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            // ⚠⚠⚠ **SpaceBetween, and the WEIGHT IS ON RUN**, not on the Add
+            // node slot. Reported from the phone 2026-09-23: "+ Node" drew as
+            // an empty outlined box. The left slot was `weight(1f)`, so it got
+            // whatever Run (124dp) and the locks left, and on a 384dp phone
+            // that was ~50dp for an ~88dp button — the label clipped to
+            // nothing. The goldens were all 411dp, which has just enough.
+            // ⇒ The fixed things are measured first and Run, the only thing
+            // that can give, takes the rest up to [RUN_WIDTH].
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // ⭐⭐⭐ **Add node LEFT, Run in the MIDDLE, the zoom and the locks
+            // RIGHT** — the user's call, 2026-09-22. Run was leftmost, which put
+            // the one button pressed every single time in the corner where a
+            // right thumb has to reach furthest across the phone. Not strictly
+            // centred (the user: *"theres no strict centering rule"*).
+            // Removed at the user's request, 2026-09-10: the Batch button. It
+            // opened a second way to build a sweep, and there is only one now
+            // — arm a knob from its own node.
+            if (graphControls) StudioOutlinedButton(
+                onClick = onAdd,
+                shape = RoundedCornerShape(12.dp),
+                // ⚠ 14 rather than M3's 24: the label is two characters and a
+                // word, and the 20dp saved goes to Run on a narrow phone.
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                // ⚠ One line, never wrapped. A two-line "+ Node" is what a
+                // squeezed slot looks like, and it should be visible as a
+                // layout problem rather than absorbed by the label.
+                Text(
+                    stringResource(R.string.add_node),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
+            // ⭐⭐ Run BECOMES Cancel while a render is in flight, rather than
+            // sitting there greyed out beside a new button.
+            //
+            // ⚠ A disabled Run was the only thing the bar said during a 24 s
+            // SDXL sample, which reads as "the app is stuck" — and there was no
+            // way to stop a render you had already decided was wrong.
+            // ⚠⚠ Completed nodes keep their outputs, so this is cheap to press:
+            // Run again resumes from the cache.
+            // ⚠ `fill = false` + a default min: RUN_WIDTH when there is room,
+            // narrower when there is not, never pushing its neighbours out.
+            val runModifier = Modifier
+                .weight(1f, fill = false)
+                .padding(horizontal = 8.dp)
+                .defaultMinSize(minWidth = RUN_WIDTH)
+            // ⚠ Alone (Default, Chat) it spans the card with NO inset of its own: its 8dp each side
+            // put it further in than everything above it (the user, 2026-10-10).
+            RunButton(
+                busy = busy, onRun = onRun, onCancelRun = onCancelRun,
+                modifier = if (graphControls) runModifier else Modifier.weight(1f),
+            )
+            // ⚠ The right slot: the zoom readout, then the two locks. It WRAPS
+            // its content — see the note on the left slot; every item in here is
+            // a fixed size, so a weight would only steal room from the one slot
+            // that needs it.
+            if (graphControls) Row(
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+            // ⭐ Folded, the run's time takes the zoom readout's place: the log panel that showed
+            // it is hidden, and the time is the one thing a person watches for (the user, 2026-10-15).
+            val runElapsed = rememberRunElapsed(runLog)
+            Text(
+                if (folded && !runLog.idle) formatMs(runElapsed)
+                else zoomLabel(state.viewport.scale),
+                style = MeasureTextStyle,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 4.dp),
+            )
+            // ⭐⭐ Two locks, because they solve different annoyances: one
+            // keeps the graph the same SIZE while you work at it, the other
+            // keeps it in the same PLACE. ⚠ Both are drawn rather than taken
+            // from `material-icons-core`, which has `Lock` and no way to say
+            // WHICH lock -- and no open-padlock at all, so an unlocked state
+            // would have had to be a tint on an identical glyph.
+            LockButton(
+                mark = LockMark.ZOOM,
+                locked = state.zoomLocked,
+                onClick = onToggleZoomLock,
+                what = "zoom",
+            )
+            LockButton(
+                mark = LockMark.PAN,
+                locked = state.panLocked,
+                onClick = onTogglePanLock,
+                what = "canvas movement",
+            )
+            }
+        }
+    }
+    }
+}
+
+/**
+ * ⭐ How wide Run (and Cancel, which replaces it) is drawn.
+ *
+ * ⚠ A `defaultMinSize`, not a fixed width: a longer word in another locale
+ * still grows the button rather than being clipped by it.
+ */
+private val RUN_WIDTH = 124.dp
+
+/**
+ * The zoom readout: one place (`0.3x`, `1.0x`), two only below the old 0.25 floor (`0.15x`),
+ * where one place read 0.15 as "0.1x" or "0.2x". ⚠ Not two places everywhere: at 320dp the
+ * wider `0.28x` squeezed Run (`screen-running-w320`, 2026-10-15).
+ */
+internal fun zoomLabel(scale: Float): String =
+    if (scale >= 0.245f) "%.1fx".format(java.util.Locale.ROOT, scale)
+    else "%.2f".format(java.util.Locale.ROOT, scale).trimEnd('0') + "x"
+
+/** Which lock a padlock glyph stands for. */
+private enum class LockMark { ZOOM, PAN }
+
+/**
+ * A padlock with a mark saying WHICH lock it is.
+ *
+ * ⚠⚠ Drawn rather than taken from `material-icons-core`. That set has exactly
+ * one `Lock` and no `LockOpen` (the open one lives in `material-icons-extended`,
+ * which costs ~55 MB of dex — `app/build.gradle.kts`), so two locks side by side
+ * would have been the same glyph twice, and the unlocked state a tint on it. A
+ * control whose meaning is carried entirely by colour is a control nobody reads.
+ *
+ * ⇒ The shackle OPENS when unlocked, which is the shape everyone already knows,
+ * and the mark beside it says which one this is: a magnifier for zoom, a
+ * four-way arrow for moving the canvas.
+ */
+@Composable
+private fun LockButton(
+    mark: LockMark,
+    locked: Boolean,
+    onClick: () -> Unit,
+    /** For the screen reader, and for the state to be sayable at all. */
+    what: String,
+) {
+    val tint =
+        if (locked) CanvasColors.selectedStroke
+        else MaterialTheme.colorScheme.onSurfaceVariant
+    IconButton(onClick = onClick) {
+        Canvas(
+            Modifier
+                .size(30.dp, 22.dp)
+                .semantics {
+                    contentDescription = if (locked) "$what is locked" else "lock $what"
+                }
+        ) {
+            val h = size.height
+            val stroke = Stroke(width = h * 0.11f)
+            // --- the mark, on the left -------------------------------------
+            val m = h * 0.36f
+            val cx = h * 0.42f
+            val cy = h * 0.52f
+            when (mark) {
+                LockMark.ZOOM -> {
+                    drawCircle(tint, radius = m * 0.62f, center = Offset(cx, cy - m * 0.15f),
+                        style = stroke)
+                    drawLine(
+                        tint,
+                        Offset(cx + m * 0.42f, cy + m * 0.28f),
+                        Offset(cx + m * 0.95f, cy + m * 0.85f),
+                        strokeWidth = h * 0.11f,
+                    )
+                }
+                LockMark.PAN -> {
+                    // A four-way arrow: the universal "this moves".
+                    drawLine(tint, Offset(cx - m, cy), Offset(cx + m, cy), strokeWidth = h * 0.1f)
+                    drawLine(tint, Offset(cx, cy - m), Offset(cx, cy + m), strokeWidth = h * 0.1f)
+                    val a = m * 0.42f
+                    for (d in listOf(-1f, 1f)) {
+                        drawLine(tint, Offset(cx + d * m, cy),
+                            Offset(cx + d * (m - a), cy - a), strokeWidth = h * 0.1f)
+                        drawLine(tint, Offset(cx + d * m, cy),
+                            Offset(cx + d * (m - a), cy + a), strokeWidth = h * 0.1f)
+                        drawLine(tint, Offset(cx, cy + d * m),
+                            Offset(cx - a, cy + d * (m - a)), strokeWidth = h * 0.1f)
+                        drawLine(tint, Offset(cx, cy + d * m),
+                            Offset(cx + a, cy + d * (m - a)), strokeWidth = h * 0.1f)
+                    }
+                }
+            }
+            // --- the padlock, on the right ----------------------------------
+            val bodyW = h * 0.52f
+            val bodyH = h * 0.42f
+            val left = size.width - bodyW
+            val top = h - bodyH
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(left, top),
+                size = Size(bodyW, bodyH),
+                cornerRadius = CornerRadius(h * 0.08f, h * 0.08f),
+            )
+            // ⚠ The shackle: closed sits centred over the body, open is shifted
+            // and shortened on one leg -- the difference has to be a SHAPE, not
+            // a colour.
+            val r = bodyW * 0.34f
+            val shackleX = left + bodyW / 2f + if (locked) 0f else r * 0.9f
+            drawArc(
+                color = tint,
+                startAngle = 180f,
+                sweepAngle = 180f,
+                useCenter = false,
+                topLeft = Offset(shackleX - r, top - r * 1.35f),
+                size = Size(r * 2f, r * 2f),
+                style = stroke,
+            )
+            drawLine(
+                tint,
+                Offset(shackleX - r, top - r * 0.35f),
+                Offset(shackleX - r, top),
+                strokeWidth = h * 0.11f,
+            )
+            if (locked) {
+                drawLine(
+                    tint,
+                    Offset(shackleX + r, top - r * 0.35f),
+                    Offset(shackleX + r, top),
+                    strokeWidth = h * 0.11f,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * What the run bar becomes while nodes are selected.
+ *
+ * ⭐ Icons here and words elsewhere, deliberately: this is a contextual action
+ * bar, where a glyph is the convention and the row is tightest. ⚠ Every one is
+ * from `material-icons-core`, which material3 already brings in --
+ * `material-icons-extended` is thousands of generated classes and cost 55 MB of
+ * dex when it was last on the classpath (`app/build.gradle.kts`).
+ */
+@Composable
+private fun SelectionBar(
+    count: Int,
+    total: Int,
+    onSelectAll: () -> Unit,
+    onClone: () -> Unit,
+    onDelete: () -> Unit,
+    onDone: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "$count of $total selected",
+            style = NoteTextStyle,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        // ⚠ Hidden once everything IS selected, rather than shown doing
+        // nothing. A control that cannot change anything is noise.
+        if (count < total) {
+            StudioOutlinedButton(
+                onClick = onSelectAll,
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+            ) { Text(stringResource(R.string.all), fontSize = 12.sp) }
+        }
+        // ⭐⭐ Clone — asked for 2026-09-22. ⚠ BEFORE the bin, because the row
+        // is ordered by consequence and the destructive one comes last here
+        // (this bar is not [PictureActions]; its Done sits at the end and the
+        // bin beside it is the thing a finger must not find by accident).
+        IconButton(onClick = onClone, enabled = count > 0) {
+            Icon(
+                com.abrah.nightmare.ui.CloneIcon,
+                contentDescription = stringResource(R.string.canvas_cd_duplicate_selected),
+                tint = if (count > 0) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+            )
+        }
+        // ⚠ Disabled, not hidden, at zero: the row must not change shape as the
+        // count crosses one, or the Done button moves under the finger reaching
+        // for it.
+        IconButton(onClick = onDelete, enabled = count > 0) {
+            Icon(
+                Icons.Filled.Delete,
+                contentDescription = stringResource(R.string.canvas_cd_delete_selected),
+                tint = if (count > 0) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                },
+            )
+        }
+        IconButton(onClick = onDone) {
+            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.canvas_cd_clear_selection))
+        }
+    }
+}
+
+/**
+ * A picture, full screen, dismissed by tapping it.
+ *
+ * ⚠ Its own Box over everything rather than a Dialog: a Dialog gets its own
+ * window and its own insets, and on an edge-to-edge screen that means a picture
+ * inset by the status bar with black bars the user did not ask for.
+ */
+@Composable
+private fun FullscreenImage(
+    image: ImageBitmap,
+    onDismiss: () -> Unit,
+    /**
+     * ⭐⭐ The MP4 to PLAY here instead of drawing [image], when this node made
+     * a clip.
+     *
+     * ⚠⚠ [image] is still required and is still the poster: the file can be
+     * gone (it lives in `cacheDir`, which Android may clear) and a viewer that
+     * then showed nothing would be worse than one showing the first frame.
+     * [com.abrah.nightmare.ui.ClipPlayer] draws nothing for a missing file, so
+     * the still behind it is what remains.
+     *
+     * ⚠ Zoom is OFF while a clip is playing — see the gesture block below.
+     */
+    videoPath: String? = null,
+    /** The seed that made it, when a sampler upstream has one. */
+    seed: String? = null,
+    /** ⚠ Whether a sampler is upstream at all — the row shows either way. */
+    hasSampler: Boolean = false,
+    /**
+     * ⭐⭐ Nothing over the picture at all.
+     *
+     * ⚠ True for a viewer opened on an INPUT — a photo being framed, or a
+     * sampler's framed preview. Every control up there acts on a RESULT, and
+     * so does every readout: a seed, a "tap to close" hint and a bin all belong
+     * to something the graph produced.
+     */
+    chromeless: Boolean = false,
+    /** Non-null only for a picture the user CHOSE, i.e. a `load_image` node. */
+    onPick: (() -> Unit)? = null,
+    onClear: (() -> Unit)? = null,
+    /** ⭐ Write this picture to the gallery. Non-null for a RENDER. */
+    onSave: (() -> Unit)? = null,
+    /** ⭐ Hand this picture to another app. Non-null wherever [onSave] is. */
+    onShare: (() -> Unit)? = null,
+    /** ⭐ Send it into a flow. Non-null wherever [onShare] is. */
+    onSendTo: (() -> Unit)? = null,
+    /** ⭐ Keep it in Results, with the graph that made it. */
+    onKeep: (() -> Unit)? = null,
+    /** ⭐ The STAR: keep it AND flag it Favourite. [PictureActions] has the table. */
+    onStar: (() -> Unit)? = null,
+    favourite: Boolean = false,
+    /** ⚠ Non-null when the flow's autosave already keeps every Run — the disk is dimmed. */
+    keepDisabledReason: String? = null,
+    onDisabledAction: ((String) -> Unit)? = null,
+    /** ⭐ Whether this picture is already in Results — the star's amber/grey state. */
+    kept: Boolean = false,
+    /**
+     * ⭐ Drop this render from the node that made it.
+     *
+     * ⚠ Confirmed, because there is no other way to clear an output and no undo
+     * once it is gone.
+     */
+    onDeleteOutput: (() -> Unit)? = null,
+    /**
+     * ⭐⭐ Pin the seed that made this picture onto the sampler.
+     *
+     * ⚠ Null when there is nothing to pin, or when it is pinned already — the
+     * action and its undo live in the run bar, not here, so that the LOCKED
+     * state is visible without opening a picture.
+     */
+    /** ⭐ The seed's lock toggle ([seedLock]). */
+    seedLock: SeedLock? = null,
+    onToggleSeedLock: (SeedLock) -> Unit = {},
+    /** ⭐⭐ Enlarge this picture — see [PictureActions.onUpscale]. */
+    onUpscale: (() -> Unit)? = null,
+    /** ⭐⭐ Why it is dimmed — see [PictureActions.upscaleDisabledReason]. */
+    upscaleDisabledReason: String? = null,
+    /** ⭐⭐ ⓘ — see [PictureActions.onInfo]. */
+    onInfo: (() -> Unit)? = null,
+    /**
+     * ⭐⭐⭐ **The other pictures on this node, to swipe between** — Received
+     * then Made on an auto-upscaling output. Asked for 2026-09-22.
+     *
+     * ⚠ [image] is still the one being shown, and [pageIndex] says where it
+     * sits in this list. A swipe calls [onPage], which moves `state.viewing` —
+     * so every action above is rebound to the picture that is now on screen
+     * rather than to the one the viewer opened on.
+     *
+     * ⚠⚠ Empty or one long = no pager, and the viewer behaves exactly as it
+     * did. The swipe is disabled while zoomed, or a drag meant to pan would
+     * flick to the next picture and throw the zoom away.
+     */
+    pages: List<androidx.compose.ui.graphics.ImageBitmap> = emptyList(),
+    pageIndex: Int = 0,
+    onPage: (Int) -> Unit = {},
+) {
+    // ⭐ The player behind a clip, for ⋯ Save this frame ([com.abrah.nightmare.ui.saveClipFrame]).
+    val clipHandle = com.abrah.nightmare.ui.rememberClipHandle()
+    val frameScope = rememberCoroutineScope()
+    val frameCtx = androidx.compose.ui.platform.LocalContext.current
+    val frameSaved = androidx.compose.ui.res.stringResource(R.string.clip_frame_saved)
+    val frameFailed = androidx.compose.ui.res.stringResource(R.string.clip_frame_failed)
+    // ⚠⚠ BACK CLOSES THE VIEWER. Without this the system back went to the
+    // activity, which has no back stack -- so the one gesture every Android user
+    // makes to leave a fullscreen picture QUIT THE APP, losing the canvas
+    // underneath it. Reported from the phone, 2026-09-09. ⚠ The viewer is a Box
+    // in the same window, not a Dialog, so nothing handles it for us.
+    BackHandler(onBack = onDismiss)
+    // ⚠⚠ Nothing keeps keyboard focus under a picture (GitHub #66): a text field focused before the viewer opened
+    // drew its cursor handle OVER it (the handle is a popup, above this Box) and kept the keyboard up.
+    val viewerFocus = androidx.compose.ui.platform.LocalFocusManager.current
+    val viewerKeyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        viewerFocus.clearFocus(force = true)
+        viewerKeyboard?.hide()
+    }
+
+    // ⚠⚠ Zoom lives HERE, not in the canvas viewport: this is a picture being
+    // looked at, and a 512-square render on a 1080-wide screen is drawn at 2x
+    // already -- the detail a person wants to check is under the interpolation
+    // until they can push in past it.
+    // ⚠⚠ Held as STATE objects rather than read out with `by`: they are
+    // handed to [viewerZoom], whose gesture lambda outlives the composition
+    // that built it.
+    val scaleState = remember { mutableStateOf(1f) }
+    val offsetState = remember { mutableStateOf(Offset.Zero) }
+    val scale by scaleState
+    val offset by offsetState
+    var box by remember { mutableStateOf(IntSize.Zero) }
+    val bands = rememberViewerBands()
+    val (roomTop, roomBottom) = bands.room()
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.94f))
+            .onSizeChanged { box = it }
+            // ⚠ A clip's gesture is on its own box ABOVE the player (below), so it is not set here.
+            //
+            // ⚠⚠⚠ [viewerZoom], not `detectTransformGestures`: the latter
+            // consumes every pointer event it sees, so the pager below never got
+            // a drag and swiping between this node's pictures did nothing at
+            // all. The Results viewer learned this on 2026-09-10; the gesture is
+            // one function now so the next fix lands on both.
+            .then(
+                if (videoPath != null) Modifier
+                else Modifier.viewerZoom(
+                    key = pageIndex,
+                    scale = scaleState,
+                    offset = offsetState,
+                    bounds = { box },
+                    onDismiss = onDismiss,
+                ),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        // ⭐⭐ A clip PLAYS here; a picture is drawn. ⚠ Same box, same padding
+        // and the same action row underneath, because it is the same viewer —
+        // Save, Share, Keep and the seed all mean what they meant, and a
+        // second fullscreen built for video would be a second place for them
+        // to drift.
+        if (videoPath != null) {
+            // ⭐ A clip zooms like a picture (GitHub #66): the player is a `TextureView`, so [viewerPicture] scales
+            // it, and the gesture, the same [viewerZoom] as a picture's, is on the player's PARENT: in the Results
+            // pager a box layered above it as a sibling never saw a touch (the player's view won the hit test).
+            Box(
+                Modifier.fillMaxSize().viewerZoom(
+                    key = videoPath,
+                    scale = scaleState,
+                    offset = offsetState,
+                    bounds = { box },
+                    onDismiss = onDismiss,
+                ),
+            ) {
+                com.abrah.nightmare.ui.ClipPlayer(
+                    path = videoPath,
+                    handle = clipHandle,
+                    modifier = Modifier.fillMaxSize()
+                        .viewerPicture(scale, offset, chromeless = chromeless, top = roomTop, bottom = roomBottom),
+                )
+            }
+        } else if (pages.size > 1) {
+            // ⭐⭐⭐ **Swipe between this node's pictures** — Received ⇄ Made,
+            // the user's call 2026-09-22: *"in fullscreen i want to swipe to
+            // upscaled img and backwards when zoomed out"*.
+            //
+            // ⚠⚠ `userScrollEnabled` is the load-bearing half, exactly as in
+            // the Results viewer: a horizontal drag on a ZOOMED picture has to
+            // pan it, not flick to the next one, or examining an edge throws
+            // away the zoom that was just set up.
+            val pager = androidx.compose.foundation.pager.rememberPagerState(
+                initialPage = pageIndex.coerceIn(0, pages.size - 1),
+                pageCount = { pages.size },
+            )
+            // ⚠⚠ The swipe MOVES `state.viewing`, so the action row above is
+            // rebound to the picture now on screen. Without this, Keep and the
+            // bin would go on acting on whichever picture the viewer opened on.
+            LaunchedEffect(pager.currentPage) { onPage(pager.currentPage) }
+            // ⚠ A new picture starts unzoomed — carrying 3x onto the next one
+            // shows a corner of something the user has not seen whole.
+            LaunchedEffect(pager.currentPage) {
+                scaleState.value = 1f
+                offsetState.value = Offset.Zero
+            }
+            androidx.compose.foundation.pager.HorizontalPager(
+                state = pager,
+                modifier = Modifier.fillMaxSize(),
+                userScrollEnabled = scale <= 1.01f,
+            ) { page ->
+                Image(
+                    bitmap = pages[page],
+                    contentDescription = stringResource(R.string.canvas_cd_picture_fullscreen),
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .viewerPicture(
+                            // ⚠ Only the page being LOOKED at carries the zoom.
+                            // A neighbour peeking in at 3x is a smear.
+                            if (page == pager.currentPage) scale else 1f,
+                            if (page == pager.currentPage) offset else Offset.Zero,
+                            chromeless = chromeless,
+                            top = roomTop,
+                            bottom = roomBottom,
+                        ),
+                )
+            }
+        } else {
+        Image(
+            bitmap = image,
+            contentDescription = stringResource(R.string.canvas_cd_picture_fullscreen),
+            // ⚠ Fit, never Crop: this is the one place the whole image must be
+            // visible, and cropping here would hide the edges of what was made.
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxSize()
+                // ⚠ Room above for the actions and below for the seed, so
+                // neither sits ON the picture (2026-09-17, "seed below image"),
+                // and a clip so a ZOOM cannot spend it — [viewerPicture].
+                .viewerPicture(scale, offset, chromeless = chromeless, top = roomTop, bottom = roomBottom),
+        )
+        }
+        // ⚠⚠ The actions at the TOP, like the Results viewer's — which moved
+        // there because the gesture bar and the swipe live along the bottom
+        // edge, and that is just as true here. `docs/UI.md` §8.3.
+        // ⚠⚠ A COLUMN, not one Row. The seed pill used to sit at the END of the
+        // action row, and with five actions in front of it the pill ran off the
+        // right edge — its copy and lock buttons were drawn OFF-SCREEN. Seen on
+        // the phone 2026-09-15: the pill wrapped to two lines and neither button
+        // was there. ⇒ Actions on one line, the seed on its own. There is no
+        // shortage of vertical space over a full-screen picture and there is
+        // plainly a shortage of horizontal.
+        // ⚠⚠⚠ **ONE gate for the whole overlay.** Gating the BUTTONS on "this is
+        // an input" and leaving the seed row and the hint ungated is how a
+        // sampler's fullscreen still showed `seed random` and `tap to close`
+        // after the buttons were removed — reported 2026-09-15, and it was the
+        // same half-fix twice. A viewer over an INPUT shows the picture and
+        // nothing else.
+        // ⭐⭐ CENTRED, and the seed BELOW the picture (the user's call,
+        // 2026-09-17): the row leaned right, and the seed sat in the action
+        // band where it read as one more button.
+        if (!chromeless) Row(
+            Modifier
+                .align(Alignment.TopCenter)
+                .viewerBand(bands, top = true)
+                .statusBarsPadding()
+                // ⚠ `docs/UI.md` §7.2 — an inset is not padding.
+                .padding(top = 32.dp, end = 8.dp, bottom = 8.dp, start = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            // ⚠ White rather than the theme's colours: this row sits on the
+            // picture, not on a surface, and a primary-tinted icon over an
+            // arbitrary photo is a coin toss for contrast.
+            if (onPick != null && onClear != null) {
+                ImageActions(onPick = onPick, onClear = onClear, tint = Color.White)
+            }
+            // ⭐ The SAME row the inspector draws, in the same order.
+            PictureActions(
+                tint = Color.White,
+                deleteTint = Color.White,
+                isClip = videoPath != null,
+                onDelete = onDeleteOutput,
+                // ⚠ The disk KEEPS and the arrow DOWNLOADS since 2026-09-15;
+                // `onSave` was always the gallery write, so it moved rather
+                // than changed. [PictureActions] has the table.
+                onKeep = onKeep,
+                onDownload = onSave,
+                onShare = onShare,
+                onSendTo = onSendTo,
+                onStar = onStar,
+                kept = kept,
+                favourite = favourite,
+                keepDisabledReason = keepDisabledReason,
+                onDisabledAction = onDisabledAction,
+                starKeptTint = com.abrah.nightmare.ui.StarKept,
+                starIdleTint = com.abrah.nightmare.ui.StarIdle,
+                onUpscale = onUpscale,
+                upscaleDisabledReason = upscaleDisabledReason,
+                onSaveFrame = videoPath?.let { path ->
+                    {
+                        val at = clipHandle.positionMs
+                        frameScope.launch {
+                            val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                runCatching { com.abrah.nightmare.ui.saveClipFrame(frameCtx, path, at) }.isSuccess
+                            }
+                            android.widget.Toast.makeText(frameCtx, if (ok) frameSaved else frameFailed, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                onInfo = onInfo,
+            )
+        }
+        if (!chromeless) Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .viewerBand(bands, top = false)
+                .navigationBarsPadding()
+                .padding(bottom = 20.dp, start = 8.dp, end = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            // ⚠ The lock goes INSIDE the seed's own container, not in the
+            // loose row: a lock icon beside save and delete has no visible subject.
+            // ⚠⚠ Shown whenever a SAMPLER is upstream, not only when a seed is
+            // already known. [seedFor] returns null while the sampler still says
+            // `0` ("roll a new one each Run") and nothing has rolled yet — so
+            // before the first Run the row vanished entirely, and with it the
+            // copy button. Reported 2026-09-15 as "seed doesn't have a copy btn
+            // in fullscreen": the button was never missing, the whole row was.
+            // ⭐⭐ The SIZE first, in its own pill, then the seed in its own —
+            // asked for 2026-09-22. Two facts about different things, so two
+            // containers ([SizePill]'s note).
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SizePill(image.width, image.height, tint = Color.White)
+                if (seed != null) {
+                    SeedRow(
+                        seed, tint = Color.White,
+                        locked = seedLock?.locked == true,
+                        onToggleLock = seedLock?.let { l -> { onToggleSeedLock(l) } },
+                    )
+                } else if (hasSampler) {
+                    SeedRow(null, tint = Color.White)
+                }
+            }
+            if (onPick == null && seed == null && onSave == null) {
+                Text(
+                    if (scale > 1.01f) "double tap to fit" else "tap to close",
+                    style = NoteTextStyle,
+                    color = Color.White.copy(alpha = 0.6f),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * ⭐ The band a fullscreen viewer keeps clear above (actions) and below (seed)
+ * its picture. ⚠ Shared with `ResultViewer`, so both viewers frame alike.
+ */
+internal val VIEWER_CHROME = 96.dp
+
+/**
+ * ⭐⭐ The viewer chrome's REAL height, top row and bottom pills, measured rather than assumed.
+ *
+ * ⚠⚠ [VIEWER_CHROME] was a guess: the top row is the status-bar inset + 32 dp + an icon row + 8 dp,
+ * the bottom the navigation inset + 20 dp + the pills (+ the page count), both past 96 dp on most
+ * phones, so a tall narrow picture ran under the buttons and the seed (Telegram #6291, 2026-10-15).
+ * Both viewers measure their bands here and keep the picture clear of them; [VIEWER_CHROME] is the
+ * floor until the first measure.
+ */
+@androidx.compose.runtime.Stable
+internal class ViewerBands {
+    var top by androidx.compose.runtime.mutableIntStateOf(0)
+    var bottom by androidx.compose.runtime.mutableIntStateOf(0)
+}
+
+@Composable
+internal fun rememberViewerBands(): ViewerBands = remember { ViewerBands() }
+
+/** ⚠ FIRST in a band's chain, before its insets and padding, so it measures all of it. */
+internal fun Modifier.viewerBand(bands: ViewerBands, top: Boolean): Modifier =
+    onSizeChanged { if (top) bands.top = it.height else bands.bottom = it.height }
+
+/** ⭐ The room the picture keeps above and below: the band plus a gap, never less than [VIEWER_CHROME]. */
+@Composable
+internal fun ViewerBands.room(): Pair<androidx.compose.ui.unit.Dp, androidx.compose.ui.unit.Dp> =
+    with(androidx.compose.ui.platform.LocalDensity.current) {
+        maxOf(VIEWER_CHROME, top.toDp() + 8.dp) to maxOf(VIEWER_CHROME, bottom.toDp() + 8.dp)
+    }
+
+/**
+ * ⭐⭐⭐ **The picture inside a fullscreen viewer** — the chrome band, the
+ * zoom, and the CLIP that keeps the second inside the first.
+ *
+ * ⚠⚠⚠ Asked for 2026-09-22: *"in zoom views dont allow zoom to leak
+ * towards the top and bottom icons/text, pls set boundary for it."* Both viewers
+ * already reserved [VIEWER_CHROME] with `padding`, but `graphicsLayer` scales
+ * the drawing AFTER layout — at 3x the picture simply drew over the action row
+ * and the seed pill, which are the two things a person is reading while they
+ * zoom. `clipToBounds` before the layer is what confines it; the padding alone
+ * never could.
+ *
+ * ⚠⚠ ONE function, both viewers (`FullscreenImage` here and
+ * `ResultViewer`). They had two copies of the same four lines and the comment in
+ * the second already claimed it matched the first — the horizontal inset did
+ * not (8 vs 12), so they were unified here rather than left to drift again.
+ */
+/**
+ * ⭐⭐⭐ **The zoom gesture a fullscreen viewer answers to** — one definition,
+ * both viewers.
+ *
+ * Pinch to zoom about the point under the fingers, drag to pan once zoomed,
+ * double tap in and out, single tap to close at 1x only.
+ *
+ * ⚠⚠⚠ **It consumes ONLY when the gesture is really ours** — two fingers
+ * down, or already zoomed in. `detectTransformGestures` consumes every event it
+ * sees, so a one-finger drag at 1x never reached the pager underneath and
+ * swiping between pictures did nothing at all. Reported from the phone
+ * 2026-09-10 against the Results viewer, and the canvas viewer had the same
+ * `detectTransformGestures` until a pager was put under it too (2026-09-22).
+ *
+ * ⚠⚠ [scale] and [offset] are passed as STATE, not as values: the gesture
+ * lambda outlives the composition that created it (`pointerInput` is keyed on
+ * [key]), so a captured `Float` would be the zoom level from whenever the
+ * pointer handler last restarted.
+ *
+ * @param bounds the viewer's size, for [clampOffset]. `IntSize.Zero` disables
+ *   clamping — measure the box and pass it, or a fling puts the picture off
+ *   screen with no way back but closing the viewer.
+ */
+internal fun Modifier.viewerZoom(
+    key: Any?,
+    scale: androidx.compose.runtime.MutableState<Float>,
+    offset: androidx.compose.runtime.MutableState<Offset>,
+    bounds: () -> IntSize,
+    onDismiss: () -> Unit,
+    /**
+     * ⭐ A tap on the left or right [EDGE_TAP] of the viewer at 1x: -1 or +1, at once, with no slide (a tester,
+     * Saved #7314: "switch with one press on the left/right side without an animation, like in Telegram").
+     * Null: the whole picture is the tap that closes.
+     */
+    onEdgeTap: ((Int) -> Unit)? = null,
+): Modifier {
+    fun clampOffset(o: Offset, sc: Float): Offset {
+        val b = bounds()
+        if (b.width == 0 || b.height == 0) return o
+        return Offset(
+            o.x.coerceIn(-b.width * (sc - 1f) / 2f, b.width * (sc - 1f) / 2f),
+            o.y.coerceIn(-b.height * (sc - 1f) / 2f, b.height * (sc - 1f) / 2f),
+        )
+    }
+    return this
+        .pointerInput(key) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                val before = scale.value
+                do {
+                    val event = awaitPointerEvent()
+                    val fingers = event.changes.count { it.pressed }
+                    if (fingers > 1 || scale.value > 1.01f) {
+                        val next = (scale.value * event.calculateZoom()).coerceIn(1f, 8f)
+                        val pan = event.calculatePan()
+                        val centroid = event.calculateCentroid(useCurrent = false)
+                        val b = bounds()
+                        // ⚠⚠ The point under the fingers STAYS under the fingers.
+                        // `graphicsLayer` scales about the centre, so zooming
+                        // about a centroid means moving the layer by the
+                        // difference — without it the picture zooms towards its
+                        // middle and the detail being examined slides away.
+                        val v = Offset(centroid.x - b.width / 2f, centroid.y - b.height / 2f)
+                        val moved =
+                            if (next != scale.value && b.width > 0) {
+                                v - (v - offset.value) * (next / scale.value) + pan
+                            } else {
+                                offset.value + pan
+                            }
+                        scale.value = next
+                        // ⚠ Snapping home at 1x: a pan that leaves the picture
+                        // off-centre at rest is a viewer needing tidying before
+                        // it can be read.
+                        offset.value = if (next <= 1.01f) Offset.Zero else clampOffset(moved, next)
+                        // ⚠ Only the changes that actually MOVED. Consuming a
+                        // bare down would eat the tap that closes the viewer.
+                        event.changes.forEach { if (it.positionChanged()) it.consume() }
+                    }
+                } while (event.changes.any { it.pressed })
+                // ⭐ GitHub #66 (a Results clip will not zoom, the canvas one does): once per gesture,
+                // so the phone tells "the pinch never arrived" from "it arrived and the clip did not scale".
+                if (scale.value != before) android.util.Log.i("NmViewer", "zoom $before -> ${scale.value} on $key")
+            }
+        }
+        .pointerInput(key) {
+            detectTapGestures(
+                // ⚠ Double tap is the fast way in and the fast way out. A pinch
+                // on a phone held one-handed is awkward, and this is the gesture
+                // every photo viewer already answers to.
+                onDoubleTap = { at ->
+                    android.util.Log.i("NmViewer", "double tap at ${scale.value} on $key")
+                    if (scale.value > 1.01f) {
+                        scale.value = 1f
+                        offset.value = Offset.Zero
+                    } else {
+                        val b = bounds()
+                        scale.value = 3f
+                        val v = Offset(at.x - b.width / 2f, at.y - b.height / 2f)
+                        offset.value = clampOffset(v - v * 3f, 3f)
+                    }
+                },
+                // ⚠⚠ A single tap closes ONLY at 1x. While zoomed a tap is the
+                // end of a pan that moved less than the slop, and closing on it
+                // would throw away the zoom the user just set up — the way out
+                // is back, or double tap out first.
+                onTap = { if (scale.value <= 1.01f) onDismiss() },
+            )
+        }
+        // ⚠⚠ AFTER the tap detector, so it sees the Main pass first: it consumes the up of an edge tap, which
+        // cancels the detector's close, and fires on the up instead of after the double-tap wait. A drag is
+        // consumed by the pager, so `waitForUpOrCancellation` gives null and the swipe stays a swipe.
+        .then(
+            if (onEdgeTap == null) Modifier else Modifier.pointerInput(key) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    if (scale.value > 1.01f) return@awaitEachGesture
+                    val side = when {
+                        down.position.x < size.width * EDGE_TAP -> -1
+                        down.position.x > size.width * (1f - EDGE_TAP) -> 1
+                        else -> return@awaitEachGesture
+                    }
+                    val up = waitForUpOrCancellation() ?: return@awaitEachGesture
+                    if ((up.position - down.position).getDistance() > viewConfiguration.touchSlop) return@awaitEachGesture
+                    up.consume()
+                    onEdgeTap(side)
+                }
+            },
+        )
+}
+
+/** ⭐ How much of the viewer's width, on each side, is a tap to the previous or next picture ([viewerZoom]). */
+internal const val EDGE_TAP = 0.3f
+
+internal fun Modifier.viewerPicture(
+    scale: Float,
+    offset: Offset,
+    /** ⚠ A viewer over an INPUT draws no chrome, so it keeps no band for one. */
+    chromeless: Boolean = false,
+    /** ⭐ The room above and below, from [ViewerBands.room]: what the chrome really takes. */
+    top: androidx.compose.ui.unit.Dp = VIEWER_CHROME,
+    bottom: androidx.compose.ui.unit.Dp = VIEWER_CHROME,
+): Modifier = this
+    .padding(
+        start = 12.dp,
+        end = 12.dp,
+        top = if (chromeless) 12.dp else top,
+        bottom = if (chromeless) 12.dp else bottom,
+    )
+    .clipToBounds()
+    .graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+        translationX = offset.x
+        translationY = offset.y
+    }
+
+/**
+ * ⭐⭐ THE confirm for deleting nodes — from the run bar's selection and from the
+ * inspector alike.
+ *
+ * ⚠⚠ They were two dialogs, titled `Delete this node?` and `Delete "id"?`, while
+ * the inspector's comment claimed they matched. The design review, 2026-09-15.
+ * ⚠ It NAMES them: the dialog covers the canvas, so "Delete 3 nodes?" is a
+ * question the user cannot check.
+ */
+@Composable
+internal fun ConfirmDeleteNodes(ids: List<String>, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    com.abrah.nightmare.ui.ConfirmDelete(
+        title = if (ids.size == 1) stringResource(R.string.canvas_delete_node_title, ids[0])
+        else pluralStringResource(R.plurals.canvas_delete_nodes_title, ids.size, ids.size),
+        body = if (ids.size == 1) stringResource(R.string.canvas_delete_node_body)
+        else stringResource(R.string.canvas_delete_nodes_body, ids.joinToString(", ")),
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+    )
+}
+
+/**
+ * ⭐⭐⭐ **Point one sampler at another checkpoint, and say what else moves.**
+ *
+ * ⚠⚠ **Two radio groups, not two checkboxes**, and the difference is the
+ * DEFAULT. A checkbox's unticked state is "no", so the safe default was "take
+ * nothing" — which made the recommended answer the one that needed two extra
+ * taps, and left the dialog saying nothing about which answer is usually right.
+ * A radio pair states both answers and can recommend one. The user's call,
+ * 2026-09-15: *"the options can be radio: Use model prompts (recommended)
+ * (default) and use same prompt. and one more radio set for other params"*.
+ *
+ * ⚠⚠⚠ **Recommended means DEFAULT here, or the word is decoration.** Both
+ * groups therefore default to the checkpoint's own values, which is also what
+ * the top-bar picker already does (`modelRecipeRetarget`, `modelPromptRetarget`)
+ * — asking for a checkpoint is asking for its published recipe. ⚠ This reverses
+ * the "off by default" note of earlier the same day, and it is safe to reverse
+ * precisely because the dialog now SHOWS the text it would write: the argument
+ * for defaulting to "keep mine" was that a silent overwrite of a typed sentence
+ * is the worst trade in the app, and nothing here is silent.
+ *
+ * ⚠ A family change is stated as a fact rather than a warning — every wire
+ * survives it, because the two sampler types declare the same ports
+ * (`docs/ARCHITECTURE.md` §5.7). What DOES change is the render size, and that
+ * is the half worth saying.
+ */
+@Composable
+private fun ModelSwapDialog(
+    swap: com.abrah.nightmare.HarnessViewModel.ModelSwap,
+    onConfirm: (com.abrah.nightmare.HarnessViewModel.ModelSwap, Boolean, Boolean) -> Unit,
+    onCancel: () -> Unit,
+) {
+    // ⭐ Seeded with the user's LAST answers ([HarnessViewModel.confirmSwap]).
+    var takePrompt by remember(swap) { mutableStateOf(swap.takePromptDefault) }
+    var takeRecipe by remember(swap) { mutableStateOf(swap.takeRecipeDefault) }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(stringResource(R.string.canvas_switch_title, swap.spec.label)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                swap.fromFamily?.let { from ->
+                    Text(
+                        stringResource(
+                            R.string.canvas_switch_family,
+                            swap.spec.label,
+                            swap.spec.family.label,
+                            from.label,
+                            swap.spec.native,
+                        ),
+                        style = NoteTextStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                swap.promptNode?.let { id ->
+                    SwapChoice(
+                        heading = stringResource(R.string.canvas_switch_prompt_on, id),
+                        takeTheirs = takePrompt,
+                        onChange = { takePrompt = it },
+                        theirs = stringResource(R.string.canvas_switch_use_prompts, swap.spec.label),
+                        // ⚠ Both fields, because the negative is half of a
+                        // checkpoint's style and is the one nobody re-reads.
+                        detail = stringResource(
+                            R.string.canvas_switch_prompt_detail,
+                            swap.prompt,
+                            swap.negative.ifBlank { stringResource(R.string.canvas_switch_no_negative) },
+                        ),
+                        mine = stringResource(R.string.canvas_switch_keep_prompt),
+                    )
+                }
+                swap.recipe?.let { r ->
+                    SwapChoice(
+                        heading = stringResource(R.string.canvas_switch_sampling_settings),
+                        takeTheirs = takeRecipe,
+                        onChange = { takeRecipe = it },
+                        theirs = stringResource(R.string.canvas_switch_use_settings, swap.spec.label),
+                        detail = r,
+                        mine = stringResource(R.string.canvas_switch_keep_settings),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            StudioButton(onClick = { onConfirm(swap, takeRecipe, takePrompt) }) { Text(stringResource(R.string.canvas_switch)) }
+        },
+        dismissButton = { StudioOutlinedButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+/**
+ * ⭐ "Stop this run?" (#7218), for a run past a minute ([com.abrah.nightmare.HarnessViewModel.requestCancelRun]).
+ * ⚠ Not [com.abrah.nightmare.ui.ConfirmDelete]: its confirm verb is Delete by rule, and this one is Stop.
+ * The same drawing otherwise: red confirm on the right, Keep running on the left.
+ */
+@Composable
+internal fun StopRunDialog(elapsedMs: Long, onStop: () -> Unit, onKeep: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onKeep,
+        title = { Text(stringResource(R.string.stop_run_title)) },
+        text = { Text(stringResource(R.string.stop_run_body, formatMs(elapsedMs)), style = NoteTextStyle) },
+        confirmButton = {
+            com.abrah.nightmare.ui.StudioDangerButton(onClick = onStop) { Text(stringResource(R.string.stop_run_confirm)) }
+        },
+        dismissButton = { StudioOutlinedButton(onClick = onKeep) { Text(stringResource(R.string.stop_run_keep)) } },
+    )
+}
+
+/**
+ * One either/or: take the checkpoint's value, or keep the one on the graph.
+ *
+ * ⚠ The whole row is the target, not just the button — a 20dp radio is below
+ * the 48dp minimum and the label beside it is what a finger aims at.
+ */
+@Composable
+private fun SwapChoice(
+    heading: String,
+    takeTheirs: Boolean,
+    onChange: (Boolean) -> Unit,
+    theirs: String,
+    detail: String,
+    mine: String,
+) {
+    Column {
+        Text(
+            heading,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SwapRadio(selected = takeTheirs, onClick = { onChange(true) }, label = theirs, detail = detail)
+        SwapRadio(selected = !takeTheirs, onClick = { onChange(false) }, label = mine, detail = null)
+    }
+}
+
+@Composable
+private fun SwapRadio(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: String,
+    detail: String?,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(Modifier.padding(top = 12.dp)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            detail?.let {
+                Text(
+                    it,
+                    style = NoteTextStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * ⭐⭐⭐ **Run, becoming Cancel while a render is in flight** — THE one drawing
+ * of it. The canvas bar and the node sheet's pinned bar both call this (the
+ * user's call, 2026-09-23: *"show run button persisting at bottom … for node
+ * view"*), so the two cannot disagree about a label, a colour or a width.
+ */
+@Composable
+internal fun RunButton(
+    busy: Boolean,
+    onRun: () -> Unit,
+    onCancelRun: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val runModifier = modifier
+    if (busy && onCancelRun != null) {
+        StudioButton(
+            onClick = onCancelRun,
+            shape = RoundedCornerShape(12.dp),
+            // ⚠ The SAME width as Run — it replaces it in place, and a
+            // button that resizes as it changes job makes the bar jump
+            // mid-render.
+            modifier = runModifier,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+            ),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            Text(
+                stringResource(R.string.cancel_run),
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    } else {
+        StudioButton(
+            onClick = onRun,
+            enabled = !busy,
+            shape = RoundedCornerShape(12.dp),
+            // ⭐⭐ **About 60% wider than it wraps to** — the user's call,
+            // 2026-09-22. It is the button pressed on every single
+            // render and it was the smallest thing on the bar.
+            modifier = runModifier,
+            // ⚠ 12 rather than M3's 24, and ONE line: at 320dp Run gives
+            // way to its neighbours and "Running…" wrapped to "Runni /
+            // ng…" (`NarrowSweep`, 2026-09-23).
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            Text(
+                stringResource(if (busy) R.string.running else R.string.run),
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
+}

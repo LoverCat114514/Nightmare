@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>MOSS 布局画布</title>
+<style>
+:root{--bg:#141218;--card:#1e1b24;--card2:#262230;--line:#383244;--tx:#e8e4f0;--tx2:#9b93ac;--vio:#7c4dff;--vio2:#a98bff;--ok:#4ade80;--bad:#f87171}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:40px}
+header{display:flex;align-items:center;gap:10px;padding:12px 14px;position:sticky;top:0;background:var(--bg);z-index:20;border-bottom:1px solid var(--line)}
+header h1{font-size:17px;margin:0;flex:1}
+.dot{width:9px;height:9px;border-radius:50%;background:#666;flex:none}
+.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
+.tabs{display:flex;gap:6px;padding:10px 14px 0}
+.tabs button{flex:1;padding:9px 0;border:1px solid var(--line);background:var(--card);color:var(--tx2);border-radius:10px;font-size:14px}
+.tabs button.on{background:var(--vio);border-color:var(--vio);color:#fff;font-weight:600}
+.page{display:none;padding:12px 14px}.page.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:12px}
+.row{display:flex;gap:8px;align-items:center}.row>*{flex:1}
+label{display:block;font-size:12px;color:var(--tx2);margin:8px 0 4px}
+input,textarea,select{width:100%;background:var(--card2);border:1px solid var(--line);color:var(--tx);border-radius:9px;padding:8px 10px;font:inherit;font-size:14px}
+textarea{resize:vertical}
+input:focus,textarea:focus,select:focus{outline:1px solid var(--vio)}
+button.act{background:var(--vio);border:none;color:#fff;border-radius:10px;padding:10px 14px;font-size:14px;font-weight:600}
+button.ghost{background:var(--card2);border:1px solid var(--line);color:var(--tx);border-radius:10px;padding:8px 12px;font-size:13px}
+button.mini{background:var(--card2);border:1px solid var(--line);color:var(--tx2);border-radius:8px;padding:4px 10px;font-size:12px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chips button{border:1px solid var(--line);background:var(--card2);color:var(--tx2);border-radius:999px;padding:5px 13px;font-size:13px}
+.chips button.on{background:var(--vio);border-color:var(--vio);color:#fff}
+#wrap{position:relative;touch-action:none;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#0d0b11;margin-top:8px}
+#cv{display:block;width:100%}
+#wrap.draw{cursor:crosshair}
+.box{position:absolute;border:2px solid var(--vio2);border-radius:3px;pointer-events:auto}
+.box.sel{border-color:#ffd54f;box-shadow:0 0 0 1px #ffd54f}
+.box .tag{position:absolute;top:-22px;left:-2px;background:var(--vio);color:#fff;font-size:11px;padding:1px 7px;border-radius:6px;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.box.sel .tag{background:#b8860b}
+.item{border:1px solid var(--line);border-radius:12px;padding:10px;margin-top:8px;background:var(--card2)}
+.item.sel{border-color:#ffd54f}
+.item .hd{display:flex;align-items:center;gap:8px}
+.item .hd b{flex:1;font-size:14px}
+.coord{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}
+.coord input{padding:5px 6px;font-size:13px}
+#log{font:12px/1.6 monospace;background:#0d0b11;border:1px solid var(--line);border-radius:10px;padding:10px;max-height:180px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:var(--tx2)}
+#compiled{font:12px/1.5 monospace;word-break:break-all;color:var(--vio2);background:#0d0b11;border-radius:10px;padding:10px;max-height:130px;overflow-y:auto}
+#results img{width:100%;border-radius:12px;margin-top:10px;border:1px solid var(--line)}
+.toast{position:fixed;left:50%;bottom:70px;transform:translateX(-50%);background:#2d2440;color:#fff;padding:10px 18px;border-radius:12px;font-size:14px;opacity:0;transition:.25s;pointer-events:none;z-index:99;max-width:86%;text-align:center}
+.toast.show{opacity:1}
+.help{font-size:12.5px;color:var(--tx2);line-height:1.7}
+.help b{color:var(--vio2)}
+details summary{cursor:pointer;color:var(--vio2);font-size:13px;padding:4px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎛️ MOSS 布局画布</h1>
+</header>
+<div class="tabs">
+  <button id="t-cv" class="on" onclick="go('cv')">画框</button>
+  <button id="t-js" onclick="go('js')">草稿 JSON</button>
+</div>
+
+<!-- ============ 画框页 ============ -->
+<div class="page on" id="p-cv">
+  <div class="card">
+    <div class="row">
+      <div><label>宽 (×16)</label><input id="W" type="number" step="16" min="256" value="1024" onchange="sizeChanged()"></div>
+      <div><label>高 (×16)</label><input id="H" type="number" step="16" min="256" value="1024" onchange="sizeChanged()"></div>
+      <div style="flex:0"><label>&nbsp;</label><button class="ghost" id="swap" onclick="swapWH()">⇄</button></div>
+    </div>
+    <label>总述 summary.caption（整图描述，可空）</label>
+    <textarea id="cap" rows="2" placeholder="例：anime key visual, a girl and a cat in a bedroom"></textarea>
+    <label>画布类型</label>
+    <div class="chips" id="canvasChips"></div>
+    <label>meta（逗号分隔，可空）　|　palette（逗号分隔 #hex，可空）</label>
+    <div class="row">
+      <input id="meta" placeholder="风格词, 氛围词">
+      <input id="pal" placeholder="#aabbcc, #112233">
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:6px">
+      <b style="font-size:14px">画布</b>
+      <button class="mini" id="drawBtn" onclick="toggleDraw()">✏️ 画框：开</button>
+      <button class="mini" onclick="clearBoxes()">清空</button>
+    </div>
+    <div id="wrap"><canvas id="cv"></canvas></div>
+    <div class="help" style="margin-top:6px">在画布上拖动画框 · 点框选中 · 在下方卡片编辑描述与坐标</div>
+  </div>
+
+  <div id="items"></div>
+
+  <div class="card">
+    <details open><summary>编译结果（发给模型的提示词）</summary>
+      <div id="compiled" style="margin-top:6px">（空）</div>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost" onclick="compileOnly()">⟳ 编译</button>
+        <button class="act" onclick="copyCompiled()">📋 复制提示词</button>
+      </div>
+    </details>
+  </div>
+  <button class="act" style="width:100%" onclick="sendToNightmare()">编译并写回提示词 →</button>
+</div>
+
+<!-- ============ 草稿 JSON 页 ============ -->
+<div class="page" id="p-js">
+  <div class="card">
+    <label>粘贴草稿 JSON（支持 ComfyUI 插件草稿 / 旧版 MOSS scene 格式 / 裹在文字里）</label>
+    <textarea id="jsIn" rows="10" placeholder='{"summary":{"caption":"..."},"items":[{"label":"character","caption":"a girl","bbox":[100,100,500,700]}]}'></textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="act" onclick="importDraft()">导入到画布</button>
+      <button class="ghost" onclick="exportDraft()">导出当前草稿</button>
+    </div>
+    <div class="help" style="margin-top:8px">导入后自动居中缩放适配画布（同插件 _fit_items）；坐标超出画布会被缩回。</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ================= 状态 ================= */
+const S = {
+  w:1024, h:1024,
+  canvas:"single",
+  items:[],           // {label,caption,text?,bbox:[x1,y1,x2,y2]} 图像坐标 abs/xyxy
+  sel:-1,
+  drawing:true,
+  lastResult:null,
+};
+const LBL_COLOR = {object:"#a98bff", character:"#4dd0e1", text:"#ffd54f"};
+const $ = id => document.getElementById(id);
+function toast(m){const t=$("toast");t.textContent=m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2600)}
+function go(p){
+  for(const x of ["cv","js"]){$("p-"+x).classList.toggle("on",x===p);$("t-"+x).classList.toggle("on",x===p)}
+  if(p==="cv")draw();
+}
+
+/* ================= 编译器（忠实移植 layout.py） ================= */
+const SIZE_MULT=16, LABELS=["object","character","text"], CANVASES=["single","multi_panel","collage"];
+const SUMMARY_F=["caption","meta","canvas","palette"], ITEM_F=["label","caption","bbox","text","tags","palette","color"], DRAFT_F=["width","height","bbox_coord_space","bbox_format","summary","items"];
+class LayoutError extends Error{}
+
+function sizeOk(v){return Number.isInteger(v)&&v>0&&v%SIZE_MULT===0}
+function centered(b,w,h){
+  if(!Array.isArray(b)||b.length!==4)throw new LayoutError("bbox 必须是 [x1,y1,x2,y2]");
+  for(const v of b)if(typeof v!=="number"||!isFinite(v))throw new LayoutError("bbox 必须是四个数字");
+  let[x1,y1,x2,y2]=b;
+  if(!(0<=x1&&x1<x2&&x2<=w&&0<=y1&&y1<y2&&y2<=h))throw new LayoutError(`bbox 超出 ${w}x${h} 画布`);
+  const r9=v=>Math.round(v*1e9)/1e9;
+  const out=[Math.floor(r9(y1))-Math.floor(h/2),Math.floor(r9(x1))-Math.floor(w/2),Math.ceil(r9(y2))-Math.floor(h/2),Math.ceil(r9(x2))-Math.floor(w/2)];
+  if(!(out[0]<out[2]&&out[1]<out[3]))throw new LayoutError("框太小");
+  return out;
+}
+function jsonObjects(text){ // 容错：抽出文本里每个配平的 {...}
+  const out=[];
+  for(let s=0;s<text.length;s++){
+    if(text[s]!=="{")continue;
+    let d=0,str=false,esc=false;
+    for(let i=s;i<text.length;i++){
+      const c=text[i];
+      if(str){if(esc)esc=false;else if(c==="\\")esc=true;else if(c==='"')str=false;continue}
+      if(c==='"')str=true;
+      else if(c==="{")d++;
+      else if(c==="}"){d--;if(d===0){out.push(text.slice(s,i+1));break}}
+    }
+  }
+  return out;
+}
+function parseDraftLoose(text){
+  try{const v=JSON.parse(text);if(v&&typeof v==="object"&&!Array.isArray(v))return v}catch(e){}
+  let fb=null;
+  for(const c of jsonObjects(text)){
+    let v;try{v=JSON.parse(c)}catch(e){continue}
+    if(!v||typeof v!=="object"||Array.isArray(v))continue;
+    if("summary"in v||"items"in v||"elements"in v)return v;
+    if(fb===null)fb=v;
+  }
+  return fb;
+}
+const SCENE_LBL={panel:"object",obj:"object",object:"object",shape:"object",character:"character",person:"character",text:"text"};
+function sceneToDraft(v,w,h){
+  const els=v.elements;
+  if(!Array.isArray(els))throw new LayoutError("elements 必须是数组");
+  const cw=Number.isInteger(v.width)&&v.width>0?v.width:w, ch=Number.isInteger(v.height)&&v.height>0?v.height:h;
+  const cent=v.bbox_coord_space!=="abs";
+  const items=els.map((e,i)=>{
+    const b=e.bbox;
+    if(!Array.isArray(b)||b.length!==4)throw new LayoutError(`elements[${i}].bbox 需要四个数字`);
+    const label=SCENE_LBL[String(e.type||"").trim().toLowerCase()]||"object";
+    const caption=["identity","shape","note"].map(k=>typeof e[k]==="string"?e[k].trim():"").filter(Boolean).join(" ");
+    const it={label,caption};
+    if(label==="text"){
+      const t=(typeof e.text==="string"&&e.text.trim())?e.text.trim():(typeof e.identity==="string"?e.identity.trim():"");
+      if(t)it.text=t;else it.label="object";
+    }
+    it.bbox=cent?(()=>{const[y1,x1,y2,x2]=b;return[x1+cw/2,y1+ch/2,x2+cw/2,y2+ch/2]})():b.slice(); // 旧scene格式居中时y在前
+    return it;
+  });
+  const cap=["scene_type","gen_brief"].map(k=>typeof v[k]==="string"?v[k].trim():"").filter(Boolean).join(". ");
+  return {width:cw,height:ch,bbox_coord_space:"abs",bbox_format:"xyxy",summary:{caption:cap},items:fitItems(items,cw,ch)};
+}
+function fitItems(items,w,h){ // 居中缩放，把超界草稿适配进画布
+  let hw=0,hh=0;
+  for(const it of items){
+    const b=it.bbox;if(!Array.isArray(b)||b.length!==4)continue;
+    hw=Math.max(hw,Math.abs(b[0]-w/2),Math.abs(b[2]-w/2));
+    hh=Math.max(hh,Math.abs(b[1]-h/2),Math.abs(b[3]-h/2));
+  }
+  if(!hw||!hh)return items;
+  if(hw<=w/2&&hh<=h/2)return items;
+  const sc=Math.min(w/2/hw,h/2/hh);
+  return items.map(it=>{
+    const b=it.bbox;if(!Array.isArray(b)||b.length!==4)return it;
+    const f=v=>(v-w/2)*sc+w/2, g=v=>(v-h/2)*sc+h/2;
+    return {...it,bbox:[f(b[0]),g(b[1]),f(b[2]),g(b[3])]};
+  });
+}
+function loadDraft(raw,w,h){
+  let d=raw;
+  if(typeof raw==="string"){
+    const s=raw.trim();
+    if(!s)return defaultDraft(w,h);
+    d=parseDraftLoose(s);
+    if(d===null)throw new LayoutError("不是合法 JSON");
+  }
+  if(!d||typeof d!=="object"||Array.isArray(d))throw new LayoutError("草稿必须是 JSON 对象");
+  if("elements"in d)d=sceneToDraft(d,w,h);
+  const unk=Object.keys(d).filter(k=>!DRAFT_F.includes(k));
+  if(unk.length)throw new LayoutError("未知字段: "+unk.join(","));
+  return {
+    width:d.width??w, height:d.height??h,
+    bbox_coord_space:d.bbox_coord_space||"abs",
+    bbox_format:d.bbox_format||"xyxy",
+    summary:d.summary||{caption:""},
+    items:d.items||[],
+  };
+}
+function compileLayout(raw,w=S.w,h=S.h){
+  const d=loadDraft(raw,w,h);
+  const cw=d.width,ch=d.height;
+  if(!sizeOk(cw)||!sizeOk(ch))throw new LayoutError("宽高必须是 16 的倍数");
+  if(d.bbox_coord_space!=="abs"||d.bbox_format!=="xyxy")
+    throw new LayoutError('草稿需为 bbox_coord_space="abs" / bbox_format="xyxy"（这像是一份已编译的提示词）');
+  const items=d.items;
+  if(!Array.isArray(items))throw new LayoutError("items 必须是数组");
+  if(items.length===0)return String(d.summary?.caption??"").trim(); // 同插件：无框=普通文本提示词
+  const sm=d.summary;
+  if(!sm||typeof sm!=="object"||Array.isArray(sm))throw new LayoutError("summary 必须是对象");
+  for(const k of Object.keys(sm))if(!SUMMARY_F.includes(k))throw new LayoutError("summary 未知字段: "+k);
+  if(!("caption"in sm))throw new LayoutError("summary 缺 caption");
+  if("canvas"in sm&&!CANVASES.includes(sm.canvas))throw new LayoutError("canvas 取值: "+CANVASES.join("/"));
+  for(const k of["meta","palette"])if(k in sm&&!Array.isArray(sm[k]))throw new LayoutError(`summary.${k} 必须是数组`);
+  const out=[];
+  items.forEach((it,i)=>{
+    const at=`items[${i}]`;
+    for(const k of Object.keys(it))if(!ITEM_F.includes(k))throw new LayoutError(`${at} 未知字段: ${k}`);
+    for(const k of["label","caption","bbox"])if(!(k in it))throw new LayoutError(`${at} 缺 ${k}`);
+    if(!LABELS.includes(it.label))throw new LayoutError(`${at}.label 取值: ${LABELS.join("/")}`);
+    if(typeof it.caption!=="string")throw new LayoutError(`${at}.caption 必须是文本`);
+    if(it.label==="text"&&!("text"in it))throw new LayoutError(`${at}: text 类必须带 text`);
+    if("text"in it&&!(typeof it.text==="string"&&it.text.trim()))throw new LayoutError(`${at}.text 不能为空`);
+    for(const k of["tags","palette"])if(k in it&&!Array.isArray(it[k]))throw new LayoutError(`${at}.${k} 必须是数组`);
+    const o={};
+    for(const[k,v]of Object.entries(it))if(k!=="color")o[k]=(k==="bbox")?centered(v,cw,ch):v;
+    out.push(o);
+  });
+  return JSON.stringify({summary:sm,items:out,bbox_coord_space:"abs_centralized",bbox_format:"yxyx"});
+}
+function defaultDraft(w,h){return{width:w,height:h,bbox_coord_space:"abs",bbox_format:"xyxy",summary:{caption:"",canvas:"single"},items:[]}}
+function draftHasBoxes(t){try{return loadDraft(t).items.length>0}catch(e){return false}}
+
+/* ================= 画布编辑 ================= */
+function syncFromUI(){S.w=parseInt($("W").value)||1024;S.h=parseInt($("H").value)||1024;S.canvas=$("canvasChips").querySelector(".on").dataset.v}
+function sizeChanged(){syncFromUI();clampAll();draw();renderItems();compileOnly();save()}
+function swapWH(){const w=$("W").value;$("W").value=$("H").value;$("H").value=w;sizeChanged()}
+function clampAll(){
+  const fix=b=>{b[0]=Math.max(0,Math.min(b[0],S.w-8));b[2]=Math.max(b[0]+8,Math.min(b[2],S.w));b[1]=Math.max(0,Math.min(b[1],S.h-8));b[3]=Math.max(b[1]+8,Math.min(b[3],S.h))};
+  S.items.forEach(it=>fix(it.bbox));
+}
+function draw(){
+  syncFromUI();
+  const wrap=$("wrap"),cv=$("cv");
+  const cw=wrap.clientWidth, scale=cw/S.w, chh=Math.round(S.h*scale);
+  cv.width=cw;cv.height=chh;cv.style.height=chh+"px";
+  const g=cv.getContext("2d");
+  g.fillStyle="#0d0b11";g.fillRect(0,0,cw,chh);
+  g.strokeStyle="#2a2533";g.lineWidth=1;
+  for(let x=0;x<=S.w;x+=S.w/8){g.beginPath();g.moveTo(x*scale,0);g.lineTo(x*scale,chh);g.stroke()}
+  for(let y=0;y<=S.h;y+=S.h/8){g.beginPath();g.moveTo(0,y*scale);g.lineTo(cw,y*scale);g.stroke()}
+  wrap.querySelectorAll(".box").forEach(n=>n.remove());
+  S.items.forEach((it,i)=>{
+    const b=it.bbox,d=document.createElement("div");
+    d.className="box"+(i===S.sel?" sel":"");
+    d.style.cssText=`left:${b[0]*scale}px;top:${b[1]*scale}px;width:${(b[2]-b[0])*scale}px;height:${(b[3]-b[1])*scale}px;border-color:${LBL_COLOR[it.label]}`;
+    const tg=document.createElement("span");tg.className="tag";
+    tg.textContent=`${i+1} ${it.label}${it.caption?" · "+it.caption.slice(0,14):""}`;
+    tg.style.background=LBL_COLOR[it.label];
+    d.appendChild(tg);
+    d.onpointerdown=e=>{e.stopPropagation();select(i)};
+    wrap.appendChild(d);
+  });
+  if(S.sel>=S.items.length)S.sel=-1;
+}
+let drag=null;
+function toggleDraw(){S.drawing=!S.drawing;$("drawBtn").textContent=S.drawing?"✏️ 画框：开":"✏️ 画框：关";$("wrap").classList.toggle("draw",S.drawing)}
+$("wrap").classList.add("draw");
+const wrap=$("wrap");
+wrap.addEventListener("pointerdown",e=>{
+  if(!S.drawing||e.target.closest(".box"))return;
+  const r=wrap.getBoundingClientRect(),sc=S.w/r.width;
+  drag={x0:(e.clientX-r.left)*sc,y0:(e.clientY-r.top)*sc,el:null};
+  wrap.setPointerCapture(e.pointerId);
+});
+wrap.addEventListener("pointermove",e=>{
+  if(!drag)return;
+  const r=wrap.getBoundingClientRect(),sc=S.w/r.width;
+  const x=(e.clientX-r.left)*sc,y=(e.clientY-r.top)*sc;
+  if(!drag.el){drag.el=document.createElement("div");drag.el.className="box";drag.el.style.borderColor="#ffd54f";wrap.appendChild(drag.el)}
+  const b=[Math.min(drag.x0,x),Math.min(drag.y0,y),Math.max(drag.x0,x),Math.max(drag.y0,y)];
+  drag.el.style.cssText=`left:${b[0]/sc}px;top:${b[1]/sc}px;width:${(b[2]-b[0])/sc}px;height:${(b[3]-b[1])/sc}px;border-color:#ffd54f`;
+  drag.b=b;
+});
+wrap.addEventListener("pointerup",e=>{
+  if(!drag)return;
+  const el=drag.el,b=drag.b;drag=null;
+  if(el)el.remove();
+  if(!b)return;
+  const w=b[2]-b[0],h=b[3]-b[1];
+  if(w<8||h<8){toast("框太小了");return}
+  const x1=Math.max(0,b[0]),y1=Math.max(0,b[1]),x2=Math.min(S.w,b[2]),y2=Math.min(S.h,b[3]);
+  S.items.push({label:"object",caption:"",bbox:[Math.round(x1),Math.round(y1),Math.round(x2),Math.round(y2)]});
+  S.sel=S.items.length-1;draw();renderItems();compileOnly();save();
+});
+function select(i){S.sel=i;draw();renderItems()}
+function renderItems(){
+  const box=$("items");box.innerHTML="";
+  S.items.forEach((it,i)=>{
+    const d=document.createElement("div");d.className="item"+(i===S.sel?" sel":"");
+    const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    d.innerHTML=`<div class="hd"><b>#${i+1}</b>
+      <div class="chips" data-l>${["object","character","text"].map(l=>`<button data-v="${l}" class="${it.label===l?"on":""}" style="${it.label===l?`background:${LBL_COLOR[l]};border-color:${LBL_COLOR[l]};color:#111`:""}">${l}</button>`).join("")}</div>
+      <button class="mini" data-del>🗑</button></div>
+      <label>描述 caption</label><textarea rows="2" data-cap placeholder="这个元素是什么，放什么内容">${esc(it.caption||"")}</textarea>
+      <div class="coord">${["x1","y1","x2","y2"].map((k,j)=>`<input data-c="${j}" type="number" value="${Math.round(it.bbox[j])}">`).join("")}</div>`;
+    if(it.label==="text"){
+      const lb=document.createElement("label");lb.textContent="文字内容 text";
+      const tx=document.createElement("input");tx.dataset.txt="";tx.placeholder="要出现在图里的文字";tx.value=it.text||"";
+      const co=d.querySelector(".coord");
+      d.insertBefore(lb,co);d.insertBefore(tx,co);
+    }
+    d.querySelectorAll("[data-l] button").forEach(b=>b.onclick=()=>{it.label=b.dataset.v;if(it.label!=="text")delete it.text;renderItems();draw();compileOnly();save()});
+    d.querySelector("[data-del]").onclick=()=>{S.items.splice(i,1);S.sel=-1;renderItems();draw();compileOnly();save()};
+    d.querySelector("[data-cap]").oninput=e=>{it.caption=e.target.value;compileOnly();save()};
+    const tx=d.querySelector("[data-txt]");if(tx)tx.oninput=e=>{it.text=e.target.value;compileOnly();save()};
+    d.querySelectorAll("[data-c]").forEach(inp=>inp.onchange=()=>{it.bbox[+inp.dataset.c]=+inp.value||0;clampAll();draw();compileOnly();save()});
+    box.appendChild(d);
+  });
+}
+function clearBoxes(){if(!S.items.length)return;if(!confirm("清空全部框？"))return;S.items=[];S.sel=-1;draw();renderItems();compileOnly();save()}
+function collectDraft(){
+  syncFromUI();
+  const sm={caption:$("cap").value};
+  const cv=$("canvasChips").querySelector(".on").dataset.v;
+  if(cv!=="single")sm.canvas=cv;
+  const meta=$("meta").value.split(",").map(s=>s.trim()).filter(Boolean);
+  if(meta.length)sm.meta=meta;
+  const pal=$("pal").value.split(",").map(s=>s.trim()).filter(Boolean);
+  if(pal.length)sm.palette=pal;
+  return{width:S.w,height:S.h,bbox_coord_space:"abs",bbox_format:"xyxy",summary:sm,items:S.items.map(it=>{const o={label:it.label,caption:it.caption||"",bbox:it.bbox.slice()};if(it.text)o.text=it.text;return o})};
+}
+let compiledText="";
+function compileOnly(){
+  try{
+    compiledText=compileLayout(collectDraft());
+    $("compiled").textContent=compiledText;
+    $("compiled").style.color="var(--vio2)";
+    return compiledText;
+  }catch(e){
+    compiledText="";
+    $("compiled").textContent="⚠ "+e.message;
+    $("compiled").style.color="var(--bad)";
+    return null;
+  }
+}
+function copyCompiled(){
+  const t=compileOnly();
+  if(!t){toast("先修正编译错误");return}
+  navigator.clipboard.writeText(t).then(()=>toast("已复制，可粘贴到 Nightmare 提示词框")).catch(()=>{
+    const ta=document.createElement("textarea");ta.value=t;document.body.appendChild(ta);ta.select();document.execCommand("copy");ta.remove();toast("已复制");
+  });
+}
+/* 写回 Nightmare：走 app 桥把编译稿直接发到提示词框（2026-11-04，画布已内嵌，
+   API 生成页退役）。不在 app 里打开（无桥）时退回复制，网页版仍可用。 */
+function sendToNightmare(){
+  const t=compileOnly();
+  if(t===null){toast("编译有错，先修正");return}
+  if(window.Nightmare&&window.Nightmare.saveDraft){window.Nightmare.saveDraft(t);return}
+  copyCompiled();
+}
+/* 草稿页 */
+function importDraft(){
+  try{
+    const d=loadDraft($("jsIn").value,S.w,S.h);
+    S.w=parseInt(d.width)||S.w;S.h=parseInt(d.height)||S.h;
+    $("W").value=S.w;$("H").value=S.h;
+    $("cap").value=d.summary.caption||"";
+    if(d.summary.canvas)setCanvasChip(d.summary.canvas);
+    $("meta").value=(d.summary.meta||[]).join(", ");
+    $("pal").value=(d.summary.palette||[]).join(", ");
+    S.items=d.items.map(it=>({label:it.label||"object",caption:it.caption||"",...(it.text?{text:it.text}:{}),bbox:it.bbox.slice()}));
+    clampAll();
+    draw();renderItems();compileOnly();save();
+    toast("已导入 "+S.items.length+" 个框");go("cv");
+  }catch(e){toast("导入失败: "+e.message)}
+}
+function exportDraft(){$("jsIn").value=JSON.stringify(collectDraft(),null,2);toast("已导出到上方文本框，可全选复制")}
+/* 画布类型 chips */
+function buildCanvasChips(){
+  $("canvasChips").innerHTML=CANVASES.map(c=>`<button data-v="${c}" class="${c===S.canvas?"on":""}">${{single:"单图",multi_panel:"分镜",collage:"拼贴"}[c]}</button>`).join("");
+  $("canvasChips").querySelectorAll("button").forEach(b=>b.onclick=()=>{S.canvas=b.dataset.v;buildCanvasChips();compileOnly();save()});
+}
+function setCanvasChip(v){if(CANVASES.includes(v)){S.canvas=v;buildCanvasChips()}}
+
+/* 持久化 */
+function save(){
+  localStorage.setItem("mossDraft",JSON.stringify({w:S.w,h:S.h,canvas:S.canvas,cap:$("cap").value,meta:$("meta").value,pal:$("pal").value,items:S.items}));
+}
+function restore(){
+  try{
+    const d=JSON.parse(localStorage.getItem("mossDraft")||"null");
+    if(!d)return;
+    S.w=d.w;S.h=d.h;S.canvas=d.canvas||"single";
+    $("W").value=S.w;$("H").value=S.h;$("cap").value=d.cap||"";$("meta").value=d.meta||"";$("pal").value=d.pal||"";
+    S.items=(d.items||[]).map(it=>({...it,bbox:it.bbox.slice()}));
+  }catch(e){}
+}
+/* 启动 */
+buildCanvasChips();restore();draw();renderItems();compileOnly();
+</script>
+<script>
+/* Nightmare app bridge (2026-11-04): the sampler's current size arrives as a
+   hint so the canvas opens matched to what will be generated. Functions used
+   here are all in the editor's own script block - same page scope. */
+window.__nmSetSize=function(w,h){
+  try{
+    if(typeof w!=="number"||typeof h!=="number"||!sizeOk(w)||!sizeOk(h))return;
+    S.w=w;S.h=h;
+    document.getElementById("W").value=w;document.getElementById("H").value=h;
+    clampAll();draw();renderItems();compileOnly();save();
+    toast("画布已对齐采样器尺寸 "+w+"×"+h);
+  }catch(e){}
+};
+</script>
+</body>
+</html>

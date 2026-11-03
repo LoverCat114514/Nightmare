@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MOSS layout canvas editor: fullscreen WebView, no system bars.
+     User ask 2026-11-04: canvas inside the app, entry under the switch,
+     draft written straight back to the wired prompt node. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <WebView
+        android:id="@+id/moss_canvas_web"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+</FrameLayout>

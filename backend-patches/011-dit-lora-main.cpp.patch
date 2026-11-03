@@ -1,0 +1,59 @@
+--- backend-src/src/main.cpp	2026-09-21 23:21:43.861946500 +0930
++++ backend-src/src/main.cpp	2026-09-21 23:11:10.385671800 +0930
+@@ -3,6 +3,7 @@
+ #include <cstring>
+ #include <filesystem>
+ #include <fstream>
++#include <cstdlib>
+ #include <iostream>
+ #include <map>
+ #include <memory>
+@@ -103,6 +104,11 @@
+   // Z-Image / FLUX.2 Klein (upstream local-dream 7bbdfb0): all three DiT
+   // modules on the Hexagon NPU, through libdit_engine.so.
+   std::string dit_backend = "diffusion=HTP0,te=HTP0,vae=HTP0";
++  // DIAGNOSTIC: NM_DIT_BACKEND overrides the device spec above, e.g.
++  // "diffusion=CPU,te=CPU,vae=CPU". It exists to answer one question that
++  // cannot be answered any other way -- whether a LoRA applied at runtime
++  // reaches HTP-resident weights or only the CPU path -- and the app sets it
++  // from Download/nightmare-dit-backend.txt (BackendProcess).
+   std::string dit_params_backend;
+   int dit_threads = 4;
+   int dit_vae_tile_size = 64;
+@@ -412,6 +418,25 @@
+     // itself needs on 12GB devices.
+     const std::string params_backend =
+         opts.lowram ? "te=disk" : opts.dit_params_backend;
++    // DIAGNOSTIC override, read once at launch. Answering "does a runtime
++    // LoRA reach HTP-resident weights" needs the SAME build to run the same
++    // request on the CPU path, and nothing else can ask that question.
++    std::string dit_backend = opts.dit_backend;
++    if (const char *env_backend = std::getenv("NM_DIT_BACKEND");
++        env_backend != nullptr && *env_backend != '\0') {
++      dit_backend = env_backend;
++      std::cout << "NM_DIT_BACKEND override: " << dit_backend << std::endl;
++    }
++    // DIAGNOSTIC: 1 = immediately, 2 = at_runtime, unset/0 = the engine
++    // decides. AUTO picked at_runtime on this single-device HTP0 context and
++    // the adapter never reached the NPU's weights (../docs/ROADMAP.md 2f).
++    int lora_apply_mode = 0;
++    if (const char *env_mode = std::getenv("NM_DIT_LORA_MODE");
++        env_mode != nullptr && *env_mode != '\0') {
++      lora_apply_mode = std::atoi(env_mode);
++      std::cout << "NM_DIT_LORA_MODE override: " << lora_apply_mode
++                << std::endl;
++    }
+     const std::string engine_path =
+         (std::filesystem::path(opts.lib_dir) / "libdit_engine.so").string();
+     if (!std::filesystem::exists(engine_path))
+@@ -420,8 +445,8 @@
+         text_encoder, opts.model_dir, engine_path, dit_path, llm_path, vae_path,
+         opts.type == ServerOptions::ModelType::kZImage ? DIT_MODEL_Z_IMAGE
+                                                        : DIT_MODEL_FLUX2_KLEIN,
+-        opts.dit_backend, params_backend, opts.dit_threads,
+-        opts.dit_vae_tile_size, !opts.no_img2img);
++        dit_backend, params_backend, opts.dit_threads,
++        opts.dit_vae_tile_size, !opts.no_img2img, lora_apply_mode);
+   }
+ 
+   // Anima: Qwen "CLIP" (clip.bin, QNN) + split DiT (unet_part1/2.bin) + 16-ch

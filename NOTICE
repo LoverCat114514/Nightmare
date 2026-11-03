@@ -1,0 +1,523 @@
+Nightmare Mobile
+Copyright (c) 2026 Abraham Paul Jaison
+
+This work is licensed under the Creative Commons Attribution-NonCommercial 4.0
+International License. See LICENSE for the full text, or visit
+https://creativecommons.org/licenses/by-nc/4.0/
+
+The licence is inherited, not chosen. This project derives from work released
+under CC BY-NC 4.0 and continues under the same terms. No additional
+restrictions are imposed by this project.
+
+
+ATTRIBUTION
+-----------
+
+Stable Diffusion on the Qualcomm Hexagon NPU
+    xororz/local-dream
+    https://github.com/xororz/local-dream
+    Licensed CC BY-NC 4.0
+
+    The C++ inference server in this project is a fork of local-dream's.
+    The QNN pipelines, the model conversion process, the per chipset build
+    tiers and the device capability gating are all that project's work.
+    The Stable Diffusion checkpoint archives and the upscaler weights this
+    app downloads are published by the same author.
+
+    Modifications made here: the pipeline was decomposed into individually
+    addressable ops (encode_text, sample, vae_encode, vae_decode,
+    latent_blend) exposed over HTTP, with conditionings and latents held
+    server side behind handles.
+
+LocalDream
+    https://github.com/AbrahamPaulJ/dreamui
+    A consumer application built on the same backend.
+
+    The mask editor's brush behaviour, its compositing rules, and the batch
+    result strip are ported from it rather than reimplemented.
+
+
+THIRD PARTY COMPONENTS
+----------------------
+
+Qualcomm AI Runtime (QAIRT / QNN)
+    Qualcomm Technologies, Inc.
+    Runtime libraries used to execute models on the Hexagon NPU. Distributed
+    under Qualcomm's own licence terms, which are separate from and not
+    superseded by this project's licence. Not included in this repository.
+    On a Hexagon v85 phone only, QAIRT 2.51's runtime libraries are downloaded
+    unchanged from https://huggingface.co/AbrahamPJ/nightmare-qnn-v85.
+
+QuickJS
+    Fabrice Bellard and Charlie Gordon
+    https://bellard.org/quickjs/
+    MIT licensed. Used as the sandbox for plugin nodes. Fetched at build
+    time rather than vendored.
+
+MNN
+    Alibaba
+    https://github.com/alibaba/MNN
+    Apache 2.0. Used for CPU and GPU model execution paths.
+
+ONNX Runtime
+    Microsoft
+    https://github.com/microsoft/onnxruntime
+    MIT licensed. The com.microsoft.onnxruntime:onnxruntime-android library,
+    shipped inside the APK; runs the CPU picture helpers (segmenter, parser,
+    pose, depth, IP-Adapter, the describe and tag models).
+
+Real-ESRGAN x4plus anime 6B, 4x UltraSharpV2 Lite
+    Upscaler weights, converted and published by xororz.
+    Downloaded by the app at the user's request; not included here.
+
+Neodragon
+    Qualcomm AI Research
+    https://huggingface.co/Qualcomm-AI-Research/Neodragon
+    BSD-3-Clause-Clear, with additional terms on the model card (the repo is
+    tagged both "bsd-3-clause-clear" and "other" -- read it before
+    redistributing the weights). The text to video model. The pipeline this app
+    implements -- the pyramidal schedule, the autoregressive MMDiT loop and
+    the streaming VAE decode -- follows their work; the NPU conversions it
+    runs were made from their weights. Downloaded by the app at the user's
+    request; not included here.
+
+SSD-1B
+    Segmind
+    https://huggingface.co/segmind/SSD-1B
+    Apache 2.0. Generates the first frame a video is animated from.
+
+CLIP, DistilT5
+    Text encoders used by the video path, converted for the NPU.
+    Downloaded by the app at the user's request; not included here.
+
+T5 tokenizer (google-t5/t5-base tokenizer.json)
+    Google
+    https://huggingface.co/google-t5/t5-base
+    Apache 2.0. Its vocabulary counts Anima prompt tokens against 512.
+    Downloaded by the app once an Anima DiT model is installed; not included here.
+
+DiT engine (libdit_engine.so and its Hexagon skels)
+    xororz/local-dream's engine wrapper (v3.0.0-alpha.3) around stable-diffusion.cpp
+    with ggml's Hexagon backend, plus this project's LoRA patch
+    (backend-patches/dit/), built by this repository's CI and downloaded by the
+    app; the skels ship in the APK. The 8 Gen 1 (v69) and 8 Elite Gen 6 (v85) skels
+    are built by this project from the same sources (backend-patches/dit/033, 034;
+    v85 with Hexagon SDK 6.7, as local-dream v3.0.0-alpha.6 does). Runs FLUX.2 Klein 4B and 9B, Z-Image Turbo,
+    Qwen Image 2.1, Krea 2 Turbo, Iris 3B Turbo, Anima, MOSS-Image, Ideogram 4 and Fibo 2.0 on the NPU. Not included in this repository.
+
+DiT engine, GPU variant (OpenCL on Adreno)
+    The engine above built with ggml's OpenCL backend and its Adreno kernels (Qualcomm,
+    happyyzy), plus: Fancy AI's OpenCL patches for older drivers and Mali GPUs
+    (github.com/Mr-J-369/Fancy-Ai, Apache 2.0; backend-patches/dit/067), happyyzy's
+    QKV preprocessing (llama.cpp pull request 28446, MIT; backend-patches/dit/081), and
+    this project's dispatch splitting that keeps the screen responsive (dit/080).
+    Downloaded by the app on the GPU route only. Not included in this repository.
+
+stable-diffusion.cpp
+    leejet, with Hexagon optimisation by happyyzy
+    https://github.com/happyyzy/stable-diffusion.cpp
+    MIT licensed. Inside the DiT engine.
+
+ggml
+    ggml authors
+    https://github.com/ggml-org/ggml
+    MIT licensed. Inside the DiT engine.
+
+FLUX.2 [klein] 4B
+    Black Forest Labs; GGUF by leejet (Snapdragon 8 Gen 3)
+    https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8
+    https://huggingface.co/leejet/FLUX.2-klein-4B-GGUF
+    Apache 2.0. Downloaded by the app at the user's request; not included here.
+
+Z-Image Turbo
+    Tongyi-MAI; fp8 weights by Kijai; GGUF by leejet (Snapdragon 8 Gen 3)
+    https://huggingface.co/Kijai/Z-Image_comfy_fp8_scaled
+    https://huggingface.co/leejet/Z-Image-Turbo-GGUF
+    Apache 2.0. Downloaded by the app at the user's request; not included here.
+
+Qwen3-4B text encoder, DiT VAEs
+    Converted for stable-diffusion.cpp by zhiyuanasad
+    https://huggingface.co/zhiyuanasad/flux2_klein_adreno
+    https://huggingface.co/zhiyuanasad/z_image_turbo_adreno
+    Downloaded by the app at the user's request; not included here.
+
+Qwen Image 2.1
+    Qwen team (Hangzhou Tongyi Laboratory); GGUF by leejet (phones under 16 GB); FP8 by
+    unsloth (16 GB and up); VAE repackaged by Comfy-Org
+    https://huggingface.co/Qwen/Qwen-Image-2.1
+    https://huggingface.co/leejet/Qwen-Image-2.1-GGUF
+    https://huggingface.co/unsloth/Qwen-Image-2.1-FP8
+    https://huggingface.co/Comfy-Org/Qwen-Image-2.1
+    Qwen Research License. Downloaded by the app at the user's request; not
+    included here.
+
+Qwen Image 2.1 Turbo
+    Qwen team (Hangzhou Tongyi Laboratory); GGUF by molbal; its text encoder, vision
+    tower and VAE are Qwen Image 2.1's (above)
+    https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo
+    https://huggingface.co/molbal/Qwen-Image-2.1-Turbo-GGUF
+    Qwen Research License. Copyright (c) 2026 Hangzhou Tongyi Laboratory Technology
+    Co., Ltd. All Rights Reserved. Built with Qwen. Downloaded by the app at the
+    user's request; not included here.
+
+Qwen3-VL-8B-Instruct (Qwen Image 2.1's text encoder and vision tower)
+    Qwen team; GGUF by bartowski
+    https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct
+    https://huggingface.co/bartowski/Qwen_Qwen3-VL-8B-Instruct-GGUF
+    Apache 2.0. Downloaded by the app at the user's request; not included here.
+
+FLUX.2 [klein] 9B
+    Black Forest Labs; GGUF by leejet
+    https://huggingface.co/black-forest-labs/FLUX.2-klein-9B
+    https://huggingface.co/leejet/FLUX.2-klein-9B-GGUF
+    FLUX Non-Commercial License. Downloaded by the app at the user's request;
+    not included here.
+
+Qwen3-8B (FLUX.2 [klein] 9B's text encoder)
+    Qwen team; GGUF by bartowski
+    https://huggingface.co/Qwen/Qwen3-8B
+    https://huggingface.co/bartowski/Qwen_Qwen3-8B-GGUF
+    Apache 2.0. Downloaded by the app at the user's request; not included here.
+
+Krea 2 Turbo
+    Krea; MXFP4 GGUF by gguf-org
+    https://huggingface.co/krea/Krea-2-Turbo
+    https://huggingface.co/gguf-org/krea-2-gguf
+    Krea 2 is licensed under the Krea 2 Community License Agreement. For more
+    information, visit https://krea.ai/krea-2-licensing.
+    Downloaded by the app at the user's request, unmodified; not included here.
+
+Iris 3B Turbo
+    speridlabs
+    https://huggingface.co/speridlabs/iris-3b
+    Apache License 2.0. Downloaded by the app at the user's request and
+    converted to GGUF on the phone (Q8_0, the MLP hidden size zero-padded);
+    not included here. Its text encoder is Qwen3-VL-4B-Instruct (Apache 2.0),
+    as for Krea 2 Turbo.
+
+FLUX.3 Image Klein
+    Black Forest Labs; GGUF by leejet
+    https://huggingface.co/black-forest-labs/flux-3-image-klein
+    https://huggingface.co/leejet/flux-3-image-klein-GGUF
+    FLUX Kommunity License v1.0. Downloaded by the app at the user's request,
+    unmodified; not included here. Its text encoder is Qwen3-VL-4B-Instruct
+    (Apache 2.0), as for Krea 2 Turbo; its VAE is the FLUX.2 VAE.
+
+Fibo 2.0 Edit Turbo
+    Bria AI; GGUF by realrebelai, requantized by this project
+    https://huggingface.co/briaai/Fibo-2.0-edit-turbo
+    https://huggingface.co/realrebelai/Fibo-2.0_GGUFs
+    https://huggingface.co/AbrahamPJ/fibo2-edit-turbo-q4_0-gguf
+    Non-commercial use only (CC BY-NC 4.0 and Bria's terms). Modified: realrebelai's BF16
+    cross-attention, perceiver and noise refiner weights quantized to Q4_0. Downloaded by
+    the app at the user's request; not included here. Its text encoder and vision tower are
+    Qwen3-VL-4B-Instruct (Apache 2.0); its VAE is the FLUX.2 VAE.
+
+MiniMax H3 (FastH3 4-step Preview v1 Dense)
+    MiniMax; distilled by FastVideo; GGUF by Gestura, requantized by this project
+    https://huggingface.co/MiniMaxAI/MiniMax-H3
+    https://huggingface.co/FastVideo/FastVideo-FastH3-4-step-Preview-v1-Dense-DataFree
+    https://huggingface.co/ZawShiShawn/Gestura-FastH3-GGUF
+    https://huggingface.co/AbrahamPJ/fasth3-dense-v1-q4_0-gguf
+    MiniMax H3 is licensed under the MiniMax H3 Community License Agreement, Copyright (c)
+    2026 MiniMax. All Rights Reserved. Powered by MiniMax H3. The licence covers only its
+    Applicable Territory: it excludes the European Union, the United Kingdom, the Republic of
+    Korea and the United States of America. Content made with it and shared publicly must be
+    disclosed as machine-generated, and its outputs may not be used to improve other AI
+    models. The app shows these terms and asks the user to accept them before the download.
+    Modified: Gestura's Q4_K_M GGUF requantized to Q4_0. Its video VAE is Gestura's Q8_0
+    GGUF (https://huggingface.co/ZawShiShawn/Gestura-MiniMax-H3-VAE-GGUF) and its audio VAE
+    Comfy-Org's (https://huggingface.co/Comfy-Org/MiniMax-H3), both under the same licence.
+    Its text encoder is Qwen3-VL-4B-Instruct (Apache 2.0) through NicoLab28's ClipProj
+    projection (https://huggingface.co/NicoLab28/ClipProj-MiniMax-H3, MIT). Downloaded by
+    the app at the user's request; not included here.
+
+MOSS-Image (SFT and Base)
+    OpenMOSS team; GGUF by realrebelai, requantised to Q4_0 by this project
+    https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT
+    https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base
+    https://huggingface.co/realrebelai/MOSS-Image_GGUFs
+    https://huggingface.co/AbrahamPJ/nightmare-moss-image
+    Apache 2.0. Downloaded by the app at the user's request; not included here.
+    Its VAE is the FLUX.2 VAE.
+
+MOSS-Image 8-step DMD LoRAs (SFT and Base)
+    lodestones
+    https://huggingface.co/lodestones/MOSS-Image-SFT-8-steps-dmd
+    https://huggingface.co/lodestones/MOSS-Image-Base-8-steps-dmd
+    Apache 2.0. Downloaded by the app at the user's request and applied at
+    run time, unmodified; not included here.
+
+MOSS-Image Turbo (Q4_0 GGUF, the SFT 8-step DMD LoRA merged in)
+    molbal, "MOSS Image Turbo GGUF (8 step)"
+    https://civitai.com/models/3009877
+    https://huggingface.co/AbrahamPJ/nightmare-moss-image (re-hosted unmodified,
+    as its CivitAI permissions allow). Built from MOSS-Image SFT and lodestones'
+    LoRA, both Apache 2.0. Downloaded by the app at the user's request; not
+    included here.
+
+Ideogram 4
+    Ideogram, Inc.; GGUF by leejet
+    https://huggingface.co/ideogram-ai/ideogram-4-fp8
+    https://huggingface.co/leejet/ideogram-4-GGUF
+    Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model
+    Agreement available at
+    https://github.com/ideogram-oss/ideogram-4/model_licenses/LICENSE-IDEOGRAM-4-NON-COMMERCIAL.
+    All rights reserved. Copyright © Ideogram, Inc.
+    Downloaded by the app at the user's request; not included here. Its VAE is
+    the FLUX.2 VAE. Non-commercial use only.
+
+Ideogram 4 TurboTime LoRA
+    ostris
+    https://huggingface.co/ostris/ideogram_4_turbotime_lora
+    Ideogram Non-Commercial Model Agreement (as above). Downloaded by the app at
+    the user's request and applied at run time, unmodified; not included here.
+
+Qwen3-VL-8B-Instruct (Ideogram 4's text encoder)
+    Qwen team; GGUF by unsloth
+    https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF
+    Apache 2.0. Downloaded by the app at the user's request; not included here.
+
+Qwen3.5-9B (MOSS-Image's text encoder and tokenizer)
+    Qwen team; GGUF by unsloth
+    https://huggingface.co/unsloth/Qwen3.5-9B-GGUF
+    Apache 2.0. Downloaded by the app at the user's request; not included here.
+
+Qwen3-VL-4B-Instruct (Krea 2 Turbo's text encoder)
+    Qwen team; GGUF by bartowski
+    https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
+    https://huggingface.co/bartowski/Qwen_Qwen3-VL-4B-Instruct-GGUF
+    Apache 2.0. Downloaded by the app at the user's request; not included here.
+
+Wan 2.1 VAE (Krea 2 Turbo's VAE)
+    Wan team (Alibaba); repackaged by Comfy-Org
+    https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged
+    Apache 2.0. Downloaded by the app at the user's request; not included here.
+
+Wan 2.2 TI2V 5B Turbo (video)
+    Wan team (Alibaba); Turbo distillation by quanhaol; Q4_0 GGUF by hum-ma
+    https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
+    https://github.com/quanhaol/Wan2.2-TI2V-5B-Turbo
+    https://huggingface.co/hum-ma/Wan2.2-TI2V-5B-Turbo-GGUF
+    Wan 2.2 is Apache 2.0. The Turbo code is CC BY-NC-SA 4.0; its weights page
+    states no licence; the GGUF is published as Apache 2.0. Downloaded by the app
+    at the user's request, unmodified; not included here.
+
+Wan 2.2 Fun 5B Control (motion transfer)
+    alibaba-pai; Q4_0 GGUF by QuantStack; FastWan by FastVideo, as a LoRA by Kijai
+    https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control
+    https://huggingface.co/QuantStack/Wan2.2-Fun-5B-Control-GGUF
+    https://huggingface.co/FastVideo/FastWan2.2-TI2V-5B-FullAttn-Diffusers
+    https://huggingface.co/Kijai/WanVideo_comfy
+    Wan 2.2 Fun, its GGUF and FastWan are Apache 2.0; Kijai's repackaged LoRA
+    states no licence. Downloaded by the app at the user's request, unmodified;
+    not included here.
+
+Wan 2.2 I2V A14B, 4-step distilled (video)
+    Wan team (Alibaba); distilled by lightx2v; GGUF by jayn7
+    https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B
+    https://huggingface.co/lightx2v/Wan2.2-Distill-Models
+    https://huggingface.co/jayn7/WAN2.2-I2V_A14B-DISTILL-LIGHTX2V-4STEP-GGUF
+    Apache 2.0. Downloaded by the app at the user's request; not included here.
+
+umT5-XXL encoder (Wan 2.2's text encoder)
+    Google; GGUF by city96
+    https://huggingface.co/google/umt5-xxl
+    https://huggingface.co/city96/umt5-xxl-encoder-gguf
+    Apache 2.0. Downloaded by the app at the user's request; not included here.
+
+TAEHV (Wan 2.2's video decoder)
+    madebyollin
+    https://github.com/madebyollin/taehv
+    MIT licensed. Downloaded by the app at the user's request; not included here.
+
+taef2 and taef1 (tiny decoders for the FLUX.2 and FLUX.1 VAEs)
+    madebyollin
+    https://huggingface.co/madebyollin/taef2
+    https://huggingface.co/madebyollin/taef1
+    MIT licensed. Downloaded with the GPU engine; decode on the GPU route. Not included here.
+
+SAM 2.1 (hiera-tiny)
+    Meta
+    https://github.com/facebookresearch/sam2
+    Apache 2.0. Tap to select. Converted to ONNX (split trunk / prompt /
+    decoder, int8) and re-hosted at huggingface.co/AbrahamPJ/sam2-tiny-split-onnx;
+    downloaded by the app at the user's request; not included here.
+
+SegFormer-B2 clothes (ATR human parser)
+    mattmdjaga
+    https://huggingface.co/mattmdjaga/segformer_b2_clothes
+    MIT licensed. Auto mask by name. Converted to ONNX (int8) and re-hosted at
+    huggingface.co/AbrahamPJ/segformer-b2-clothes-onnx; downloaded by the app at
+    the user's request; not included here.
+
+Florence-2 PromptGen v2.0 (base)
+    MiaoshouAI, fine-tuned from Microsoft's Florence-2-base-ft; ONNX graphs by
+    onnx-community
+    https://huggingface.co/MiaoshouAI/Florence-2-base-PromptGen-v2.0
+    https://huggingface.co/microsoft/Florence-2-base-ft
+    https://huggingface.co/onnx-community/Florence-2-base-ft
+    MIT licensed. A prompt from a picture (the prompt box's describe button).
+    PromptGen's weights put into onnx-community's graphs, the language half
+    quantized to int8, and hosted at huggingface.co/AbrahamPJ/florence2-promptgen-onnx;
+    downloaded by the app at the user's request; not included here.
+
+WD ViT Tagger v3
+    SmilingWolf
+    https://huggingface.co/SmilingWolf/wd-vit-tagger-v3
+    Apache 2.0. Danbooru tags from a picture (the describe button's Tags).
+    Unmodified, downloaded by the app from SmilingWolf's repository at the
+    user's request; not included here.
+
+Danbooru tag list (danbooru.csv)
+    Dominik Reh, from a1111-sd-webui-tagcomplete
+    https://github.com/DominikDoom/a1111-sd-webui-tagcomplete
+    MIT licensed. Tag autocomplete under a prompt box. Copied unchanged with its
+    licence to huggingface.co/AbrahamPJ/nightmare-tags; downloaded by the app at
+    the user's request; not included here.
+
+Foxlet Translate
+    yinvoke
+    https://github.com/yinvoke/foxlet-translate
+    MIT licensed. Offline prompt translation (Russian/Chinese to English).
+    Built from source at v0.6.0 with the local build changes in
+    tools/foxlet-overrides.patch, and shipped as libfoxlet.so inside this app.
+    Its full third-party notices ship in the APK under
+    io/github/yinvoker/foxlet/licenses/.
+
+Bergamot translator
+    Mozilla and the Bergamot project
+    https://github.com/mozilla/translations (inference/)
+    MPL-2.0. Inside libfoxlet.so. The corresponding source, including
+    Foxlet's changes, is at the Foxlet repository above.
+
+Marian NMT
+    Marian authors
+    https://github.com/marian-nmt/marian-dev
+    MIT licensed. Inside libfoxlet.so, with SentencePiece and ruy (Apache 2.0)
+    and further components listed in Foxlet's notices.
+
+Firefox Translations models (ru-en, zh-en)
+    Mozilla
+    https://github.com/mozilla/firefox-translations-models
+    MPL-2.0, unmodified. Re-hosted at
+    https://huggingface.co/AbrahamPJ/nightmare-translate and downloaded by
+    the app at the user's request; not included here.
+
+
+ControlNet 1.1 (canny, depth, openpose) for SD 1.5
+    Lvmin Zhang (lllyasviel)
+    https://huggingface.co/lllyasviel/control_v11p_sd15_canny
+    https://huggingface.co/lllyasviel/control_v11f1p_sd15_depth
+    https://huggingface.co/lllyasviel/control_v11p_sd15_openpose
+    CreativeML OpenRAIL-M; its use-based restrictions apply. Converted to QNN
+    context binaries (the openpose one by LocalDream) and re-hosted at
+    https://huggingface.co/AbrahamPJ/nightmare-sd15-controlnet-qnn, downloaded
+    by the app at the user's request; not included here.
+
+SDXL ControlNets (canny, depth, openpose) for SDXL Swap
+    Hugging Face diffusers team; Thibaud Zamora
+    https://huggingface.co/diffusers/controlnet-canny-sdxl-1.0
+    https://huggingface.co/diffusers/controlnet-depth-sdxl-1.0
+    https://huggingface.co/thibaud/controlnet-openpose-sdxl-1.0
+    Canny and depth: CreativeML Open RAIL++-M; its use-based restrictions
+    apply. Openpose: its card refers to OpenPose's licence (CMU, non-commercial
+    use). Converted to QNN context binaries per chip and re-hosted at
+    https://huggingface.co/AbrahamPJ/nightmare-sdxl-controlnet-qnn, downloaded
+    by the app at the user's request; not included here.
+
+IP-Adapter Plus / Plus Face SDXL heads
+    Tencent AI Lab (h94/IP-Adapter, sdxl_models), Apache 2.0
+    Converted to ONNX (int8 weights) beside the SD 1.5 heads at
+    https://huggingface.co/AbrahamPJ/nightmare-ip-adapter. Downloaded at the
+    user's request.
+
+ADetailer face and hand detectors (Fix faces, Fix hands)
+    Bingsu (face_yolov8n, hand_yolov8n), built on Ultralytics YOLOv8
+    https://huggingface.co/Bingsu/adetailer
+    Apache 2.0 as its model card states. Exported to ONNX unchanged and
+    mirrored at https://huggingface.co/AbrahamPJ/nightmare-adetailer;
+    downloaded at the user's request.
+
+LivePortrait (Face edit, Edit face in Results, Animate a portrait)
+    Kuaishou Technology, https://github.com/KwaiVGI/LivePortrait, MIT.
+    Converted to QNN context binaries per chip (with the YOLOFace detector and
+    the 2DFAN4 landmarker it needs) by facefusion-mobile and hosted at
+    https://huggingface.co/AbrahamPJ/facefusion-mobile-models; downloaded at
+    the user's request. Its keypoint and image code (ffportrait, ffcv) is
+    facefusion-mobile's, by the same author.
+
+Anima 2.9B Turbo LoRA (built into Anima 2.9B)
+    Karely_ai
+    https://civitai.com/models/2857451/anima-29b-turbo-lora-remapped
+    CivitAI permissions: re-hosting, derivatives and commercial use allowed,
+    no credit required. Re-hosted unchanged at
+    https://huggingface.co/AbrahamPJ/nightmare-anima-turbo-lora; downloaded
+    with Anima 2.9B at the user's request.
+
+DWPose (RTMPose-L wholebody, Motion transfer's whole-body pose)
+    IDEA Research (Yang et al.)
+    https://huggingface.co/yzd-v/DWPose
+    Apache 2.0. Downloaded from its own repository at the user's request, unmodified.
+
+IFRNet-S (Smooth motion)
+    Lingtong Kong et al.
+    https://github.com/ltkong218/IFRNet
+    https://huggingface.co/AbrahamPJ/nightmare-ifrnet
+    MIT. Its GoPro weights, converted by this project to NPU context binaries;
+    downloaded at the user's request, not included here.
+
+MoveNet MultiPose Lightning (the openpose detector)
+    Google; ONNX export by Xenova
+    https://huggingface.co/Xenova/movenet-multipose-lightning
+    Apache 2.0. Downloaded from its own repository at the user's request.
+    The skeleton renderer follows controlnet_aux's OpenPose drawing convention
+    and is ported from LocalDream.
+
+Depth Anything V2 Small (the depth estimator)
+    Lihe Yang et al.; ONNX export by onnx-community
+    https://huggingface.co/onnx-community/depth-anything-v2-small
+    Apache 2.0 (the Small model). Downloaded from its own repository at the
+    user's request.
+
+IP-Adapter Plus / Plus Face (SD 1.5) and the CLIP ViT-H/14 image encoder
+    Tencent AI Lab (h94/IP-Adapter), Apache 2.0; OpenCLIP ViT-H-14 laion2B, MIT
+    https://huggingface.co/h94/IP-Adapter
+    Converted to ONNX (encoder truncated to its penultimate layer, int16
+    weights; heads int8) and re-hosted at
+    https://huggingface.co/AbrahamPJ/nightmare-ip-adapter. Downloaded at the
+    user's request.
+
+AbsoluteReality v1.8.1, CuteYukiMix, Anything V5 (the SD 1.5 Swap defaults)
+    Lykon; kemiaomiao; Yuno779
+    Converted with npuforge (https://github.com/AbrahamPaulJ/npuforge) as
+    SD1.5 Swap and re-hosted at
+    https://huggingface.co/AbrahamPJ/nightmare-sd15-swap-models. Each
+    checkpoint's own licence and its author's permissions apply
+    (CreativeML OpenRAIL-M for SD 1.5 derivatives).
+
+Illustrious XL v1.0, Juggernaut XL Ragnarok (the SDXL Swap defaults)
+    OnomaAI Research; RunDiffusion
+    Converted with npuforge as SDXL Swap v2 and re-hosted at
+    https://huggingface.co/AbrahamPJ/nightmare-sdxl-swap-models. Illustrious
+    XL v1.0 is under CreativeML Open RAIL++-M; Juggernaut XL under CreativeML
+    Open RAIL-M with RunDiffusion's terms (no paid API deployment without
+    their licence). Each licence's use restrictions apply.
+
+Community SDXL and SDXL Swap conversions (the Community tab)
+    Converted with npuforge on an 8 Gen 3 by members of the community and
+    hosted on their own Hugging Face pages. Each checkpoint stays under its
+    own author's licence, whose use restrictions apply. Downloaded by the app
+    at the user's request, unmodified; not included here.
+
+Inter (the app's typeface, bundled in app/src/main/res/font)
+    Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
+    SIL Open Font License 1.1 (https://openfontlicense.org).
+
+
+NON-COMMERCIAL
+--------------
+
+CC BY-NC 4.0 permits sharing and adaptation for non-commercial purposes only.
+Selling this software, or distributing it as part of a commercial offering, is
+not permitted by this licence.

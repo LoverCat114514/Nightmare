@@ -1,0 +1,918 @@
+package com.abrah.nightmare.ui
+
+import com.abrah.nightmare.ui.StudioButton
+import com.abrah.nightmare.ui.StudioOutlinedButton
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.abrah.nightmare.Family
+import com.abrah.nightmare.ModelCatalog
+import com.abrah.nightmare.ModelFeatures
+import com.abrah.nightmare.ModelSpec
+import com.abrah.nightmare.R
+
+// ============================================================================
+// ⭐⭐⭐ The Models browser — the user's concept art, 2026-10-05.
+//
+// Capability chips replaced the swipeable family tabs; a search box and a
+// Family menu sit under them; the list is "Installed" first, then "Available",
+// then "Not for this phone" collapsed at the bottom (the user: *"put all
+// unsupported models in its own section so user only sees whats supported"*).
+// A family opens its own page. The pure half (what is shown, in which section)
+// is here and tested in `ModelBrowserTest`; the composables draw it.
+// ============================================================================
+
+/** ⭐ The chips at the top of Models. */
+enum class ModelKind { ALL, GENERATE, EDIT, INPAINT, VIDEO, UPSCALE, FACES, TOOLS }
+
+/** ⭐ A family page's sub-chips; only the non-empty ones are drawn. */
+enum class SubKind { ALL, BASE, INPAINT, COMMUNITY, IMPORTED }
+
+/**
+ * ⭐ A DEDICATED inpainting checkpoint — the 9-channel ones and an npuforge
+ * Swap conversion with Inpaint ticked. ⚠ Not "can inpaint": nearly every family
+ * can (by blend), so a chip on that would list everything.
+ */
+fun ModelSpec.isInpaintModel(): Boolean = when (family) {
+    // ⭐ A Swap conversion says so itself ([ModelFeatures]) — never its name, which the user may change.
+    Family.SD15_SWAP, Family.SDXL_SWAP -> ModelFeatures.INPAINT in featureSet
+    else -> backendType == ModelCatalog.SD15_NPU_INPAINT ||
+        id.contains("inpaint", ignoreCase = true) ||
+        label.contains("inpaint", ignoreCase = true)
+}
+
+/** ⭐ Whether a CHECKPOINT row belongs under [kind]. Video/Upscale/Faces/Tools hold no checkpoints. */
+fun matchesKind(spec: ModelSpec, kind: ModelKind): Boolean = when (kind) {
+    ModelKind.ALL, ModelKind.GENERATE -> true
+    ModelKind.EDIT -> spec.family.edit
+    ModelKind.INPAINT -> spec.isInpaintModel()
+    ModelKind.VIDEO, ModelKind.UPSCALE, ModelKind.FACES, ModelKind.TOOLS -> false
+}
+
+fun matchesSub(spec: ModelSpec, sub: SubKind): Boolean = when (sub) {
+    SubKind.ALL -> true
+    SubKind.BASE -> !spec.isInpaintModel() && !spec.isCustom && !spec.community
+    SubKind.INPAINT -> spec.isInpaintModel()
+    SubKind.COMMUNITY -> spec.community
+    SubKind.IMPORTED -> spec.isCustom
+}
+
+/**
+ * ⭐ Every word of [query] must appear in the model's name, id, family or
+ * capability words — or its starter prompt, which is what makes "anime" find
+ * the anime checkpoints without a tag list nobody maintains.
+ */
+fun matchesQuery(spec: ModelSpec, query: String): Boolean = matchesWords(
+    buildString {
+        append(spec.label).append(' ').append(spec.id).append(' ').append(spec.family.label)
+        if (spec.isInpaintModel()) append(" inpaint")
+        if (spec.family.edit) append(" edit")
+        if (spec.family.dit) append(" dit")
+        if (spec.isCustom) append(" imported")
+        if (spec.community) append(" community")
+        append(' ').append(ModelCatalog.styleWords(spec))
+        append(' ').append(spec.prompt)
+    },
+    query,
+)
+
+/**
+ * ⭐ The search's one word rule: every word of [query] appears in [hay]. ⚠ Shared by the checkpoints
+ * ([matchesQuery]) and the video, upscaler and tool cards the search also finds (#6288: a search on the
+ * Models screen did not find the video models).
+ */
+fun matchesWords(hay: String, query: String): Boolean {
+    val words = query.lowercase().split(' ', ',').filter { it.isNotBlank() }
+    val h = hay.lowercase()
+    return words.all { it in h }
+}
+
+/** ⭐ What the list shows, in its three sections. */
+data class ModelSections(
+    val installed: List<ModelRow>,
+    val available: List<ModelRow>,
+    val unsupported: List<ModelRow>,
+) {
+    val isEmpty get() = installed.isEmpty() && available.isEmpty() && unsupported.isEmpty()
+}
+
+/** ⭐ A row this phone cannot run at all: no build for its chip (or its RAM). */
+fun ModelRow.unsupported(): Boolean = !installed && !spec.isCustom && build == null
+
+fun sectionsOf(
+    rows: List<ModelRow>,
+    kind: ModelKind,
+    query: String,
+    family: Family? = null,
+    sub: SubKind = SubKind.ALL,
+): ModelSections {
+    val shown = rows.filter {
+        (family == null || it.spec.family.page() == family) &&
+            matchesKind(it.spec, kind) && matchesSub(it.spec, sub) && matchesQuery(it.spec, query)
+    }
+    return ModelSections(
+        // ⚠ The one in use first; otherwise the catalogue's curated order.
+        installed = shown.filter { it.installed }.sortedByDescending { it.selected },
+        available = shown.filter { !it.installed && !it.unsupported() },
+        unsupported = shown.filter { it.unsupported() },
+    )
+}
+
+/** ⭐ The chip generation a build needs, as people name them. */
+fun archLabel(arch: Int): String = when {
+    arch >= 81 -> "8 Elite Gen 5+"
+    arch >= 79 -> "8 Elite+"
+    arch >= 75 -> "8 Gen 3+"
+    arch >= 73 -> "8 Gen 2+"
+    arch >= 69 -> "8 Gen 1+"
+    else -> "888+"
+}
+
+/** ⭐ Which group a family sits in on the Family menu. */
+fun Family.isModern(): Boolean = dit
+
+/**
+ * ⭐⭐ The Family-menu PAGE a family is listed on. Anima's two runtimes share one page (the user,
+ * 2026-10-14), DiT first: testers looking for "Anima" found the QNN page, which takes a zip, while
+ * the CivitAI file they had belongs to Anima DiT. Every other family is its own page.
+ */
+fun Family.page(): Family = if (this == Family.ANIMA) Family.ANIMA_DIT else this
+
+/** ⭐ A page's name: the merged Anima page is just "Anima". */
+fun pageLabel(f: Family): String = if (f == Family.ANIMA_DIT) Family.ANIMA.label else f.label
+
+private fun gb2(bytes: Long): String =
+    String.format(java.util.Locale.ROOT, "%.2f GB", bytes / (1024.0 * 1024 * 1024))
+
+// ---------------------------------------------------------------------------
+// Composables
+// ---------------------------------------------------------------------------
+
+@Composable
+internal fun kindLabel(k: ModelKind): String = stringResource(
+    when (k) {
+        ModelKind.ALL -> R.string.mb_kind_all
+        ModelKind.GENERATE -> R.string.mb_kind_generate
+        ModelKind.EDIT -> R.string.mb_kind_edit
+        ModelKind.INPAINT -> R.string.mb_kind_inpaint
+        ModelKind.VIDEO -> R.string.video
+        ModelKind.UPSCALE -> R.string.upscalers
+        ModelKind.FACES -> R.string.mb_kind_faces
+        ModelKind.TOOLS -> R.string.tools
+    },
+)
+
+/** ⭐ A pill: filled violet when on, a quiet outline when off — the concept's chips. */
+@Composable
+internal fun Pill(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+        border = if (selected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
+        )
+    }
+}
+
+@Composable
+internal fun <T> PillRow(items: List<T>, selected: T, label: @Composable (T) -> String, onSelect: (T) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        for (k in items) Pill(label(k), k == selected) { onSelect(k) }
+    }
+}
+
+@Composable
+internal fun SearchBox(
+    query: String,
+    onQuery: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    /** ⭐ The placeholder; the Models browser's when null. The LoRA browser passes its own. */
+    hint: String? = null,
+    /** ⭐ Enter — the LoRA browser searches at once instead of waiting out its debounce. */
+    onSubmit: (() -> Unit)? = null,
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQuery,
+        modifier = modifier.fillMaxWidth(),
+        singleLine = true,
+        shape = RoundedCornerShape(16.dp),
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        // ⭐ ✕ clears the search in one tap, only while there is text (the user, 2026-10-22). ⚠ Here, so the Models
+        // browser and the LoRA browser both get it: they share this one box.
+        trailingIcon = if (query.isEmpty()) null else {
+            { IconButton(onClick = { onQuery("") }) { Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.search_clear)) } }
+        },
+        // ⚠ Only with [onSubmit]: the Models browser's keyboard stays as it was.
+        keyboardOptions = if (onSubmit == null) androidx.compose.foundation.text.KeyboardOptions.Default
+        else androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { onSubmit?.invoke() }),
+        placeholder = {
+            Text(
+                hint ?: stringResource(R.string.mb_search_hint),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+    )
+}
+
+/** ⭐ A coloured family badge — [familyColor] at low alpha behind its own colour. */
+@Composable
+internal fun Badge(text: String, color: Color? = null) {
+    val c = color ?: MaterialTheme.colorScheme.onSurfaceVariant
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = c,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (color != null) c.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHighest)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}
+
+/**
+ * ⭐ "Family: All families ▾" — a plain list (the user turned down a filter
+ * sheet, 2026-10-05). Picking a family opens its page.
+ * ⚠ Full width, like the [SearchBox] above it, and the menu as wide as the
+ * button: wrapped to its text it read as cramped on the phone (1.6.082).
+ */
+@Composable
+internal fun FamilyMenu(counts: List<Pair<Family, Int>>, onPick: (Family) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    var widthPx by remember { mutableStateOf(0) }
+    Box(Modifier.fillMaxWidth()) {
+        StudioOutlinedButton(
+            onClick = { open = true },
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth().onSizeChanged { widthPx = it.width },
+        ) {
+            Text(
+                stringResource(R.string.mb_family, stringResource(R.string.mb_all_families)),
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            modifier = Modifier.width(with(LocalDensity.current) { widthPx.toDp() }),
+        ) {
+            for ((group, members) in counts.groupBy { it.first.isModern() }.toSortedMap()) {
+                Text(
+                    stringResource(if (group) R.string.mb_group_dit else R.string.mb_group_classic),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                )
+                for ((f, n) in members) {
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(10.dp).clip(CircleShape).background(familyColor(f)))
+                                Spacer(Modifier.width(10.dp))
+                                Text(pageLabel(f), modifier = Modifier.weight(1f))
+                                Text(
+                                    n.toString(),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                            }
+                        },
+                        onClick = { open = false; onPick(f) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SectionHeader(text: String, collapsed: Boolean? = null, onToggle: (() -> Unit)? = null) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (onToggle != null) Modifier.clickable(onClick = onToggle) else Modifier)
+            .padding(top = 14.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // ⚠ The colour SET: this sits in a LazyColumn with no Surface above it,
+        // where the inherited content colour is black on the dark ground.
+        Text(
+            text,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        if (collapsed != null) {
+            Icon(
+                if (collapsed) Icons.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * ⭐⭐⭐ The concept's model card: name and ⋮ on top, badges, then
+ * "8 Elite+ · ● Installed · 3.62 GB", and the one action on the right.
+ *
+ * ⚠⚠ **The model IN USE keeps a live Use button** (the user, 2026-10-05: *"dont
+ * grey out the in use model completely. i cant switch to a different flow of
+ * same model"*). Use means "open a flow with this", which is still a choice when
+ * it is already selected; "In use" moved to a badge and the status dot.
+ * ⚠ Delete lives in ⋮. On the model in use it stops the backend first and selects another
+ * ([com.abrah.nightmare.ModelInstaller.delete], GitHub #56).
+ */
+/**
+ * ⭐ Whether a Use button is live, provided by `MainActivity` from [com.abrah.nightmare.HarnessViewModel.canUse].
+ * ⚠ Not `busy`: that includes a download, and a run goes ahead beside a download since GitHub #68, so Use must too
+ * (the user, 2026-10-27: "I cant click Use btn for a model during download"). Null (a golden) follows `busy`.
+ */
+val LocalUseEnabled = androidx.compose.runtime.compositionLocalOf<Boolean?> { null }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun ModelCardV2(
+    row: ModelRow,
+    busy: Boolean,
+    onInstall: (ModelSpec) -> Unit,
+    onCancel: () -> Unit,
+    onDelete: (ModelSpec) -> Unit,
+    onUse: (ModelSpec) -> Unit,
+    /** ⭐ Rename an imported model (its shown name only), from ⋮. */
+    onRename: (ModelSpec) -> Unit = {},
+    onTestNpu: (ModelSpec) -> Unit = {},
+    /** ⭐ A MOSS import's 8-step speed-up on or off, from ⋮ ([com.abrah.nightmare.CustomModels.MOSS_NO_SPEED_MARK]). */
+    onToggleSpeed: (ModelSpec) -> Unit = {},
+) {
+    val spec = row.spec
+    val dim = row.unsupported()
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (row.selected) MaterialTheme.colorScheme.secondaryContainer
+            else MaterialTheme.colorScheme.surfaceContainer,
+        ),
+        border = if (row.selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(
+                        spec.label,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (dim) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    )
+                    FlowRow(
+                        Modifier.padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Badge(spec.family.label, familyColor(spec.family))
+                        Badge("${spec.native.width}×${spec.native.height}")
+                        if (spec.isInpaintModel()) Badge(stringResource(R.string.mb_kind_inpaint), MaterialTheme.colorScheme.primary)
+                        // ⭐ What a Swap conversion takes per render ([ModelFeatures]) — what its node offers.
+                        if (spec.family == Family.SD15_SWAP || spec.family == Family.SDXL_SWAP) {
+                            if (ModelFeatures.LORA in spec.featureSet) Badge("LoRA")
+                            if (ModelFeatures.CONTROLNET in spec.featureSet) Badge(stringResource(R.string.cn_label))
+                            if (ModelFeatures.IP_ADAPTER in spec.featureSet) Badge(stringResource(R.string.ip_label))
+                        }
+                        if (spec.isCustom && !row.fromLocalDream) Badge(stringResource(R.string.mb_sub_imported))
+                        // ⭐ An import running the built-in's 8-step LoRA ([com.abrah.nightmare.CustomModels.mossSpeedOn]).
+                        if (spec.isCustom && spec.ownLora != null) Badge(stringResource(R.string.mb_badge_8steps), MaterialTheme.colorScheme.primary)
+                        // ⭐ Converted by a community member, hosted on their page ([ModelCatalog.communityModels]).
+                        if (spec.community) Badge(stringResource(R.string.mb_sub_community), MaterialTheme.colorScheme.tertiary)
+                        if (row.fromLocalDream) Badge(stringResource(R.string.mb_local_dream), MaterialTheme.colorScheme.tertiary)
+                    }
+                }
+                ModelMenu(row, busy, onInstall, onDelete, onRename, onTestNpu, onToggleSpeed)
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StatusLine(row, Modifier.weight(1f))
+                ModelAction(row, busy, onInstall, onCancel, onUse)
+            }
+            row.progress?.let { p ->
+                if (p.total > 0) {
+                    LinearProgressIndicator(progress = { p.fraction }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp, end = 8.dp))
+                } else {
+                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp, end = 8.dp))
+                }
+                Text(
+                    if (p.total > 0) stringResource(R.string.mb_of_total, p.done shr 20, p.total shr 20) + " · " + p.phase else p.phase,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusLine(row: ModelRow, modifier: Modifier) {
+    val spec = row.spec
+    // ⭐ Which phones can run it — the LOWEST floor of any build, never this phone's build: an S25
+    // takes Klein 4B's FP8 (v79) and the card read "8 Elite+" for a model the 8 Gen 3 runs too
+    // (the user, 2026-10-10); SD 1.5 read "8 Gen 2+" for models whose `_min` build runs from the 888.
+    val arch = spec.builds.minOfOrNull { it.minArch } ?: spec.minHtpArch
+    val (dot, word) = when {
+        row.selected && row.installed -> MaterialTheme.colorScheme.primary to stringResource(R.string.mb_status_in_use)
+        row.installed -> Color(0xFF34C38F) to stringResource(R.string.mb_status_installed)
+        spec.isCustom || row.partial -> MaterialTheme.colorScheme.error to stringResource(R.string.mb_status_incomplete)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant to stringResource(R.string.mb_status_not_installed)
+    }
+    val size = when {
+        row.installed -> gb2(row.onDisk)
+        row.partial -> gb2(row.fetchBytes)
+        row.build != null -> gb2(row.build.bytes)
+        else -> null
+    }
+    Column(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!spec.isCustom) {
+                Text(archLabel(arch), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
+            }
+            Box(Modifier.size(7.dp).clip(CircleShape).background(dot))
+            Spacer(Modifier.width(5.dp))
+            Text(
+                listOfNotNull(word, size).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        // ⚠ The facts the old card said in words, kept where they matter.
+        val note = when {
+            row.noHmx -> stringResource(
+                // ⭐ The 8 Gen 1: HVX only by design (`dit/034`), with no ⋮ Test the NPU to offer.
+                if (com.abrah.nightmare.DeviceProbe.caps().arch < com.abrah.nightmare.ModelCatalog.DIT_V73_MIN_ARCH) {
+                    R.string.dit_hvx_only
+                } else {
+                    R.string.dit_no_hmx
+                },
+                com.abrah.nightmare.DeviceProbe.caps().soc.let { com.abrah.nightmare.DeviceProbe.DIT_NO_HMX_SOCS[it] ?: it },
+            )
+            // ⭐ A DiT model on v85: its engine is not built for that NPU yet ([com.abrah.nightmare.ModelSpec.noEngineFor]).
+            spec.noEngineFor(com.abrah.nightmare.DeviceProbe.caps()) -> stringResource(
+                R.string.dit_no_engine_arch, com.abrah.nightmare.DeviceProbe.caps().arch,
+            )
+            // ⭐ Installed or not ([com.abrah.nightmare.ModelSpec.chipBlocked]): Iris on an 8s Gen 3/4.
+            spec.chipBlocked(com.abrah.nightmare.DeviceProbe.caps()) -> stringResource(
+                R.string.dit_chip_blocked,
+                com.abrah.nightmare.DeviceProbe.caps().soc.let { com.abrah.nightmare.DeviceProbe.DIT_NO_HMX_SOCS[it] ?: it },
+            )
+            row.ramTight -> stringResource(R.string.ram_tight).trim().removePrefix("·").trim()
+            spec.isCustom && row.missing.isNotEmpty() -> stringResource(R.string.incomplete_missing, row.missing.joinToString())
+            row.unsupported() && row.needsRam > 0 ->
+                stringResource(R.string.needs_ram_gb, com.abrah.nightmare.Prefs.ramClassGb(row.needsRam))
+            row.unsupported() -> stringResource(R.string.cannot_run_it)
+            else -> null
+        }
+        note?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun ModelAction(
+    row: ModelRow,
+    busy: Boolean,
+    onInstall: (ModelSpec) -> Unit,
+    onCancel: () -> Unit,
+    onUse: (ModelSpec) -> Unit,
+) {
+    when {
+        row.progress != null -> StudioOutlinedButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
+        row.installed -> StudioButton(onClick = { onUse(row.spec) }, enabled = LocalUseEnabled.current ?: !busy) {
+            Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(stringResource(R.string.use))
+        }
+        row.spec.isCustom -> {}
+        row.build == null -> {}
+        row.queued -> QueuedButton { onInstall(row.spec) }
+        else -> StudioOutlinedButton(onClick = { onInstall(row.spec) }, enabled = !busy || row.queueable) {
+            Text(stringResource(if (row.partial) R.string.repair else R.string.download))
+        }
+    }
+}
+
+/** ⭐ A model waiting behind the download in flight: says so, and a tap takes it out of the queue. */
+@Composable
+private fun QueuedButton(onClick: () -> Unit) {
+    StudioOutlinedButton(onClick = onClick) {
+        Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(stringResource(R.string.download_queued))
+    }
+}
+
+/** ⭐ ⋮ — Delete (on the model in use too: it is released first) and Repair. */
+@Composable
+private fun ModelMenu(
+    row: ModelRow,
+    busy: Boolean,
+    onInstall: (ModelSpec) -> Unit,
+    onDelete: (ModelSpec) -> Unit,
+    onRename: (ModelSpec) -> Unit,
+    onTestNpu: (ModelSpec) -> Unit,
+    onToggleSpeed: (ModelSpec) -> Unit,
+) {
+    // ⚠ Never Local Dream's files — it keeps them, and deletes them itself. Shown greyed with why, as on the model
+    // in use: with no ⋮ at all, one of them read as an import that cannot be deleted (GitHub #56).
+    val canDelete = (row.installed || row.spec.isCustom || row.partial) && row.progress == null
+    val canRepair = row.partial && row.build != null && row.progress == null
+    // ⭐ Our own imports only: a name lives in the model's `config.json`, and Local Dream's are its files.
+    val canRename = row.spec.isCustom && row.installed && row.spec.home != null && row.progress == null && !row.fromLocalDream
+    // ⭐ Diagnose on demand on these chips: no grey error or static ever offers it.
+    val canTestNpu = row.npuTest && row.installed && row.progress == null
+    // ⭐ A MOSS import whose donor holds the LoRA; its state is whether the spec carries it.
+    val speedHome = row.spec.home?.takeIf { row.spec.isCustom && row.spec.family == Family.MOSS && row.installed }
+    val canSpeed = remember(speedHome) { speedHome != null && com.abrah.nightmare.CustomModels.mossSpeedAvailable(java.io.File(speedHome)) }
+    if (!canDelete && !canRepair && !canRename && !canTestNpu && !canSpeed) {
+        Spacer(Modifier.size(40.dp))
+        return
+    }
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }, modifier = Modifier.size(40.dp)) {
+            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.mb_more))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (canRename) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.flows_rename)) },
+                    enabled = !busy,
+                    onClick = { open = false; onRename(row.spec) },
+                )
+            }
+            if (canSpeed) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.mb_moss_speed)) },
+                    trailingIcon = { androidx.compose.material3.Switch(checked = row.spec.ownLora != null, onCheckedChange = null) },
+                    enabled = !busy,
+                    onClick = { open = false; onToggleSpeed(row.spec) },
+                )
+            }
+            if (canTestNpu) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.test_npu)) },
+                    enabled = !busy,
+                    onClick = { open = false; onTestNpu(row.spec) },
+                )
+            }
+            if (canRepair) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.repair)) },
+                    enabled = !busy,
+                    onClick = { open = false; onInstall(row.spec) },
+                )
+            }
+            if (canDelete) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (row.fromLocalDream) stringResource(R.string.delete) + ": " + stringResource(R.string.mb_kept_by_local_dream)
+                            else stringResource(R.string.delete),
+                        )
+                    },
+                    // ⭐ The model in use too (GitHub #56): the delete lets the backend go first and selects another.
+                    enabled = !busy && !row.fromLocalDream,
+                    onClick = { open = false; onDelete(row.spec) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * ⭐⭐⭐ **An add-on's card** — a video model, an upscaler, a tool (segmenter, parser, pose, depth,
+ * describe, ControlNet, IP-Adapter): [ModelCardV2]'s shape, so the Video, Upscalers and Tools tabs
+ * match the checkpoint tabs (the user, 2026-10-09: "still legacy"). Name, what it is for and ⋮ on
+ * top; the status dot with its size and the one action below; progress under that.
+ * ⚠ Delete lives in ⋮ as on a checkpoint; [onDelete] only ASKS (each caller's confirm).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun AddonCard(
+    title: String,
+    detail: String?,
+    installed: Boolean,
+    /** On disk when installed, else what a download fetches; null = not known. */
+    sizeBytes: Long?,
+    busy: Boolean,
+    progress: com.abrah.nightmare.ModelInstaller.Progress?,
+    onCancel: () -> Unit,
+    /** Null when there is nothing to fetch for this phone ([unsupportedNote] says why). */
+    onInstall: (() -> Unit)?,
+    onDelete: () -> Unit,
+    onUse: (() -> Unit)? = null,
+    badges: List<String> = emptyList(),
+    /** Some files present, some not: an "Incomplete" dot and Repair. */
+    partial: Boolean = false,
+    unsupportedNote: String? = null,
+    /** ⭐ [ModelRow.queued] / [ModelRow.queueable], for a model row drawn on this card (Wan). */
+    queued: Boolean = false,
+    queueable: Boolean = false,
+) {
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(
+                        title, style = MaterialTheme.typography.titleMedium,
+                        color = if (unsupportedNote != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    )
+                    if (badges.isNotEmpty()) {
+                        FlowRow(
+                            Modifier.padding(top = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) { badges.forEach { Badge(it) } }
+                    }
+                    detail?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            it, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                }
+                if ((installed || partial) && progress == null) {
+                    var open by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { open = true }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.mb_more))
+                        }
+                        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.delete)) },
+                                enabled = !busy,
+                                onClick = { open = false; onDelete() },
+                            )
+                        }
+                    }
+                } else Spacer(Modifier.size(40.dp))
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    val (dot, word) = when {
+                        installed -> Color(0xFF34C38F) to stringResource(R.string.mb_status_installed)
+                        // ⚠ Not while it is fetching: a download under way is not "Incomplete".
+                        partial && progress == null -> MaterialTheme.colorScheme.error to stringResource(R.string.mb_status_incomplete)
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant to stringResource(R.string.mb_status_not_installed)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(7.dp).clip(CircleShape).background(dot))
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            listOfNotNull(word, sizeBytes?.let(::addonSize)).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    unsupportedNote?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                when {
+                    progress != null -> StudioOutlinedButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
+                    installed && onUse != null -> StudioButton(onClick = onUse, enabled = LocalUseEnabled.current ?: !busy) {
+                        Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.use))
+                    }
+                    installed || onInstall == null -> {}
+                    queued -> QueuedButton(onInstall)
+                    else -> StudioOutlinedButton(onClick = onInstall, enabled = !busy || queueable) {
+                        Text(stringResource(if (partial) R.string.repair else R.string.download))
+                    }
+                }
+            }
+            progress?.let { p ->
+                if (p.total > 0) {
+                    LinearProgressIndicator(progress = { p.fraction }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp, end = 8.dp))
+                } else {
+                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp, end = 8.dp))
+                }
+                Text(
+                    if (p.total > 0) stringResource(R.string.mb_of_total, p.done shr 20, p.total shr 20) + " · " + p.phase else p.phase,
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** ⚠ An add-on can be 30 MB or 8 GB: MB under a gigabyte, GB over it. */
+private fun addonSize(bytes: Long): String =
+    if (bytes >= 1L shl 30) gb2(bytes) else "${bytes shr 20} MB"
+
+/** ⭐ A family page's header: back, the family's name, its count, its note. */
+@Composable
+internal fun FamilyHeader(family: Family, count: Int, note: String, onBack: () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        BackRow(
+            pageLabel(family),
+            stringResource(if (family.isModern()) R.string.mb_group_dit else R.string.mb_group_classic) +
+                " · " + stringResource(R.string.mb_models_count, count),
+            onBack,
+        ) {
+            Box(Modifier.padding(end = 8.dp).size(12.dp).clip(CircleShape).background(familyColor(family)))
+        }
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        ) {
+            Text(
+                note,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(16.dp),
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+/**
+ * ⭐ The top of a page one level into a browser — a family's models, one LoRA:
+ * arrow, title, a quiet line under it. Shared so the two cannot drift.
+ * ⭐ The WHOLE row is Back, not just the 48dp arrow: the user missed it on the
+ * first tap (2026-10-06) and asked for a bigger target.
+ */
+@Composable
+internal fun BackRow(
+    title: String,
+    subtitle: String?,
+    onBack: () -> Unit,
+    trailing: @Composable () -> Unit = {},
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClickLabel = stringResource(R.string.mb_back), onClick = onBack),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.mb_back))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        trailing()
+    }
+}
+
+/**
+ * ⭐ A pill that opens a list — the [Pill] look, outlined, with ▾. For a choice
+ * that sits in a row of pills but has too many words to be pills itself
+ * (the LoRA browser's sort order).
+ */
+@Composable
+internal fun <T> PillMenu(
+    items: List<T>,
+    selected: T,
+    label: @Composable (T) -> String,
+    modifier: Modifier = Modifier,
+    onSelect: (T) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Surface(
+            onClick = { open = true },
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            Row(
+                Modifier.padding(start = 16.dp, end = 8.dp, top = 9.dp, bottom = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    label(selected),
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(20.dp))
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            for (k in items) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            label(k),
+                            color = if (k == selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        )
+                    },
+                    onClick = { open = false; onSelect(k) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun subLabel(s: SubKind): String = stringResource(
+    when (s) {
+        SubKind.ALL -> R.string.mb_kind_all
+        SubKind.BASE -> R.string.mb_sub_base
+        SubKind.INPAINT -> R.string.mb_kind_inpaint
+        SubKind.COMMUNITY -> R.string.mb_sub_community
+        SubKind.IMPORTED -> R.string.mb_sub_imported
+    },
+)

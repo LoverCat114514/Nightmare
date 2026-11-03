@@ -1,0 +1,20 @@
+--- ../LocalDream/local-dream/app/src/main/cpp/src/SDUtils.hpp
++++ backend-src/src/SDUtils.hpp
+@@ -32,6 +32,10 @@
+   int channels;
+   int generation_time_ms;
+   int first_step_time_ms;
++  // Set instead of image_data when GenerationRequest::return_latent is on, i.e.
++  // the sample() op. Already scaled for the VAE (latentsToVae applied), so a
++  // later vae_decode feeds it straight to the decoder graph.
++  std::vector<float> latent_data;
+ };
+ 
+ inline std::string base64_encode(const std::string &in) {
+@@ -487,4 +491,4 @@
+   return resized_image;
+ }
+ 
+-#endif
++#endif
+\ No newline at end of file
