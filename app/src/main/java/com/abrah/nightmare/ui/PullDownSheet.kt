@@ -121,22 +121,22 @@ private val BAR_GAP = 12.dp
 fun PullDownSheet(
     onDismiss: () -> Unit,
     /**
-     * ⭐ Drawn over the sheet, full window — the sidebar (`ShellDrawer`) opened by a sheet's ☰.
-     * ⚠ The sheet is its own window, so nothing the activity draws can cover it.
+     * ⭐ Drawn over the sheet, full window — since 2026-11-04 the caller passes the bottom
+     * navigation bar (`ui/BottomBar.kt`), so sheets keep the app's nav while open.
+     * ⚠ The sheet is its own window, so nothing the activity draws can cover it — hence this slot.
      */
     overlay: @Composable () -> Unit = {},
     /**
-     * ⭐ The sidebar from the main bar's OWN ☰, live in the gap above the sheet (the user's mock,
-     * 2026-10-10: one ☰, not one per sheet). Drawn where [ShellAnchors.menu] says the main bar
-     * put it, so it sits exactly over the dimmed one. Null draws none.
+     * ⭐ (2026-11-04) Retired hook: the ☰/drawer is gone and no caller passes one any more.
+     * Kept so a future sheet-level control still has a slot; the default draws nothing.
      */
     onMenu: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    // ⚠⚠ The canvas's text focus goes as the sheet opens, as for the sidebar (`ShellDrawer`): a
-    // focused prompt's caret handle is its own popup window and would sit over the sheet. Read HERE,
+    // ⚠⚠ The canvas's text focus is cleared as the sheet opens (the retired sidebar required the
+    // same): a focused prompt's caret handle is its own popup window and would sit over the sheet. Read HERE,
     // before the sheet's window, so it is the canvas's focus manager.
     val canvasFocus = androidx.compose.ui.platform.LocalFocusManager.current
     androidx.compose.runtime.LaunchedEffect(Unit) { canvasFocus.clearFocus(force = true) }
@@ -269,7 +269,12 @@ fun PullDownSheet(
                 androidx.compose.foundation.layout.Spacer(Modifier.height(BAR_GAP))
                 // ⚠ CONSUMED as well as padded: the bodies' own `navigationBarsPadding()`
                 // (Library, node sheet, Settings) then read zero instead of doubling it.
-                val padded = androidx.compose.foundation.layout.PaddingValues(bottom = bottomPad)
+                // ⭐ (2026-11-04, the user: "划到最底处无法往下滑了，最底下的东西会被导航栏挡住")
+                // the floating bottom bar rides over the sheet content, so the scrollable gets the
+                // bar's height ON TOP of the nav inset — the last row can now scroll clear of it.
+                val padded = androidx.compose.foundation.layout.PaddingValues(
+                    bottom = bottomPad + com.abrah.nightmare.ui.BOTTOM_BAR_RESERVE,
+                )
                 Column(
                     Modifier
                         .weight(1f, fill = false)
@@ -277,7 +282,10 @@ fun PullDownSheet(
                         .consumeWindowInsets(padded),
                 ) { content() }
             }
-            overlay()
+            // ⭐⭐ The floating bottom bar rides the overlay slot (2026-11-04, the user confirmed
+            // the sink): padded by the SAME measured inset as the content, so the pill hangs above
+            // the nav bar inside this edge-to-edge window — Compose's own insets read 0 here.
+            androidx.compose.foundation.layout.Column(Modifier.padding(bottom = bottomPad)) { overlay() }
         }
     }
 }

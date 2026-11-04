@@ -6,6 +6,8 @@
     <string name="nav_models">Модели</string>
     <string name="nav_flows">Схемы</string>
     <string name="nav_results">Результаты</string>
+    <string name="nav_canvas">Холст</string>
+    <string name="nav_settings">Настройки</string>
     <string name="cd_settings">Настройки</string>
     <string name="cd_device_info">NPU этого устройства: архитектура HTP и VTCM</string>
     <string name="canvas_unsaved_flow">несохранённая схема</string>
@@ -955,6 +957,11 @@
     <string name="notif_run_channel_failed">Генерация не удалась</string>
     <string name="notif_run_done">Генерация завершена</string>
     <string name="notif_run_failed">Генерация не удалась</string>
+    <!-- ⭐ 2026-11-05 port: #85 and #78 -->
+    <string name="models_no_snapdragon">Для %1$s нужен NPU Snapdragon, а %2$s: не чип Snapdragon</string>
+    <string name="shell_ram_chip">ОЗУ %1$s / %2$s ГБ свободно · CPU %3$s° GPU %4$s° NPU %5$s°</string>
+    <string name="chip_temps">Температура чипа</string>
+    <string name="chip_temps_hint">В строке ОЗУ показываются CPU, GPU и NPU (самый горячий датчик каждого) вместо батареи. Предупреждения о нагреве по-прежнему следят за батареей.</string>
     <string name="notification_model_loaded_channel">Модель загружена</string>
     <string name="notification_moving_models">перенос моделей</string>
     <string name="notification_downloading">продолжаю загрузку</string>

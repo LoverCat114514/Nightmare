@@ -16,7 +16,7 @@ object WanGguf {
     /** NSFW-API's `wan_1.3B_exp_e14.safetensors`, converted (computed from its header: 306 Q8_0 + 519 F32). */
     const val NSFW13_BYTES = 1_511_714_912L
 
-    internal val rule = object : SafetensorsGguf.Rule {
+    internal val rule = object : SafetensorsGguf.Rule() {
         override val prefixes = listOf("model.diffusion_model.")
 
         override fun check(names: List<String>) {
@@ -29,9 +29,6 @@ object WanGguf {
 
         override fun type(name: String, outShape: LongArray, dtype: String): Int =
             if (outShape.size == 2 && outShape.last() % 32 == 0L) SafetensorsGguf.Q8_0 else SafetensorsGguf.F32
-        // ⚠ Spelled out on purpose — see [SafetensorsGguf.Rule.decoded]: relying on the default body is
-        // what made release builds drop it (AbstractMethodError on import).
-        override fun decoded(name: String, firstRow: Long, x: FloatArray, rows: Int, rowLen: Int, stride: Int) {}
     }
 
     val converter = Converter { src, dst, onProgress, isCancelled -> convert(src, dst, onProgress, isCancelled) }

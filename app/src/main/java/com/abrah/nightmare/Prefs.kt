@@ -76,6 +76,8 @@ object Prefs {
         postOpen = p.getBoolean(KEY_POST_OPEN, false)
         wanStream = p.getBoolean(KEY_WAN_STREAM, false)
         heatPause = p.getBoolean(KEY_HEAT_PAUSE, false)
+        // ⭐ 2026-11-05 upstream port (v1.6.280, #78): chip temperature switch.
+        chipTemps = p.getBoolean(KEY_CHIP_TEMPS, false)
         ditGpu = p.getBoolean(KEY_DIT_GPU, false)
         ditTaesd = p.getBoolean(KEY_DIT_TAESD, true)
         notifRun = p.getBoolean(KEY_NOTIF_RUN, false)
@@ -339,6 +341,13 @@ object Prefs {
     @Volatile var heatPause: Boolean = false
         private set
 
+    /** ⭐ The RAM readout shows the chip's temperatures, CPU, GPU and NPU ([ChipTemps], GitHub #78), not the battery's. ⭐ 2026-11-05 port from upstream v1.6.280. */
+    const val KEY_CHIP_TEMPS = "chip_temps"
+
+    /** ⚠ [KEY_CHIP_TEMPS] held in memory, as [heatPause]. */
+    @Volatile var chipTemps: Boolean = false
+        private set
+
     /** ⭐ The DiT models on the GPU on any phone ([DitGpu], the user 2026-10-31): opt-in; automatic below v73. */
     const val KEY_DIT_GPU = "dit_gpu"
 
@@ -388,6 +397,8 @@ object Prefs {
         val animaSeqDit: Boolean,
         val wanStream: Boolean = false,
         val heatPause: Boolean = false,
+        // ⭐ 2026-11-05 port: chip temps (#78).
+        val chipTemps: Boolean = false,
         val ditGpu: Boolean = false,
         val ditTaesd: Boolean = true,
     )
@@ -413,6 +424,8 @@ object Prefs {
             animaSeqDit = read(KEY_ANIMA_SEQ_DIT, false),
             wanStream = read(KEY_WAN_STREAM, false),
             heatPause = read(KEY_HEAT_PAUSE, false),
+            // ⭐ 2026-11-05 port: chip temps (#78).
+            chipTemps = read(KEY_CHIP_TEMPS, false),
             ditGpu = read(KEY_DIT_GPU, false),
             ditTaesd = read(KEY_DIT_TAESD, true),
         )
@@ -421,6 +434,8 @@ object Prefs {
     fun setLowRam(context: Context, key: String, on: Boolean) {
         if (key == KEY_WAN_STREAM) wanStream = on
         if (key == KEY_HEAT_PAUSE) heatPause = on
+        // ⭐ 2026-11-05 port: chip temps (#78).
+        if (key == KEY_CHIP_TEMPS) chipTemps = on
         if (key == KEY_DIT_GPU) ditGpu = on
         if (key == KEY_DIT_TAESD) ditTaesd = on
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(key, on).apply()

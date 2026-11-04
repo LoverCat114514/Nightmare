@@ -319,6 +319,30 @@ fun SettingsScreen(
                         hideChat, onHideChat,
                     )
                 }
+                // ⏸ Device info moved into Settings (2026-11-04, the user's call:
+                // "侧边栏的设备信息放到设置里即可") — the side drawer is gone, so this
+                // page is the only remaining entry. The sheet is a plain AlertDialog,
+                // so it mounts from this page's own local flag; the data is the same
+                // DeviceProbe.caps() the old MainActivity mount used (DeviceSheet is
+                // same-package here, no import needed).
+                var showDevice by remember { mutableStateOf(false) }
+                StudioCard {
+                    SectionHeading(stringResource(R.string.device_title))
+                    Row(
+                        Modifier.fillMaxWidth().clickable { showDevice = true },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            stringResource(R.string.cd_device_info),
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (showDevice) {
+                    DeviceSheet(com.abrah.nightmare.DeviceProbe.caps(), onDismiss = { showDevice = false })
+                }
         }
         Page.PROMPTS -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (tags != null) {

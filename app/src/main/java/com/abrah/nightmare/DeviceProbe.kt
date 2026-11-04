@@ -117,6 +117,14 @@ object DeviceProbe {
          * builds a Caps never sees its HOST's RAM; [caps] and [measure] fill it.
          */
         val ramBytes: Long = 0L,
+        /**
+         * ⭐ False on a chip KNOWN not to be a Snapdragon ([qualcommVendor]): MediaTek, Exynos, Tensor. It has no
+         * Hexagon NPU, so no NPU build runs ([supportsArch]) and every flow is dimmed. ⭐ 2026-11-05 port: upstream #85, a MediaTek MT6835 read as "unknown chip" and failed every launch.
+         * ⚠ GitHub #85: a MediaTek phone read as an "unknown chip" at the v68 floor, was
+         * offered everything, and failed every launch with `QnnDsp No Snapdragon SOC detected`. Defaults true, so
+         * a chip that says nothing is still offered everything ([known]).
+         */
+        val qualcomm: Boolean = true,
     ) {
         /** ⚠ The APK has to carry this arch's Skel, or NPU init fails whatever the model. */
         val staged: Boolean get() = arch in STAGED_ARCHES || arch in PACK_ARCHES
@@ -138,14 +146,16 @@ object DeviceProbe {
          * the feature and finds out by trying, which is recoverable. Hiding it
          * is not.
          */
-        val known: Boolean get() = measured || arch != FLOOR_ARCH
+        // ⭐ 2026-11-05 port (#85): a named non-Snapdragon is "known" too.
+        val known: Boolean get() = measured || arch != FLOOR_ARCH || !qualcomm
 
         /**
          * ⚠ A floor, never an allowlist: newer archs run older contexts — but only an arch the APK
          * ships a Skel for ([staged]). An 8 Elite Gen 6 (2026-10-09, "Device Creation failure")
          * is newer than every Skel we have, so it runs nothing on the NPU, old contexts included.
          */
-        fun supportsArch(min: Int): Boolean = staged && arch >= min
+        // ⭐ 2026-11-05 port (#85): no NPU build on a non-Snapdragon.
+        fun supportsArch(min: Int): Boolean = qualcomm && staged && arch >= min
 
         /** ⭐ A chip whose NPU is newer than every arch this APK's runtime knows. */
         val npuTooNew: Boolean get() = arch > ((STAGED_ARCHES + PACK_ARCHES).maxOrNull() ?: 0)
@@ -268,6 +278,22 @@ object DeviceProbe {
     fun soc(): String = (Build.SOC_MODEL ?: "").uppercase()
 
     /**
+     * ⭐ Pure: whether a chip may be a Snapdragon. False only when Android NAMES another chip maker
+     * (`Build.SOC_MANUFACTURER`: "Mediatek", "Samsung" for Exynos, "Google" for Tensor) or the model is
+     * MediaTek's `MT…` (GitHub #85's MT6835). A Snapdragon part number wins over the maker field, and a blank
+     * maker gets the benefit of the doubt. ⭐ 2026-11-05 port from upstream v1.6.280 (#85).
+     */
+    internal fun qualcommVendor(manufacturer: String, soc: String): Boolean {
+        val s = soc.uppercase()
+        if (s in SOC_TO_ARCH || Regex("^SM\\d{4}").containsMatchIn(s)) return true
+        val m = manufacturer.trim().lowercase()
+        if (m in NOT_QUALCOMM) return false
+        return !s.startsWith("MT")
+    }
+
+    private val NOT_QUALCOMM = setOf("mediatek", "samsung", "google", "unisoc", "spreadtrum", "hisilicon")
+
+    /**
      * ⭐⭐ What to gate and label with.
      *
      * ⚠ A measurement always wins. Failing that, the tables; failing those, the
@@ -294,6 +320,8 @@ object DeviceProbe {
             measured = false,
             soc = soc,
             ramBytes = totalRamBytes(),
+            // ⭐ 2026-11-05 port (#85): the maker check.
+            qualcomm = qualcommVendor(Build.SOC_MANUFACTURER, soc),
         )
     }
 

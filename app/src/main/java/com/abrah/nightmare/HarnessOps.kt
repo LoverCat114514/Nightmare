@@ -207,6 +207,8 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 if (arg == "go") say("temp_clean: freed ${TempCleaner.clean(ctx, busy) shr 20} MB")
                 else say("temp_clean: ${targets.size} item(s), ${TempCleaner.scan(ctx, busy) shr 20} MB. `--es arg go` deletes them")
             }
+            // ⭐ 2026-11-05 port (#78): which thermal sensors THIS app may read.
+            "thermal" -> thermalProbe()
             "model_install" -> installModel(arg)
             "model_delete" -> deleteModel(arg)
             "model_use" -> useModel(arg)
@@ -273,6 +275,17 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             "h3_video" -> wanVideo(arg, i2v = false, type = com.abrah.nightmare.npu.H3Node.name)
             // ⭐ …and with a picture as its first frame: `h3_i2v`, the `wan_i2v` arg (a seventh part names the picture).
             "h3_i2v" -> wanVideo(arg, i2v = true, type = com.abrah.nightmare.npu.H3Node.name)
+            // ⭐ 2026-11-05 port (#82): the picture as a REFERENCE (H3 Reference, Ref2VA): `h3_ref`, the `h3_i2v` arg.
+            "h3_ref" -> wanVideo(arg, i2v = true, type = com.abrah.nightmare.npu.H3Node.name, asReference = true)
+            // ⭐ 2026-11-05 port (#82): the one-model A/B (Ref2VA weights, no reference wired) — harness only.
+            "h3_video_refw", "h3_i2v_refw", "h3_video_refw_nolora" -> try {
+                com.abrah.nightmare.npu.H3Node.probeRefWeights = true
+                com.abrah.nightmare.npu.H3Node.probeNoOwnLora = op == "h3_video_refw_nolora"
+                wanVideo(arg, i2v = op == "h3_i2v_refw", type = com.abrah.nightmare.npu.H3Node.name)
+            } finally {
+                com.abrah.nightmare.npu.H3Node.probeRefWeights = false
+                com.abrah.nightmare.npu.H3Node.probeNoOwnLora = false
+            }
             "wan_i2v" -> wanVideo(arg, i2v = true)
             // ⭐ GitHub #23's chaining: clip A's `last_frame` is clip B's first frame. `--es arg "WxH|seconds"`.
             "wan_chain" -> wanChain(arg)
@@ -1812,7 +1825,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      * [runWorkflow] like [npuVideo]. `arg` = `prompt|seed|seconds|size|shape`, each optional; an
      * empty seed rolls. The clip is saved to the gallery when it works, so it can be watched.
      */
-    private suspend fun wanVideo(arg: String?, i2v: Boolean, type: String? = null) {
+    private suspend fun wanVideo(arg: String?, i2v: Boolean, type: String? = null, asReference: Boolean = false) {
         val f = arg.orEmpty().split('|')
         fun at(i: Int) = f.getOrNull(i)?.trim().orEmpty()
         // ⭐ A seventh part names a picture in the app's external files (a test image pushed there), so a run never
@@ -1834,6 +1847,8 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                         n.type == "core.image" && uri != null -> n.copy(params = n.params + ("uri" to uri))
                         n.type == wan.name -> n.copy(
                             type = type ?: n.type,
+                            // ⭐ 2026-11-05 port (#82): `h3_ref` sends the picture as the reference input.
+                            inputs = if (asReference) n.inputs.mapKeys { (k, _) -> if (k == "image") com.abrah.nightmare.npu.H3Node.REFERENCE else k } else n.inputs,
                             params = n.params + listOfNotNull(
                                 at(1).takeIf { it.isNotEmpty() }?.let { "seed" to it },
                                 at(2).takeIf { it.isNotEmpty() }?.let { "seconds" to it },
@@ -3595,7 +3610,9 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
     fun listUpscalers() {
         val caps = DeviceProbe.caps()
         say("upscalers (device arch ${caps.arch}, vtcm ${caps.vtcmMb} MB):")
-        for (spec in UpscalerCatalog.ALL) {
+        // ⭐ 2026-11-05 port (ESRGAN, S#7774): imported ones too; a headless op must refresh itself.
+        UpscalerCatalog.refresh(ctx)
+        for (spec in UpscalerCatalog.allSpecs()) {
             val b = spec.buildFor(caps)
             say(
                 "  ${spec.id.padEnd(20)} " +
@@ -5462,6 +5479,26 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      * (the group exists only without `--lowram`), a bare model id prints.
      * `wan_stream=0|1` sets Video: stream the model, the same way (GitHub #59).
      */
+    /**
+     * ⭐ GitHub #78's probe from inside the app (an `adb shell` reads with other rights): each `/sys/class/thermal`
+     * zone this process can read, with its type and °C, then Android's thermal status and headroom.
+     * ⭐ 2026-11-05 port from upstream v1.6.280.
+     */
+    private fun thermalProbe() {
+        val zones = java.io.File("/sys/class/thermal").listFiles { f -> f.name.startsWith("thermal_zone") }.orEmpty()
+            .sortedBy { it.name.removePrefix("thermal_zone").toIntOrNull() ?: 0 }
+        var readable = 0
+        for (z in zones) {
+            val type = runCatching { java.io.File(z, "type").readText().trim() }.getOrElse { "(type: ${it.javaClass.simpleName})" }
+            val temp = runCatching { java.io.File(z, "temp").readText().trim() }
+            temp.onSuccess { readable++ }
+            say("  ${z.name} $type ${temp.fold({ String.format(java.util.Locale.ROOT, "%.1f °C", it.toLong() / 1000.0) }, { "unreadable: ${it.javaClass.simpleName}" })}")
+        }
+        say("thermal: $readable of ${zones.size} zones readable")
+        val pm = ctx.getSystemService(android.os.PowerManager::class.java)
+        say("thermal: status ${pm.currentThermalStatus}, headroom in 10 s ${pm.getThermalHeadroom(10)}")
+    }
+
     private fun spillFillOp(arg: String?) {
         val (k, v) = arg.orEmpty().split('=', limit = 2).let { it[0] to it.getOrNull(1) }
         when {

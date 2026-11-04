@@ -6,6 +6,8 @@
     <string name="nav_models">模型</string>
     <string name="nav_flows">流程</string>
     <string name="nav_results">结果</string>
+    <string name="nav_canvas">画布</string>
+    <string name="nav_settings">设置</string>
     <string name="cd_settings">设置</string>
     <string name="cd_device_info">本机 NPU：HTP 架构与 VTCM</string>
     <string name="canvas_unsaved_flow">未保存的流程</string>
@@ -934,6 +936,11 @@
     <string name="notif_run_channel_failed">生成失败</string>
     <string name="notif_run_done">生成完成</string>
     <string name="notif_run_failed">生成失败</string>
+    <!-- ⭐ 2026-11-05 port: #85 and #78 -->
+    <string name="models_no_snapdragon">%1$s 需要骁龙 NPU，而 %2$s 不是骁龙芯片</string>
+    <string name="shell_ram_chip">内存 %1$s / %2$s GB 可用 · CPU %3$s° GPU %4$s° NPU %5$s°</string>
+    <string name="chip_temps">显示芯片温度</string>
+    <string name="chip_temps_hint">内存一行显示 CPU、GPU 和 NPU 的温度（各取最热的传感器），而不是电池温度。过热提醒仍按电池温度。</string>
     <string name="notification_model_loaded_channel">模型已加载</string>
     <string name="notification_moving_models">正在移动模型</string>
     <string name="notification_downloading">正在保持下载进行</string>

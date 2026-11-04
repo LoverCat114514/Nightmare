@@ -16,6 +16,8 @@
     <string name="nav_models">Models</string>
     <string name="nav_flows">Flows</string>
     <string name="nav_results">Results</string>
+    <string name="nav_canvas">Canvas</string>
+    <string name="nav_settings">Settings</string>
     <string name="cd_settings">Settings</string>
     <string name="cd_device_info">This device\'s NPU: HTP arch and VTCM</string>
     <string name="canvas_unsaved_flow">unsaved flow</string>
@@ -966,6 +968,11 @@
     <string name="notif_run_channel_failed">Generation failed</string>
     <string name="notif_run_done">Generation finished</string>
     <string name="notif_run_failed">Generation failed</string>
+    <!-- ⭐ 2026-11-05 port: #85 and #78 -->
+    <string name="models_no_snapdragon">%1$s needs a Snapdragon NPU, and %2$s is not a Snapdragon chip</string>
+    <string name="shell_ram_chip">RAM %1$s / %2$s GB free · CPU %3$s° GPU %4$s° NPU %5$s°</string>
+    <string name="chip_temps">Show the chip\'s temperatures</string>
+    <string name="chip_temps_hint">The RAM line shows the CPU, GPU and NPU (the hottest sensor of each) instead of the battery. The heat warnings still follow the battery.</string>
     <string name="run_reading_prompt">reading the prompt</string>
     <string name="run_rendering">rendering</string>
     <string name="run_nothing_masked">nothing masked. Paint an area, then Run again</string>

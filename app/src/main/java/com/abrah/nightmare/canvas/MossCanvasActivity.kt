@@ -84,12 +84,19 @@ class MossCanvasActivity : ComponentActivity() {
      * The one bridge method. Runs on a WebView thread — setResult/finish are
      * marshalled to the UI thread. A cancel (back gesture) finishes with no
      * result and nothing is written.
+     *
+     * ⭐ (2026-11-04 fix) The draft's canvas size rides home beside the compiled
+     * prompt: the inspector writes it back to the sampler's own width/height, so
+     * the canvas and the sampler's widgets no longer drift apart.
      */
     private inner class Bridge {
         @JavascriptInterface
-        fun saveDraft(compiled: String) {
+        fun saveDraft(compiled: String, width: Int, height: Int) {
             runOnUiThread {
-                val data = Intent().putExtra(EXTRA_DRAFT, compiled)
+                val data = Intent()
+                    .putExtra(EXTRA_DRAFT, compiled)
+                    .putExtra(EXTRA_WIDTH, width)
+                    .putExtra(EXTRA_HEIGHT, height)
                 setResult(RESULT_OK, data)
                 finish()
             }

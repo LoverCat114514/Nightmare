@@ -62,7 +62,6 @@ import com.abrah.nightmare.ui.MeasureTextStyle
 import com.abrah.nightmare.ui.NoteTextStyle
 import com.abrah.nightmare.ui.NightmareTheme
 import com.abrah.nightmare.ui.ScreenHeader
-import com.abrah.nightmare.ui.DeviceSheet
 import com.abrah.nightmare.ui.LibraryScreen
 import com.abrah.nightmare.ui.ModelsScreen
 import com.abrah.nightmare.ui.WorkflowsScreen
@@ -276,8 +275,7 @@ fun HarnessScreen(
     nonce: Int = 0,
     vm: HarnessViewModel = viewModel(),
 ) {
-    // ⭐ The sidebar (`ui/ShellDrawer.kt`) and its Save flow, which opens the canvas's own dialog.
-    var drawerOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    // ⭐ The "Save flow" ask, which opens the canvas's own save dialog (the drawer it served is gone, 2026-11-04).
     var saveRequest by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     // ⭐ …and the "Save, then open" answer of the unsaved-flow dialog raises the same one.
     // ⚠ Against the last ask HANDLED, saved across recreation: `saveAsk` only grows and the
@@ -362,7 +360,8 @@ fun HarnessScreen(
             onSaved = vm::sendToSaved,
             onDismiss = vm::cancelSend,
         )
-    }
+    }
+
     // ⭐⭐ A model's licence, asked before its download starts ([HarnessViewModel.installModel]): MiniMax H3's
     // territories and terms, the full text one tap away. Over every screen, as the download can start from any.
     vm.pendingLicence?.let { spec ->
@@ -562,7 +561,6 @@ fun HarnessScreen(
             ram = vm.load?.let { l ->
                 com.abrah.nightmare.ui.ramLine(shellLoadOf(l, vm.modelLabel))
             },
-            onMenu = { drawerOpen = true },
             saveRequest = saveRequest,
             onModels = { vm.setModelsVisible(true) },
             onWorkflows = { vm.setWorkflowsVisible(true) },
@@ -666,12 +664,6 @@ fun HarnessScreen(
             onConfirmSwap = vm::confirmSwap,
             onCancelSwap = vm::cancelSwap,
         )
-        // ⚠ A dialog, so it draws OVER the canvas rather than replacing it: the
-        // question it answers ("why did that fail on my phone") is asked while
-        // looking at the thing that failed.
-        if (vm.showDeviceInfo) {
-            DeviceSheet(vm.deviceCaps, onDismiss = { vm.setDeviceInfoVisible(false) })
-        }
         // ⭐ The sweep builder. ⚠ A dialog over the canvas for the same reason
         // the device sheet is one: it is answering a question about the graph
         // you are looking at.
@@ -689,27 +681,46 @@ fun HarnessScreen(
     // One lambda, so the places cannot differ. ⚠⚠ Every destination CLOSES the other sheet first:
     // Settings asked for from inside Models used to open behind it and look dead (the user,
     // 2026-10-10: "settings cant be opened from models/flows/results").
+    // ⭐⭐⭐ Which slot the bottom bar lights: derived from the SAME state the
+    // screens read (mainView + showCanvas), so the bar can never disagree with
+    // what is on screen. The canvas views (AGENT/NODES/GRAPH) all light CANVAS:
+    // they are three views of one flow, not three destinations.
+    val dest = when {
+        vm.mainView == com.abrah.nightmare.MainView.MODELS -> com.abrah.nightmare.ui.BottomDest.MODELS
+        vm.mainView == com.abrah.nightmare.MainView.FLOWS -> com.abrah.nightmare.ui.BottomDest.FLOWS
+        vm.mainView == com.abrah.nightmare.MainView.RESULTS -> com.abrah.nightmare.ui.BottomDest.RESULTS
+        !vm.showCanvas -> com.abrah.nightmare.ui.BottomDest.SETTINGS
+        else -> com.abrah.nightmare.ui.BottomDest.CANVAS
+    }
+    // ⭐⭐ THE SHELL NAVIGATION, now the bar alone (2026-11-04: "将侧边的抽屉栏删掉
+    // 吧，不需要了"). The drawer is retired: its three destinations live on the
+    // bar, Settings and Device moved there too (Device from Settings, ⭐
+    // below), and Save flow stays on the canvas top bar where it always was.
     val sidebar: @Composable () -> Unit = {
-        com.abrah.nightmare.ui.ShellDrawer(
-            open = drawerOpen,
-            onClose = { drawerOpen = false },
-            version = BuildConfig.VERSION_NAME,
+        // ⭐⭐⭐ The floating pill bottom bar (the user's mock, 2026-11-04: exteraGram's
+        // capsule) — the PRIMARY navigation, now the ONLY shell. Composed here so
+        // every surface draws it: the canvas composes this lambda directly, and
+        // every sheet passes it as its `overlay` (a sheet is its own window, so
+        // the bar must ride INSIDE it to be visible).
+        //
+        // ⭐  The old shell navigation rules apply unchanged: every destination
+        // closes the other sheet first (2026-10-10), and the open is deferred two
+        // frames via openLater so the sheet's close animation is not seen late.
+        com.abrah.nightmare.ui.NightmareBottomBar(
+            selected = dest,
+            onCanvas = { vm.closeLibrary(); vm.setCanvasVisible(true) },
             onModels = { vm.setCanvasVisible(true); openLater { vm.setModelsVisible(true) } },
             onFlows = { vm.setCanvasVisible(true); openLater { vm.setWorkflowsVisible(true) } },
             onResults = { vm.setCanvasVisible(true); openLater { vm.setResultsVisible(true) } },
-            flowName = vm.activeFlow.name ?: vm.openedResultName ?: stringResource(R.string.drawer_unsaved_flow),
-            flowDirty = vm.activeFlow.dirty,
-            onSaveFlow = { vm.closeLibrary(); vm.setCanvasVisible(true); saveRequest++ },
-            load = vm.load?.let { shellLoadOf(it, vm.modelLabel) },
             onSettings = { vm.closeLibrary(); openLater { vm.setCanvasVisible(false) } },
-            onAbout = { vm.setDeviceInfoVisible(true) },
+            modelsBusy = vm.importing != null,
         )
     }
     // ⭐⭐ Models / Flows / Results are SHEETS over the canvas again, like Settings (the user's call
     // 2026-10-10, reversing Violet Studio's destinations-under-the-shell of 2026-10-08).
     // ⚠ The sheet handles Back itself (its Dialog's dismiss), so the gesture never leaves the app.
     if (vm.libraryOpen) {
-        com.abrah.nightmare.ui.PullDownSheet(onDismiss = vm::closeLibrary, onMenu = { drawerOpen = true }, overlay = sidebar) {
+        com.abrah.nightmare.ui.PullDownSheet(onDismiss = vm::closeLibrary, overlay = sidebar) {
             // ⭐⭐ Asked AT the first Download, not at launch: that is the
             // moment the answer means something. Android 13+ drops every
             // notification silently without it, and the shade is where a
@@ -724,7 +735,6 @@ fun HarnessScreen(
                 tab = vm.libraryTab,
                 onTab = vm::switchLibraryTab,
                 showTabs = false,
-                onMenu = { drawerOpen = true },
                 modelsAction = {
                     com.abrah.nightmare.ui.ImportButton(enabled = !vm.working) { vm.importOpen = true }
                 },
@@ -950,11 +960,15 @@ fun HarnessScreen(
     }
 
     if (vm.showCanvas) {
+        // ⭐⭐⭐ The sidebar lambda now draws BOTH layers -- the drawer (closed =
+        // nothing) and, after it, the floating pill bottom bar. Last child of
+        // this Box = drawn last = on top of the canvas, over the Run bar's old
+        // corner (which now pads itself out of the way). One call, one bar.
         sidebar()
         return
     }
 
-    com.abrah.nightmare.ui.PullDownSheet(onDismiss = { vm.setCanvasVisible(true) }, onMenu = { drawerOpen = true }, overlay = sidebar) {
+    com.abrah.nightmare.ui.PullDownSheet(onDismiss = { vm.setCanvasVisible(true) }, overlay = sidebar) {
 
         // ⚠⚠ **Settings is one page now** — Community and Diagnostics (the op
         // harness) were removed 2026-09-19, at the user's ask: a pack still loads
@@ -962,8 +976,11 @@ fun HarnessScreen(
         // developer surface (`OpService` over adb) that never needed one either.
         // `ui/SettingsScreen.kt` has the reasoning.
         //
-        // ⚠ Back returns to the canvas rather than quitting -- the same hole the
+        // M-bM-^ZM-  Back returns to the canvas rather than quitting -- the same hole the
         // fullscreen viewer had, and the reason every over-canvas screen handles it.
+        // M-bM-^ZM-  Since the bottom bar (2026-11-04): Back, and the bar's own
+        // already-selected Canvas tap, BOTH return to the canvas -- the sheet keeps
+        // its own pull-down dismiss either way.
         BackHandler { vm.setCanvasVisible(true) }
         // ⭐ Settings' own copy of the embeddings import picker — see the Models
         // tab's `embeddingPicker` for the same launcher and why it is declared
@@ -1064,7 +1081,6 @@ fun HarnessScreen(
             hideChat = vm.hideChat,
             onNodesVertical = vm::chooseNodesVertical,
             onHideChat = vm::chooseHideChat,
-            onMenu = { drawerOpen = true },
             lowRam = vm.lowRam,
             onLowRam = vm::chooseLowRam,
             onCleanTemp = vm::cleanTempFiles,

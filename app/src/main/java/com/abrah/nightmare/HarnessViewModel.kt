@@ -823,6 +823,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
          * permission; a CPU sensor is not readable on every phone. Null when the phone does not say.
          */
         val batteryTempC: Float? = null,
+        /** ⭐ 2026-11-05 port (#78): the chip's CPU, GPU and NPU temperatures, when Settings asks for them and the phone gives them ([ChipTemps]). */
+        val chipTemps: ChipTemps.Temps? = null,
     )
 
     /**
@@ -929,6 +931,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             graphModels = named.ifEmpty { listOf(SelectedModel.spec.label) },
             running = busy,
             batteryTempC = batteryTempC(),
+            chipTemps = if (Prefs.chipTemps) ChipTemps.read() else null, // ⭐ 2026-11-05 port (#78)
         )
     }
 
@@ -1758,6 +1761,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 is CustomModels.ImportKind.Checkpoint ->
                     if (kind.family != null) importDitModel(uri, n, kind.family) else familyAsk = uri to n
                 CustomModels.ImportKind.Upscaler -> importUpscaler(uri)
+                // ⭐ 2026-11-05 port (S#7774): an ESRGAN as CivitAI ships it, run by the DiT engine.
+                is CustomModels.ImportKind.GgmlUpscaler -> importUpscaler(uri, kind.ext)
                 CustomModels.ImportKind.Lora -> modelError = text(R.string.import_is_lora)
                 CustomModels.ImportKind.Embedding -> modelError = text(R.string.import_is_embedding)
                 is CustomModels.ImportKind.NeedsConverting -> modelError = text(R.string.import_needs_converting, kind.what)
@@ -1881,7 +1886,9 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // refused up front rather than after 3.5 GB.
         val build = spec.buildFor(DeviceProbe.caps())
         if (build == null) {
-            modelError = if (spec.noEngineFor(DeviceProbe.caps()))
+            modelError = if (!DeviceProbe.caps().qualcomm) // ⭐ 2026-11-05 port (#85): said in words first
+                text(R.string.models_no_snapdragon, spec.label, DeviceProbe.caps().soc.ifEmpty { text(R.string.flow_this_chip) })
+            else if (spec.noEngineFor(DeviceProbe.caps()))
                 text(R.string.models_no_engine_arch, spec.label, DeviceProbe.caps().arch)
             else if (spec.chipBlocked(DeviceProbe.caps()))
                 text(R.string.models_not_on_chip, spec.label, DeviceProbe.caps().soc.let { DeviceProbe.DIT_NO_HMX_SOCS[it] ?: it })
@@ -4618,7 +4625,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      * for a checkpoint — a picked file rarely has a name a user would choose
      * to type twice.
      */
-    fun importUpscaler(uri: android.net.Uri) {
+    fun importUpscaler(uri: android.net.Uri, ext: String = "bin") { // ⭐ 2026-11-05 port (S#7774)
         val ctx = getApplication<Application>()
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val result = runCatching {
@@ -4629,17 +4636,23 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 // extension should be refused, not silently accepted under a
                 // name that implies it is something it is not.
                 val displayName = uriDisplayName(uri).orEmpty()
-                require(displayName.endsWith(".bin", ignoreCase = true)) {
-                    "only .bin files are supported"
+                require(displayName.endsWith(".$ext", ignoreCase = true)) { // ⭐ 2026-11-05 port (S#7774)
+                    "only .bin, .pth and .safetensors files are supported"
                 }
-                val proposed = displayName.dropLast(4)
+                val proposed = displayName.dropLast(ext.length + 1)
                 val name = java.io.File(proposed).name.let {
                     if (UpscalerCatalog.isValidName(it)) it else "upscaler_${System.currentTimeMillis()}"
                 }
-                UpscalerCatalog.importCustom(ctx, name) {
+                val spec = UpscalerCatalog.importCustom(ctx, name, ext) { // ⭐ 2026-11-05 port (S#7774)
                     ctx.contentResolver.openInputStream(uri)
                         ?: throw java.io.IOException("could not read that file")
                 }
+                // ⭐ 2026-11-05 port (S#7774): an ESRGAN runs on the DiT engine (backend 054):
+                // a phone with no DiT model has none yet (23 MB).
+                if (spec.ggml && !com.abrah.nightmare.DitEngine.isInstalled(ctx)) {
+                    com.abrah.nightmare.DitEngine.install(ctx, onProgress = {})
+                }
+                spec
             }
             withContext(kotlinx.coroutines.Dispatchers.Main) {
                 result.fold(
@@ -4661,7 +4674,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      * model takes its new steps, CFG and scheduler (Reset defaults' overlay), so the next Run is the recipe it shows.
      */
     fun toggleMossSpeed(spec: ModelSpec) {
-        val dir = spec.home?.let { java.io.File(it) } ?: return
+        val dir = spec.dir(getApplication()) // ⭐ 2026-11-05 port: spec.home only on Local Dream's, so this was unreachable on imports since 1.6.163 (Saved #7783)
         val on = spec.ownLora == null
         viewModelScope.launch {
             withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CustomModels.setMossSpeed(dir, on) } }
@@ -4676,7 +4689,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun renameModel(spec: ModelSpec, name: String) {
-        val dir = spec.home?.let { java.io.File(it) } ?: return
+        val dir = spec.dir(getApplication()) // ⭐ 2026-11-05 port: same import-reachability fix as [toggleMossSpeed]
         if (name.isBlank()) return
         viewModelScope.launch {
             val r = withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -4821,14 +4834,14 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 ModelCatalog.WAN22_A14B_I2V -> com.abrah.nightmare.canvas.recipesWithId(com.abrah.nightmare.canvas.I2V, com.abrah.nightmare.canvas.T2V14)
                 // ⭐ Text to video only: the Text to video flow with its node swapped to the 1.3B.
                 ModelCatalog.WAN21_NSFW13 -> com.abrah.nightmare.canvas.recipesWithId(com.abrah.nightmare.canvas.T2V)
-                ModelCatalog.MINIMAX_H3 -> com.abrah.nightmare.canvas.recipesWithId(com.abrah.nightmare.canvas.T2V)
+                ModelCatalog.MINIMAX_H3, ModelCatalog.MINIMAX_H3_REF -> com.abrah.nightmare.canvas.recipesWithId(com.abrah.nightmare.canvas.T2V) // ⭐ 2026-11-05 port (#82)
                 else -> com.abrah.nightmare.canvas.recipesWithId(com.abrah.nightmare.canvas.T2V, com.abrah.nightmare.canvas.I2V)
             },
             unsavedFlow = unsavedFlow(),
             videoType = when (spec) {
                 ModelCatalog.WAN22_A14B_I2V -> com.abrah.nightmare.npu.WanA14Node.name
                 ModelCatalog.WAN21_NSFW13 -> com.abrah.nightmare.npu.WanNsfw13Node.name
-                ModelCatalog.MINIMAX_H3 -> com.abrah.nightmare.npu.H3Node.name
+                ModelCatalog.MINIMAX_H3, ModelCatalog.MINIMAX_H3_REF -> com.abrah.nightmare.npu.H3Node.name // ⭐ 2026-11-05 port (#82)
                 // ⚠ Named, not null: a flow reopens from its own autosave (1.6.257), so "keep the node" kept whatever
                 // model it was last switched to, and Use on Wan 2.2 Turbo opened MiniMax H3 (the user, 2026-10-30).
                 ModelCatalog.WAN22 -> com.abrah.nightmare.npu.WanVideoNode.name

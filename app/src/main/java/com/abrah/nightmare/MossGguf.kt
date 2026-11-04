@@ -14,7 +14,7 @@ import java.io.IOException
  * embedders, the final linear) F32, exact.
  */
 object MossGguf {
-    internal val rule = object : SafetensorsGguf.Rule {
+    internal val rule = object : SafetensorsGguf.Rule() {
         override val prefixes = listOf("model.diffusion_model.")
         override val kv = listOf("general.architecture" to "moss_image")
         override val kvU32 = listOf("general.quantization_version" to 2, "general.file_type" to 7)
@@ -26,9 +26,6 @@ object MossGguf {
         override fun type(name: String, outShape: LongArray, dtype: String): Int =
             if (outShape.size == 1 || outShape.last() % 32 != 0L || F32_PREFIXES.any { name.startsWith(it) }) SafetensorsGguf.F32
             else SafetensorsGguf.Q8_0
-        // ⚠ Spelled out on purpose — see [SafetensorsGguf.Rule.decoded]: relying on the default body is
-        // what made release builds drop it (AbstractMethodError on this file's first fp16 import).
-        override fun decoded(name: String, firstRow: Long, x: FloatArray, rows: Int, rowLen: Int, stride: Int) {}
     }
 
     private val F32_PREFIXES = listOf("time_embedding.", "video_embedder.", "final_linear_video.")

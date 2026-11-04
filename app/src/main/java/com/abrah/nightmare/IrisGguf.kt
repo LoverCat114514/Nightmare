@@ -29,7 +29,7 @@ object IrisGguf {
     private val MLP = Regex("""^(?:blocks\.\d+\.mlp(?:_[xy])?|y_embedder\.refiner\.blocks\.\d+\.mlp)\.(w1|w2|w3)\.weight$""")
     private val KEEP = listOf("t_embedder.", "y_embedder.", "final_layer.", "y_pos_embedding")
 
-    internal val rule = object : SafetensorsGguf.Rule {
+    internal val rule = object : SafetensorsGguf.Rule() {
         override fun check(names: List<String>) {
             if ("y_embedder.layer_pool.weight" !in names || "pixel_blocks.0.compress.weight" !in names) {
                 throw IOException("not an Iris-3B DiT (no y_embedder.layer_pool / pixel_blocks)")
@@ -47,9 +47,6 @@ object IrisGguf {
                 if (dtype == "BF16") SafetensorsGguf.BF16 else SafetensorsGguf.F32
             else -> SafetensorsGguf.Q8_0
         }
-        // ⚠ Spelled out on purpose — see [SafetensorsGguf.Rule.decoded]: relying on the default body is
-        // what made release builds drop it (AbstractMethodError on import).
-        override fun decoded(name: String, firstRow: Long, x: FloatArray, rows: Int, rowLen: Int, stride: Int) {}
     }
 
     val converter = Converter { src, dst, onProgress, isCancelled -> convert(src, dst, onProgress, isCancelled) }

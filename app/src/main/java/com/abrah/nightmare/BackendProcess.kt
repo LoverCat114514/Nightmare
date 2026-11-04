@@ -121,6 +121,8 @@ object BackendProcess {
         val raw = output.takeWhile { !it.startsWith(EXEC_PREFIX) }.lastOrNull {
             (it.contains("[ ERROR ]") || it.trimStart().startsWith("ERROR")) && HARMLESS_ERRORS.none { h -> h in it }
         } ?: return null
+        // ⭐ 2026-11-05 port (#85): QNN's own words for a phone with no Hexagon NPU (a MediaTek MT6835), said for a person.
+        if ("No Snapdragon SOC detected" in raw) return NO_SNAPDRAGON
         // The engine prefixes `   522.3ms [ ERROR ] [dit] model_loader.cpp:270  - `.
         // Everything before the ` - ` is timing and provenance, and none of it
         // means anything to the person reading the chip.
@@ -135,6 +137,10 @@ object BackendProcess {
     val processId: Int? get() = process?.let { System.identityHashCode(it) }
 
     private const val EXEC_PREFIX = "exec: "
+
+    // ⭐ 2026-11-05 port (#85): QNN's own words for a phone with no Hexagon NPU, said for a person.
+    internal const val NO_SNAPDRAGON =
+        "this phone has no Snapdragon NPU, which this model needs. Nightmare's models run on Qualcomm Snapdragon chips only"
 
     /**
      * ⚠ `[ ERROR ]` lines every healthy launch prints, never a reason: Wan 2.2's 5-D patch tensor makes
@@ -393,7 +399,7 @@ object BackendProcess {
     private val QNN_ARCH_FILE = Regex("""libQnnHtpV\d{2}(Skel|Stub)?\.so""")
 
     @Synchronized
-    fun prepareRuntime(context: Context): File {
+    fun prepareRuntime(context: Context, onProgress: (ModelInstaller.Progress) -> Unit = {}): File { // ⭐ 2026-11-05 port: runtime downloads ([QnnPack])
         // ⚠⚠ Keyed on the arch, not "done once per process": the probe runs ON this runtime and can change the arch
         // under it. A v85 phone that had learned the v81 fallback (#61/#62) unpacked 2.50 + V81, then measured v85,
         // and the backend's 2.50 `libQnnHtp` asked for the V85 stub and found a 2.51 one left by an earlier overlay:
@@ -401,37 +407,23 @@ object BackendProcess {
         val arch = DeviceProbe.caps().arch
         if (runtimeArch == arch) runtimeUnpacked?.let { return it }
         val dir = runtimeDir(context).apply { mkdirs() }
-        val all = context.assets.list("qnnlibs").orEmpty().toList()
-        check(all.isNotEmpty()) {
-            "no qnnlibs in assets. Run tools/stage_backend.ps1 before building"
-        }
-        // ⚠⚠ ONLY this device's arch trio, plus the two shared libraries. The
-        // APK carries all six arches (~150 MB) because `libQnnHtp.so` dispatches
-        // on the arch of the DEVICE and the matching Skel must be present or NPU
-        // init fails outright -- but unpacking all six on every start would copy
-        // 150 MB to answer a question with one answer.
-        // ⚠ An SoC we do not recognise gets every arch and lets QNN choose:
-        // slower to unpack, always correct. A guessed arch is fast and fatal.
-        val names = DeviceProbe.runtimeLibs(all)
+        // ⭐ 2026-11-05 port: the runtime is DOWNLOADED for this phone's NPU ([QnnPack], upstream 2026-11-01): QAIRT
+        // 2.51's shared pair and the device's arch trio, ~28 MB once, kept through updates. Until 1.6.272 the APK
+        // carried all six 2.50 trios (52 MB) because `libQnnHtp.so` dispatches on the DEVICE's arch and its Skel must
+        // be present or NPU init fails outright. ⚠ An SoC we do not recognise gets every arch and lets QNN choose:
+        // slower, always correct. A guessed arch is fast and fatal.
+        val names = DeviceProbe.runtimeLibs(QnnPack.FILES.keys.toList())
         // ⚠ Another arch's trio left by an earlier layout is DELETED, never left for `libQnnHtp` to find: the arch it
         // dispatches to is the DEVICE's, so a stale stub of another SDK beside the wrong shared pair is the failure
         // above. Unlinking a mapped file is safe (the inode lives on for whoever has it open).
-        val keepPack = arch in DeviceProbe.PACK_ARCHES
         dir.listFiles().orEmpty()
-            .filter { f -> QNN_ARCH_FILE.matches(f.name) && f.name !in names && !(keepPack && f.name in QnnPack.FILES) }
+            .filter { f -> QNN_ARCH_FILE.matches(f.name) && f.name !in names } // ⭐ 2026-11-05 port
             .forEach { f -> if (f.delete()) Log.i(TAG, "removed stale ${f.name}") }
-        for (n in names) {
-            val dst = File(dir, n)
-            val tmp = File(dir, "$n.tmp")
-            context.assets.open("qnnlibs/$n").use { input ->
-                tmp.outputStream().use { input.copyTo(it) }
-            }
-            tmp.setReadable(true, false)
-            tmp.setExecutable(true, false)
-            // ⚠ `File.renameTo` is `rename(2)` here -- same directory, same
-            // filesystem -- so it is atomic and never truncates `dst`.
-            check(tmp.renameTo(dst)) { "cannot replace ${dst.absolutePath}" }
-        }
+        // ⭐ 2026-11-05 port: the 1.6.202-272 v85 pack's own folder is obsolete; the runtime holds 2.51 itself now.
+        QnnPack.legacyDir(context).takeIf { it.exists() }?.deleteRecursively()
+        // ⭐ 2026-11-05 port: each file arrives through a `.part`, its SHA256 checked, then RENAMED into place —
+        // never written over, since a truncated `.so` a process has mapped SIGSEGVs it.
+        QnnPack.ensure(dir, names, onProgress)
         // ⭐ The DiT engine's Hexagon skels (`libggml-htp-v79/v81.so`), beside
         // the QNN ones on the DSP search path — upstream's `ditlibs`. FastRPC
         // hands them to the DSP by bare name; nothing on the CPU loads them.
@@ -447,10 +439,8 @@ object BackendProcess {
             tmp.setExecutable(true, false)
             check(tmp.renameTo(dst)) { "cannot replace ${dst.absolutePath}" }
         }
-        // ⭐ A v85 phone: QAIRT 2.51's runtime over the APK's 2.50 ([QnnPack], fetched once, ~38 MB). ⚠ Throws when it
-        // cannot be fetched, which a launch reports as its reason rather than a QNN init failure naming nothing.
-        if (DeviceProbe.caps().arch in DeviceProbe.PACK_ARCHES) QnnPack.overlay(context, dir)
-        Log.i(TAG, "runtime: ${names.size}/${all.size} libs (${DeviceProbe.caps()}) in ${dir.absolutePath}")
+        // ⭐ 2026-11-05 port: the runtime itself is QAIRT 2.51 now, fetched above — no more overlay of a separate pack.
+        Log.i(TAG, "runtime: ${names.size}/${QnnPack.FILES.size} libs (${DeviceProbe.caps()}) in ${dir.absolutePath}")
         runtimeUnpacked = dir
         runtimeArch = arch
         return dir
@@ -510,6 +500,14 @@ object BackendProcess {
         val v75 = if (spec?.family == Family.FLUX2 && spec.ownDitParts) 2.25 else 2.75
         return (if (arch < 75) v75 - V73_MAP_SHORTFALL_GIB else v75).toString()
     }
+
+    /**
+     * ⭐ 2026-11-05 port: the VAE tile below v79 (`NM_VAE_TILE_LATENT`, backend 053), in latent px, or null for the
+     * backend's own. ⚠ Fibo 2.0 Edit's FLUX.2 VAE is 16x, and the backend's 64 covered a 960x1280 reference as ONE
+     * tile: an 1,800 MB encode on the NPU, which a real 8 Gen 3 failed to map ("HTP0 buffer mapping failed"). The
+     * engine encodes at twice the decode tile, so 16 = a 512 px encode: 384 MB, and a 160 MB decode.
+     */
+    internal fun lowArchVaeTile(spec: ModelSpec?): Int? = if (spec?.family == Family.FIBO2) 16 else null
 
     /**
      * ⭐ A real 8 Gen 2 maps only ~2.5 GB per FastRPC session (v75: ~3.1). A Xiaomi SM8550 on 1.6.173
@@ -642,6 +640,13 @@ object BackendProcess {
      */
     internal fun kreaBudget(spec: ModelSpec?, ramBytes: Long, availBytes: Long): String? {
         if (spec?.family == Family.FIBO2 && ramBytes > 0) return if (availBytes >= FIBO_WHOLE_FREE) null else "4"
+        // ⭐ 2026-11-05 port: Krea 2 on the 16 GB class too (Saved #7754, a 16 GB phone: whole took 7.9 GB free to
+        // 0.5, so ~7.4 GB): whole only with 2 GB left after, the floor Fibo keeps; else 5 or 4 GiB as below 16.
+        if (spec?.family == Family.KREA2 && ramBytes >= Prefs.LOWRAM_BELOW_BYTES) return when {
+            availBytes >= KREA16_WHOLE_FREE -> null
+            availBytes >= KREA16_5_FREE -> "5"
+            else -> "4"
+        }
         // ⚠ Not Z-Image on the GPU ([gpuWhole]): there it runs whole.
         if (gpuWhole(spec)) return null
         if (spec?.family !in setOf(Family.KREA2, Family.IDEOGRAM, Family.ZIMAGE, Family.FIBO2) || ramBytes !in 1 until Prefs.LOWRAM_BELOW_BYTES) return null
@@ -669,6 +674,9 @@ object BackendProcess {
 
     private const val KREA_WHOLE_FREE = 7_300_000_000L
     private const val KREA_5_FREE = 6_100_000_000L
+    /** ⭐ 2026-11-05 port (Saved #7754): Krea 2 whole on a 16 GB phone — the tester's ~7.4 GB + a 2 GB floor. */
+    private const val KREA16_WHOLE_FREE = 9_400_000_000L
+    private const val KREA16_5_FREE = 6_600_000_000L
     /** ⭐ Fibo whole: its ~6.1 GB (the tester's 16 GB phone, Saved #7440) plus a 2 GB floor ([kreaBudget]). */
     private const val FIBO_WHOLE_FREE = 8_100_000_000L
 
@@ -684,6 +692,10 @@ object BackendProcess {
     internal fun importBudget(spec: ModelSpec?, ditBytes: Long, ramBytes: Long, availBytes: Long): String? {
         if (spec?.isCustom != true || !spec.isDit || ditBytes <= IMPORT_STREAM_FROM) return null
         if (ramBytes !in 1 until Prefs.LOWRAM_BELOW_BYTES) return null
+        // ⭐ 2026-11-05 port (S#7755): an import no bigger than its family's largest built-in runs as that built-in
+        // does — a Klein 9B Q4_0 import failed at 4 GiB on a 12 GB S25 at segment 16/34 short by 0.9 MB, while the
+        // built-in 9B renders whole there. This rule is for the fp16 MOSS kind, not a file we ship.
+        if (ditBytes <= builtInDitBytes(spec.family)) return null
         return "4".takeIf { availBytes < ditBytes + IMPORT_HEADROOM }
     }
 
@@ -695,6 +707,13 @@ object BackendProcess {
      */
     private const val IMPORT_STREAM_FROM = 4_000_000_000L
     private const val IMPORT_HEADROOM = 2_200_000_000L
+
+    /** ⭐ 2026-11-05 port (S#7755): the largest DiT file a built-in of [family] ships, in any build; 0 for a family with none. */
+    internal fun builtInDitBytes(family: Family): Long =
+        ModelCatalog.builtIn.filter { it.family == family && !it.isCustom }
+            .flatMap { s -> s.files + s.builds.flatMap { it.files } }
+            .filter { it.name.startsWith("dit.") }
+            .maxOfOrNull { it.bytes } ?: 0L
 
     /** ⚠ The size of [spec]'s own LoRA ([ModelSpec.ownLora], MOSS's 8-step one), applied at run time on the NPU, or 0. */
     private fun ownLoraBytesOf(context: Context, spec: ModelSpec?): Long = runCatching {
@@ -1084,6 +1103,8 @@ object BackendProcess {
                         // at 1 MP (GitHub #35). Backend 034 applies it only to requests with a
                         // reference; engine `dit/021` does the encode. An older engine ignores it.
                         if (belowV79) put("NM_REF_CAP_PIXELS", REF_CAP_PIXELS.toString())
+                        // ⭐ 2026-11-05 port: and the VAE in 512 px pieces where one tile would hold the whole picture ([lowArchVaeTile]).
+                        lowArchVaeTile(spec)?.takeIf { belowV79 }?.let { put("NM_VAE_TILE_LATENT", it.toString()) }
                         // ⭐ FLUX.3 Klein edits (GitHub #72): a `krea2` launch is an editor to the backend only with a
                         // vision tower (Fibo) or this, so without it the Image edit flow's picture went in as img2img at
                         // 1.0 and came back a new picture. With it the engine takes sd.cpp's own reference preset for
@@ -1102,6 +1123,11 @@ object BackendProcess {
                         if (spec?.family in NO_MM_ADD_FUSION) put("GGML_HEXAGON_OPFUSION", ANIMA_OPFUSION)
                         // ⭐ A chip that ran short of VTCM runs unfused ([HexFallback]).
                         if (HexFallback.noFusion(context)) put("GGML_HEXAGON_OPFUSION", "0")
+                        // ⭐ 2026-11-05 port: below v79, unfused — the 8 Gen 3 regression from 1.6.251 to 1.6.272
+                        // (Wan 2.2 14B all noise, Fibo failing; Saved #7721-7761). Below v79 every DiT streams, and a
+                        // streamed graph fused NOTHING until `dit/060`, which turned `MUL_MAT_ADD` on for them, the
+                        // fusion that computes adds wrong for Anima and Iris. Off is 1.6.251's state.
+                        if (belowV79) put("GGML_HEXAGON_OPFUSION", "0")
                         // ⭐ MOSS-Image's Qwen3.5 is not Qwen2's vocabulary: the engine reads its tokenizer.json from here
                         // (`dit/028`), and refuses to start without it.
                         // ⭐ Its own tokenizer, else its donor's ([ModelSpec.partsFrom]: MOSS Base borrows SFT's, backend 040).

@@ -83,7 +83,7 @@ details summary{cursor:pointer;color:var(--vio2);font-size:13px;padding:4px 0}
     <div class="row" style="margin-bottom:6px">
       <b style="font-size:14px">画布</b>
       <button class="mini" id="drawBtn" onclick="toggleDraw()">✏️ 画框：开</button>
-      <button class="mini" onclick="clearBoxes()">清空</button>
+      <button class="mini" id="clearBtn" onclick="clearBoxes()">清空</button>
     </div>
     <div id="wrap"><canvas id="cv"></canvas></div>
     <div class="help" style="margin-top:6px">在画布上拖动画框 · 点框选中 · 在下方卡片编辑描述与坐标</div>
@@ -358,7 +358,14 @@ function renderItems(){
     box.appendChild(d);
   });
 }
-function clearBoxes(){if(!S.items.length)return;if(!confirm("清空全部框？"))return;S.items=[];S.sel=-1;draw();renderItems();compileOnly();save()}
+/* ⭐ (2026-11-04 fix) Two-tap confirm: `confirm()` is always-cancelled inside the
+   app WebView (no WebChromeClient), so the old dialog made this button dead. */
+let clearArm=false;
+function clearBoxes(){
+  if(!S.items.length)return;
+  if(clearArm){clearArm=false;$("clearBtn").textContent="清空";S.items=[];S.sel=-1;draw();renderItems();compileOnly();save();return}
+  clearArm=true;$("clearBtn").textContent="再点一次确认";setTimeout(()=>{clearArm=false;$("clearBtn").textContent="清空"},2600);
+}
 function collectDraft(){
   syncFromUI();
   const sm={caption:$("cap").value};
@@ -396,7 +403,9 @@ function copyCompiled(){
 function sendToNightmare(){
   const t=compileOnly();
   if(t===null){toast("编译有错，先修正");return}
-  if(window.Nightmare&&window.Nightmare.saveDraft){window.Nightmare.saveDraft(t);return}
+  /* ⭐ (2026-11-04 fix) The canvas's W/H ride home too, so the sampler's own
+     width/height follow what was actually laid out here. */
+  if(window.Nightmare&&window.Nightmare.saveDraft){const d=collectDraft();window.Nightmare.saveDraft(t,d.width,d.height);return}
   copyCompiled();
 }
 /* 草稿页 */

@@ -177,11 +177,9 @@ fun CanvasScreen(
     /** ⭐ The active flow's name, and whether it has unsaved edits. */
     flowName: String? = null,
     flowDirty: Boolean = false,
-    /** ⭐ "free / total" RAM, already worded — the pill beside the seed (the sidebar mock). */
+    /** ⭐ "free / total" RAM, already worded — the pill beside the seed. */
     ram: String? = null,
-    /** ⭐ Open the sidebar (`ui/ShellDrawer.kt`, drawn by `MainActivity`). */
-    onMenu: () -> Unit = {},
-    /** ⭐ What the view toggle shows while a sidebar tap is on its way somewhere — see `MainActivity`. */
+    /** ⭐ What the view toggle shows while a tap is on its way somewhere — see `MainActivity`. */
     toggleView: com.abrah.nightmare.MainView? = null,
     /** ⭐ Bumped by the sidebar's Save flow: opens THIS screen's save dialog, the one ⭐ save uses. */
     saveRequest: Int = 0,
@@ -468,16 +466,21 @@ fun CanvasScreen(
             }
         }
 
-        // ⭐ The first time Advanced shows this flow, frame the whole graph ([CanvasState.framedIn]).
-        // ⚠ Waits for both bars to be measured: they sit OVER the canvas, so the visible part is
+        // M-bM--M-^P The first time Advanced shows this flow, frame the whole graph ([CanvasState.framedIn]).
+        // M-bM-^ZM-  Waits for both bars to be measured: they sit OVER the canvas, so the visible part is
         // what lies between them.
+        // M-bM-^ZM-  Since 2026-11-04 BOTH bars are at the TOP (Run moved up for the bottom bar), so
+        // the visible area runs from the Run bar's bottom edge down to the floating pill bar.
         val graphShown = mainView == com.abrah.nightmare.MainView.GRAPH
         LaunchedEffect(graphShown, state.framePending, canvasSize, topBarPx, runBarPx) {
             if (graphShown && state.framePending && canvasSize.width > 0 && topBarPx > 0 && runBarPx > 0) {
                 onEdit { s ->
                     s.framedIn(
                         types, canvasSize.width.toFloat(), canvasSize.height.toFloat(), chrome.density,
-                        topPx = topBarPx.toFloat(), bottomPx = runBarPx.toFloat(),
+                        // ⭐ (2026-11-04) top chrome is the top bar alone; the bottom reserve is the
+                        // pill bar PLUS the graph's own floating Run bar sitting on top of it.
+                        topPx = topBarPx.toFloat(),
+                        bottomPx = com.abrah.nightmare.ui.BOTTOM_BAR_RESERVE.value * chrome.density + runBarPx.toFloat(),
                     )
                 }
             }
@@ -533,10 +536,12 @@ fun CanvasScreen(
         // ⚠⚠ Anything that must not be squeezed out goes in the SAME container as what would
         // squeeze it: the save icon vanished once as a sibling of an unweighted brand card.
         TopBar(
-            onMenu = onMenu,
             onSave = { saving = true },
             onResults = onResults,
             onModels = onModels,
+            busy = busy,
+            onRun = onRun,
+            onCancelRun = onCancelRun,
             hideChat = hideChat,
             modelLabel = modelLabel,
             mainView = toggleView ?: mainView,
@@ -546,10 +551,11 @@ fun CanvasScreen(
                 .background(MaterialTheme.colorScheme.background).statusBarsPadding(),
         )
 
-        // ⭐ The three flow views share the Run bar (seeds, Run / Cancel); Nodes and Agent drop the
-        // graph's own buttons, and Agent its log — the chat shows the run as it goes. ⚠ None in
-        // the library destinations.
-        if (mainView.isCanvas) RunBar(
+        // ⭐⭐ (2026-11-04, second round) GRAPH-ONLY: on Default the floating bar drew UNDER the
+        // step cards (an earlier sibling in the same Box — the user's "运行键丢失"), and Run
+        // lives in the top bar now anyway. The graph keeps its own bar (Add / locks / log) floating
+        // OVER the canvas — it is a later sibling than GraphCanvas, so nothing occludes it there.
+        if (mainView == com.abrah.nightmare.MainView.GRAPH) RunBar(
             graphControls = mainView == com.abrah.nightmare.MainView.GRAPH,
             folded = runBarFolded,
             onToggleFold = { runBarFolded = !runBarFolded },
@@ -631,20 +637,12 @@ fun CanvasScreen(
                 }
             },
             modifier = Modifier
+                // ⭐⭐⭐ BOTTOM again (2026-11-04, second round — the user marked the empty
+                // band under the slimmed card: "运行键缩小放到标记的位置"): the
+                // one-button bar floats just ABOVE the nav pill, where the thumb already is.
                 .align(Alignment.BottomCenter)
                 .onSizeChanged { runBarPx = it.height }
-                // ⚠⚠ The app is edge-to-edge (`enableEdgeToEdge`), so without
-                // this the whole bar sits UNDER the navigation bar: on a gesture
-                // -nav phone the buttons are half-covered and the bottom strip
-                // belongs to the system, which is why "Run did nothing" and
-                // "+ node" could not be pressed at all. Reported from a real
-                // phone, 2026-09-08 -- no golden caught it, because the goldens
-                // render GraphCanvas without the bar.
-                .windowInsetsPadding(com.abrah.nightmare.ui.BottomSafe)
-                // Gesture-nav phones report a small navigation inset but still
-                // reserve a taller strip for the back gesture; the extra keeps
-                // the row clear of it.
-                .padding(bottom = 8.dp),
+                .padding(bottom = com.abrah.nightmare.ui.BOTTOM_BAR_RESERVE),
         )
     }
 
@@ -719,7 +717,7 @@ fun CanvasScreen(
         onCancelRun = onCancelRun,
         onInspectNode = onInspectNode,
         inline = if (mainView == com.abrah.nightmare.MainView.NODES) {
-            Modifier.fillMaxSize().padding(top = topPad + 8.dp).windowInsetsPadding(belowChrome(bottomPad))
+            Modifier.fillMaxSize().padding(top = topPad).windowInsetsPadding(belowChrome(bottomPad))
         } else null,
         // ⭐ The Default view's layout only; Advanced's inspector stays left-right cards (2026-10-10).
         vertical = nodesVertical && mainView == com.abrah.nightmare.MainView.NODES,
@@ -1060,15 +1058,15 @@ fun CanvasScreen(
 }
 
 /**
- * ⭐⭐⭐ The shell (the user's sidebar mock, 2026-10-09): ☰ · the brand · Save · Results, then the three VIEWS
- * as one segmented toggle with an ⓘ that says what each is. Models / Flows / Results, the flow's
- * name, the model and RAM moved to the sidebar (`ui/ShellDrawer.kt`); RAM also sits beside the
- * seed. ⚠ It replaced a 3 × 2 tile grid and a status row (`docs/LEGACY.md` §9).
+ * ⭐⭐⭐ The shell (the user's sidebar mock, 2026-10-09): the brand · Save · Results, then the three
+ * VIEWS as one segmented toggle with an ⓘ that says what each is. (2026-11-04: the ☰ and its
+ * drawer are retired — Models / Flows / Results live on the bottom bar (`ui/BottomBar.kt`), RAM
+ * in its pill, device info in Settings.) The RAM also sits beside the seed. ⚠ It replaced a
+ * 3 × 2 tile grid and a status row (`docs/LEGACY.md` §9).
  * ⚠ The recipes' TOP clears this header (`Workflows.kt`): chrome and node positions go together.
  */
 @Composable
 private fun TopBar(
-    onMenu: () -> Unit,
     onSave: () -> Unit,
     /** ⭐ Results, right of Save (the user, 2026-10-11): the sidebar's row, one tap closer. */
     onResults: () -> Unit,
@@ -1079,6 +1077,12 @@ private fun TopBar(
     modifier: Modifier = Modifier,
     /** ⭐ A tap on CURRENT MODEL opens Models: the sidebar's row (the user, 2026-10-13). */
     onModels: () -> Unit = {},
+    /** ⭐⭐ (2026-11-04, the user: "将图一标注的位置删掍，替换成运行键") Run lives in the
+     *  top bar now: the one button pressed every render, in the row the thumb crosses first. The
+     *  floating graph bar keeps the graph's own extras (Add / locks / log). */
+    busy: Boolean = false,
+    onRun: () -> Unit = {},
+    onCancelRun: (() -> Unit)? = null,
     hideChat: Boolean = false,
     /** ⭐ The build, beside the name (the user, 2026-10-09: "show version number in main page"). */
     version: String = "",
@@ -1093,20 +1097,8 @@ private fun TopBar(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(
-                onClick = onMenu,
-                // ⭐ Reported for the sheets' live copy ([com.abrah.nightmare.ui.ShellAnchors]).
-                modifier = Modifier.onGloballyPositioned { c ->
-                    val p = c.positionOnScreen()
-                    com.abrah.nightmare.ui.ShellAnchors.menu = androidx.compose.ui.geometry.Rect(
-                        p.x, p.y, p.x + c.size.width, p.y + c.size.height,
-                    )
-                },
-            ) {
-                Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.shell_menu))
-            }
-            // ⭐ Clear of the ☰ (the user's mock, 2026-10-10: the logo touched it).
-            Spacer(Modifier.width(8.dp))
+            // ⭐⭐ The hamburger is GONE (2026-11-04): the drawer it opened is retired, the
+            // floating bottom bar is the navigation. The brand starts the row.
             // ⚠ The ONLY weighted child: with a weighted Spacer beside it the two split the room and
             // the wordmark was cut to "Nightma" at 320dp. `BrandMark` shrinks its own type to fit.
             com.abrah.nightmare.ui.BrandMark(Modifier.weight(1f), version = version)
@@ -1117,8 +1109,8 @@ private fun TopBar(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            // ⚠ The sidebar's own icon and words ([com.abrah.nightmare.ui.ShellDrawer]), so the two
-            // ways in look like one thing.
+            // (2026-11-04: the drawer these once mirrored is retired; this icon is now the only
+            // Results entry in the canvas chrome.)
             IconButton(onClick = onResults) {
                 Icon(
                     com.abrah.nightmare.ui.ResultsIcon,
@@ -1149,36 +1141,21 @@ private fun TopBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ViewSwitch(picked, go, hideChat)
+            ViewSwitch(picked, go, hideChat, onInfo = { explaining = true })
             // ⭐ The model, back on the main screen (the user, 2026-10-11; it left with the status
             // row in 1.6.117). ⚠ WRAPPED, never cut: most names are long, and the old row's rule
             // was "do not ... the held model" (2026-09-10).
-            Column(
-                Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
-                    .clickable(onClickLabel = stringResource(R.string.nav_models), onClick = onModels)
-                    .padding(start = 4.dp),
-            ) {
-                if (modelLabel.isNotBlank()) Text(
-                    stringResource(R.string.current_model).uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                    letterSpacing = 1.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    modelLabel,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            IconButton(onClick = { explaining = true }) {
-                Icon(
-                    Icons.Outlined.Info, contentDescription = stringResource(R.string.views_info_cd),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(28.dp),
-                )
-            }
+            // ⭐⭐⭐ (2026-11-04, the user: "将图一标注的位置删掍，替换成运行键") the
+            // model block is REPLACED by the Run button. This also fixes the lost-run bug: the
+            // floating bar had sunk UNDER this page's cards (an earlier sibling in the same Box),
+            // while the top bar draws above everything. The model entry point is the bottom bar's
+            // Models slot; [modelLabel] stays in the signature for previews/restores.
+            RunButton(
+                busy = busy, onRun = onRun, onCancelRun = onCancelRun,
+                modifier = Modifier.weight(1f, fill = false).defaultMinSize(minWidth = RUN_WIDTH),
+            )
+            // (2026-11-04: the standalone ⓘ is gone — it moved into the ViewSwitch pill's
+            // third slot, freeing this row's right end.)
         }
     }
     if (explaining) ViewsInfoDialog { explaining = false }
@@ -1215,14 +1192,17 @@ private fun ViewsInfoDialog(onDismiss: () -> Unit) {
 }
 
 /**
- * ⭐⭐ The bottom of a page drawn over the canvas (Agent, Nodes): the Run bar, or the keyboard when
- * it is up — whichever is TALLER, never both. ⚠ Both were added once (the bar's height outside, an
- * `imePadding` inside), and with the keyboard up the Agent's chat and text box got zero height —
- * the keyboard already covers the bar (phone screenshot, 2026-10-09).
+ * ⭐ The TOP of a page drawn over the canvas (Agent, Nodes): the Run bar (it moved up to the
+ * top when the floating bottom bar took the bottom edge, 2026-11-04) or the keyboard, whichever is
+ * TALLER, never both. The original note survives: both were added once (the bar height outside, an
+ * imePadding inside), and with the keyboard up the chat got zero height (phone screenshot, 2026-10-09).
+ * The pages pad the BOTTOM by BOTTOM_BAR_RESERVE themselves (the floating bar owns that edge).
  */
 @Composable
 internal fun belowChrome(runBar: androidx.compose.ui.unit.Dp): WindowInsets =
-    WindowInsets.ime.union(WindowInsets(bottom = runBar))
+    // ⭐ (2026-11-04) TOP inset retired with the Run bar's return to the bottom: pages keep only
+    // their own topPad above, the bottom reserve stands (the pill bar floats over the last rows).
+    WindowInsets.ime.union(WindowInsets(bottom = com.abrah.nightmare.ui.BOTTOM_BAR_RESERVE))
 
 /**
  * ⭐⭐ The view button (the user's mock, 2026-10-11): the CURRENT view, filled violet, so the model
@@ -1235,6 +1215,9 @@ private fun ViewSwitch(
     selected: com.abrah.nightmare.MainView,
     onPick: (com.abrah.nightmare.MainView) -> Unit,
     hideChat: Boolean = false,
+    /** ⭐ (2026-11-04, the user's call: "感叹号放到标记的位置里") the views ⓘ now lives INSIDE this pill as its third slot,
+     *  where the top bar's standalone icon used to be. */
+    onInfo: () -> Unit = {},
 ) {
     val views = com.abrah.nightmare.MainView.entries.filter {
         it.isCanvas && !(hideChat && it == com.abrah.nightmare.MainView.AGENT)
@@ -1291,6 +1274,19 @@ private fun ViewSwitch(
                     com.abrah.nightmare.ui.SwapIcon,
                     contentDescription = stringResource(R.string.views_next_cd),
                     tint = on, modifier = Modifier.size(20.dp),
+                )
+            }
+            // ⭐ The views ⓘ, moved INTO the pill (2026-11-04): one control fewer floating at
+            // the row's end, and the pill is where the eye already goes to switch views.
+            Box(
+                Modifier.fillMaxHeight()
+                    .clickable(onClick = onInfo)
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.Info, contentDescription = stringResource(R.string.views_info_cd),
+                    tint = on, modifier = Modifier.size(18.dp),
                 )
             }
         }
@@ -1451,38 +1447,25 @@ private fun RunBar(
     onToggleFold: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    // ⭐⭐ Its own card (`PanelCard`), the page's card's edges: [SCREEN_GUTTER] out, [PANEL_PAD] in
-    // (the user, 2026-10-10: containers, and one margin from both edges).
-    com.abrah.nightmare.ui.PanelCard(
-        modifier.fillMaxWidth().padding(horizontal = com.abrah.nightmare.ui.SCREEN_GUTTER).padding(top = 8.dp),
-    ) {
+    // ⭐⭐⭐ (2026-11-04, second round) UNWRAPPED: the `PanelCard` box is GONE — with the
+    // seed/RAM rows deleted (the user: "图三里的东西直接先删掍") and Run shrunk into its own
+    // float, the card would wrap one button in two layers of chrome. This Column now floats
+    // directly: error notices, the selection row and the log panel on unfold still draw inside it.
+    // (Restore: re-wrap this Column in `com.abrah.nightmare.ui.PanelCard` like it used to be.)
     Column(
-        Modifier
+        modifier
             .fillMaxWidth()
-            // ⚠ The chevron strip IS the top padding, so it costs the bar ~6dp, not a row.
+            .padding(horizontal = com.abrah.nightmare.ui.SCREEN_GUTTER)
             .padding(
                 start = com.abrah.nightmare.ui.PANEL_PAD, end = com.abrah.nightmare.ui.PANEL_PAD,
-                bottom = com.abrah.nightmare.ui.PANEL_PAD,
-                top = if (onToggleFold != null) 0.dp else com.abrah.nightmare.ui.PANEL_PAD,
+                bottom = com.abrah.nightmare.ui.PANEL_PAD, top = com.abrah.nightmare.ui.PANEL_PAD,
             ),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // ⭐⭐ A sheet's handle: the whole strip toggles, the chevron says which way. ⚠ Full width,
         // so an 18dp-tall target is still easy to hit; nothing else in the bar moves.
-        if (onToggleFold != null) Box(
-            Modifier
-                .fillMaxWidth()
-                .height(18.dp)
-                .clickable(onClick = onToggleFold),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                if (folded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                contentDescription = stringResource(if (folded) R.string.cd_open_bar else R.string.cd_fold_bar),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
-        }
+        // ⭐ (2026-11-04) The fold chevron goes with the card — there is nothing left to fold.
+        // (Restore point: re-wrap the Column above in a `PanelCard` and bring this strip back.)
         // ⚠ The refusal from the last gesture, shown here rather than as a
         // transient toast. "That would make a loop" is a rule the user is
         // learning; a message that vanishes teaches nothing.
@@ -1588,7 +1571,9 @@ private fun RunBar(
             // nothing. The goldens were all 411dp, which has just enough.
             // ⇒ The fixed things are measured first and Run, the only thing
             // that can give, takes the rest up to [RUN_WIDTH].
-            horizontalArrangement = Arrangement.SpaceBetween,
+            // ⭐ (2026-11-04, the user: "运行键缩小") alone on Default/Chat the
+            // button is content-width and CENTRED, not stretched across the card.
+            horizontalArrangement = if (graphControls) Arrangement.SpaceBetween else Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // ⭐⭐⭐ **Add node LEFT, Run in the MIDDLE, the zoom and the locks
@@ -1634,7 +1619,9 @@ private fun RunBar(
             // put it further in than everything above it (the user, 2026-10-10).
             RunButton(
                 busy = busy, onRun = onRun, onCancelRun = onCancelRun,
-                modifier = if (graphControls) runModifier else Modifier.weight(1f),
+                // ⭐ (2026-11-04) shrunk: content-width (min [RUN_WIDTH]) instead of a
+                // full-bleed span — the bar under it is the one-button float now.
+                modifier = if (graphControls) runModifier else Modifier.defaultMinSize(minWidth = RUN_WIDTH),
             )
             // ⚠ The right slot: the zoom readout, then the two locks. It WRAPS
             // its content — see the note on the left slot; every item in here is
@@ -1677,7 +1664,6 @@ private fun RunBar(
             )
             }
         }
-    }
     }
 }
 

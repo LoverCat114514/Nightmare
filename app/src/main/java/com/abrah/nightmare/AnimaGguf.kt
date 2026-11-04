@@ -26,7 +26,7 @@ object AnimaGguf {
     const val ANIMA_29_PREVIEW_BYTES = 3_159_131_808L
 
     /** ⭐ The writer is [SafetensorsGguf]'s; this is only Anima's half of it. */
-    internal val rule = object : SafetensorsGguf.Rule {
+    internal val rule = object : SafetensorsGguf.Rule() {
         override val prefixes = listOf("model.diffusion_model.", "net.")
         override val kv = listOf("general.architecture" to "cosmos")
         // ⚠ Bedovyy's file has these too, and TURBO_11_BYTES counts them.
@@ -40,9 +40,6 @@ object AnimaGguf {
         override fun type(name: String, outShape: LongArray, dtype: String): Int =
             if (outShape.size == 1 || name.startsWith("final_layer.") || name.startsWith("t_embedder.") ||
                 outShape.last() % 32 != 0L) SafetensorsGguf.F32 else SafetensorsGguf.Q8_0
-        // ⚠ Spelled out on purpose — see [SafetensorsGguf.Rule.decoded]: relying on the default body is
-        // what made release builds drop it (AbstractMethodError on import).
-        override fun decoded(name: String, firstRow: Long, x: FloatArray, rows: Int, rowLen: Int, stride: Int) {}
     }
 
     val converter = Converter { src, dst, onProgress, isCancelled -> convert(src, dst, onProgress, isCancelled) }

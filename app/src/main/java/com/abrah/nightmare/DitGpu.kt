@@ -56,8 +56,27 @@ object DitGpu {
      * GPU run since 2026-10-28; sd-cli 512² 4 steps: the fox with `XMEM_SDPA=0`, garbage with it on, with or without
      * DP4A). Klein is right with it (`docs/GPU-ROUTES.md` §8).
      */
-    fun envFor(spec: ModelSpec?): Map<String, String> =
-        if (spec?.family == Family.ZIMAGE) ENV + ("GGML_OPENCL_XMEM_SDPA" to "0") else ENV
+    fun envFor(spec: ModelSpec?, soc: String = DeviceProbe.caps().soc): Map<String, String> {
+        // ⭐ 2026-11-05 port: off the measured GPU, plain kernels in smaller pieces (Adreno 825/735/730 grey/noise/crash fixes, #83).
+        val base = if (measuredOn(soc)) ENV else ENV + PLAIN
+        return if (spec?.family == Family.ZIMAGE) base + ("GGML_OPENCL_XMEM_SDPA" to "0") else base
+    }
+
+    /**
+     * ⚠⚠ [ENV]'s Adreno switches and cut sizes were measured on ONE GPU, the S25's Adreno 830 (SM8750). Elsewhere they
+     * failed three ways (2026-11-04, from the testers' logs): an Adreno 825 (SM8735, GitHub #83) aborted in the first DiT
+     * segment with `CL_INVALID_WORK_GROUP_SIZE`; an Adreno 735 (8s Gen 3) rendered noise; an Adreno 730 (SM8450) rendered
+     * grey. The grey was `dit/080`'s matmul chunks on the plain Q4_0 GEMM, fixed by engine `dit/085`. ⭐ 2026-11-05 port from upstream v1.6.280.
+     */
+    internal fun measuredOn(soc: String): Boolean = soc.uppercase().startsWith("SM8750")
+
+    /** ⚠ Off any measured GPU: no dense-DP4A Q4_0 or xmem attention kernels, dispatches a third of the size. */
+    val PLAIN: Map<String, String> = mapOf(
+        "GGML_OPENCL_Q4_0_DENSE_DP4A" to "0",
+        "GGML_OPENCL_XMEM_SDPA" to "0",
+        "GGML_OPENCL_MM_MAX_GFLOP" to "5",
+        "GGML_OPENCL_FA_SPLIT_Q" to "256",
+    )
 
     /**
      * ⭐ A tiny decoder (madebyollin's TAE family, MIT) that decodes in place of the VAE (backend 052's `NM_DIT_TAESD`).
@@ -112,7 +131,8 @@ object DitGpu {
         if (!runs(spec, caps)) return emptyMap()
         return buildMap {
             put("NM_DIT_BACKEND", BACKEND)
-            putAll(envFor(spec))
+            // ⭐ 2026-11-05 port (#83): the chip's SoC decides plain vs measured kernels.
+            putAll(envFor(spec, caps.soc))
             val tae = spec?.let(::taeFor)?.let { taeFile(context, it) }
             if (Prefs.ditTaesd && tae != null && tae.isFile) put("NM_DIT_TAESD", tae.absolutePath)
             put("NM_DIT_THREADS", threads().toString())

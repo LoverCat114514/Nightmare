@@ -6130,8 +6130,16 @@ private fun MossCanvasEntry(
         ActivityResultContracts.StartActivityForResult(),
     ) { r ->
         val draft = r.data?.getStringExtra(com.abrah.nightmare.canvas.MossCanvasActivity.EXTRA_DRAFT)
+        val w = r.data?.getIntExtra(com.abrah.nightmare.canvas.MossCanvasActivity.EXTRA_WIDTH, -1) ?: -1
+        val h = r.data?.getIntExtra(com.abrah.nightmare.canvas.MossCanvasActivity.EXTRA_HEIGHT, -1) ?: -1
         if (r.resultCode == android.app.Activity.RESULT_OK && !draft.isNullOrBlank() && promptNodeId != null) {
             onSetParams(promptNodeId, mapOf("prompt" to draft))
+            // ⭐ (2026-11-04 fix, the user: "宽高比例和外面的无法同步") the canvas's size
+            // writes back to the SAMPLER's own width/height — the prompt goes to the prompt
+            // node, the size to the node that owns those knobs, so the two stay in step.
+            if (w > 0 && h > 0) {
+                onSetParams(samplerId, mapOf("width" to w.toString(), "height" to h.toString()))
+            }
         }
     }
     Row(

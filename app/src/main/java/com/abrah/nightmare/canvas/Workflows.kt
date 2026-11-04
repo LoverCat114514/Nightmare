@@ -388,7 +388,8 @@ data class Recipe(
      * ([com.abrah.nightmare.DeviceProbe.Caps.known], `docs/DEVICES.md`).
      */
     fun runsOnDevice(caps: com.abrah.nightmare.DeviceProbe.Caps): Boolean =
-        minArch == 0 || caps.supportsArch(minArch) || !caps.known
+        // ⭐ 2026-11-05 port (#85): a chip KNOWN not to be a Snapdragon runs no flow (DeviceProbe.Caps.qualcomm).
+        caps.qualcomm && (minArch == 0 || caps.supportsArch(minArch) || !caps.known)
     /** ⚠ Null families means every family; an entry restricts it. */
     fun servesFamily(family: com.abrah.nightmare.Family?): Boolean =
         families == null || family in families

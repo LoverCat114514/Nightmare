@@ -231,7 +231,7 @@ val StopIcon: ImageVector by lazy {
 }
 
 /** ⭐ One glyph per shell tile (Material shapes, drawn here — no icons-extended, docs/UI.md). */
-private fun glyph(name: String, path: String): ImageVector = ImageVector.Builder(
+internal fun glyph(name: String, path: String): ImageVector = ImageVector.Builder(
     name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f,
 ).run {
     addPath(pathData = PathParser().parsePathString(path).toNodes(), fill = SolidColor(Color.White))
