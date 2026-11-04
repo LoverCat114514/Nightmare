@@ -8,10 +8,6 @@ the phone. No server, no account, no cloud.
   <img src="media/workflows.png" alt="Text to image, image to image and image to video, each as a node graph on an Android phone">
 </p>
 
-**[Download the APK](https://github.com/AbrahamPaulJ/nightmare-mobile/releases/latest)** ·
-**[User guide](https://abrahampaulj.github.io/nightmare-mobile/)** ·
-**[Report a problem](https://github.com/AbrahamPaulJ/nightmare-mobile/issues)**
-
 ## What your phone needs
 
 Android 12 or newer, arm64, a Snapdragon with a Hexagon NPU. Models are not in the APK: pick one
