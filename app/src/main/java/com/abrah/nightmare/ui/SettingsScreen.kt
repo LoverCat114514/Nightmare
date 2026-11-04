@@ -136,6 +136,9 @@ fun SettingsScreen(
      */
     lowRam: Prefs.LowRam? = null,
     onLowRam: (String, Boolean) -> Unit = { _, _ -> },
+    /** ⭐ The end-of-run notification ([com.abrah.nightmare.RunNotice], issue #79). A parameter, like [lowRam]: previews pass none and hide it. */
+    notifRun: Boolean = false,
+    onNotifRun: (Boolean) -> Unit = {},
     /** ⭐ The local API (`docs/AGENT-API.md`). ⚠ A parameter, for the reason [downloadBase] is one. Null hides it. */
     api: ApiState? = null,
     onApi: (Boolean) -> Unit = {},
@@ -655,6 +658,14 @@ fun SettingsScreen(
                         com.abrah.nightmare.canvas.BoolKnobRow(
                             stringResource(R.string.dit_taesd), stringResource(R.string.dit_taesd_hint),
                             lowRam.ditTaesd, { onLowRam(Prefs.KEY_DIT_TAESD, it) },
+                        )
+                    }
+                    // ⭐⭐ The end-of-run notice (issue #79): one switch here, the two channels' sounds in the system's notification settings.
+                    StudioCard {
+                        SectionHeading(stringResource(R.string.notif_title), stringResource(R.string.notif_note))
+                        com.abrah.nightmare.canvas.BoolKnobRow(
+                            stringResource(R.string.notif_run), stringResource(R.string.notif_run_hint),
+                            notifRun, onNotifRun,
                         )
                     }
                 }

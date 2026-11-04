@@ -119,6 +119,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         BackendIdle.visible()
+        RunNotice.foreground = true
     }
 
     /**
@@ -135,6 +136,7 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         if (!isChangingConfigurations) BackendIdle.hidden()
+        RunNotice.foreground = false
     }
 
     /**
@@ -1051,6 +1053,9 @@ fun HarnessScreen(
             api = com.abrah.nightmare.ui.ApiState(vm.apiOn, vm.apiToken, vm.apiAddresses, vm.apiCors),
             // ⚠ The listening notice is a notification: unasked, Android 13+ drops it in silence (2026-10-19).
             onApi = { on -> if (on) askApiNotify(); vm.chooseApi(on) },
+            // ⚠ Same ask as the API notice: Android 13+ drops unasked notifications in silence.
+            notifRun = vm.notifRun,
+            onNotifRun = { on -> if (on) askApiNotify(); vm.chooseNotifRun(on) },
             onRegenerateApiToken = vm::regenerateApiToken,
             onApiCors = vm::chooseApiCors,
             defaultView = vm.defaultViewChoice,

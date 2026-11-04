@@ -78,6 +78,7 @@ object Prefs {
         heatPause = p.getBoolean(KEY_HEAT_PAUSE, false)
         ditGpu = p.getBoolean(KEY_DIT_GPU, false)
         ditTaesd = p.getBoolean(KEY_DIT_TAESD, true)
+        notifRun = p.getBoolean(KEY_NOTIF_RUN, false)
     }
 
     /** ⭐ A sampler's "More options" fold open (the user, 2026-10-17: closed by default, remembered). */
@@ -351,6 +352,19 @@ object Prefs {
     /** ⚠ [KEY_DIT_TAESD] held in memory, as [ditGpu]. */
     @Volatile var ditTaesd: Boolean = true
         private set
+
+    /** ⭐ The end-of-run notification, done/failed each with its own channel ([RunNotice], upstream issue #79). */
+    const val KEY_NOTIF_RUN = "notif_run"
+
+    /** ⚠ [KEY_NOTIF_RUN] held in memory: [RunNotice.finished] can fire from a backend thread, with no view to load prefs. Loaded by [load]. */
+    @Volatile var notifRun: Boolean = false
+        private set
+
+    /** ⭐ The settings switch for [RunNotice] (upstream issue #79). */
+    fun setNotifRun(context: Context, on: Boolean) {
+        notifRun = on
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(KEY_NOTIF_RUN, on).apply()
+    }
 
     /**
      * ⚠ 13 GiB, between the classes rather than at "16": a 12 GB phone reports

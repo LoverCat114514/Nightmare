@@ -4361,6 +4361,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         private set
     /** ⭐ Settings' "Hide chat view" ([Prefs.hideChat]). */
     var hideChat by mutableStateOf(Prefs.hideChat)
+    /** ⭐ Settings' end-of-run notification ([RunNotice], issue #79). */
+    var notifRun by mutableStateOf(Prefs.notifRun)
         private set
 
     /**
@@ -4408,6 +4410,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun chooseNodesVertical(on: Boolean) {
         Prefs.setNodesVertical(getApplication(), on)
         nodesVertical = on
+    }
+    fun chooseNotifRun(on: Boolean) {
+        Prefs.setNotifRun(getApplication(), on)
+        notifRun = on
     }
 
     fun chooseHideChat(on: Boolean) {
@@ -9619,6 +9625,14 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      * no run bar in view and must toast this instead, or its button does
      * nothing visible.
      */
+    // ⭐⭐ Which run() labels are a GENERATION the user waits minutes for (upstream issue #79):
+    // ⚠ "health", "start backend", "stop backend", "diagnose", "encode_text" are seconds-long
+    // housekeeping -- notifying those would be noise. Keys must match the run("...") calls below.
+    private val runNoticeLabels = setOf(
+        "canvas", "batch", "graph", "sample", "upscale", "face edit", "ultrafix",
+        "vae_decode", "diagnose picture",
+    )
+
     private fun run(
         label: String,
         /** ⭐ The catalogue models this run loads, when the caller knows them ([runsBesideDownload]). */
@@ -9662,6 +9676,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         runJob = viewModelScope.launch {
             try {
                 block()
+                // ⭐ The run END, seen from wherever the user is (issue #79). Cancel is reported separately below, with no notice.
+                if (label in runNoticeLabels) RunNotice.finished(getApplication(), ok = true, detail = label)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // ⚠⚠ Caught SEPARATELY and rethrown. The broad `Throwable` below
                 // would otherwise swallow a cancellation and report it as a
@@ -9683,6 +9699,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 throw e
             } catch (e: Throwable) {
+                if (label in runNoticeLabels) RunNotice.finished(getApplication(), ok = false, detail = "$label: ${e.message ?: e.javaClass.simpleName}")
                 // ⚠⚠ Throwable, not Exception. `UnsatisfiedLinkError` from a
                 // missing native library is an ERROR, so it slipped past the
                 // narrower catch and the op vanished with no line in the log at

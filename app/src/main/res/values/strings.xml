@@ -958,6 +958,14 @@
     <string name="notification_model_loaded_channel">Model loaded</string>
     <string name="notification_moving_models">moving models</string>
     <string name="notification_downloading">keeping a download going</string>
+    <string name="notif_title">Notifications</string>
+    <string name="notif_note">A notice when a long generation finishes or fails, even with the app in the background. Each channel has its own sound; change them in the system notification settings.</string>
+    <string name="notif_run">Run finished notice</string>
+    <string name="notif_run_hint">One notice when a generation finishes or fails. Silent while you are watching the app.</string>
+    <string name="notif_run_channel_done">Generation finished</string>
+    <string name="notif_run_channel_failed">Generation failed</string>
+    <string name="notif_run_done">Generation finished</string>
+    <string name="notif_run_failed">Generation failed</string>
     <string name="run_reading_prompt">reading the prompt</string>
     <string name="run_rendering">rendering</string>
     <string name="run_nothing_masked">nothing masked. Paint an area, then Run again</string>

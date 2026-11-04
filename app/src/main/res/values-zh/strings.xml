@@ -926,6 +926,14 @@
     <string name="notification_ready_to_use">可以使用了</string>
     <string name="notification_download_failed">下载失败</string>
     <string name="notification_keeping_model">正在将已加载的模型保留在内存中</string>
+    <string name="notif_title">通知</string>
+    <string name="notif_note">长时间生成结束或失败时提醒你，即使应用已退到后台。两类通知的提示音可在系统通知设置中分别自定义。</string>
+    <string name="notif_run">生成结果提醒</string>
+    <string name="notif_run_hint">生成完成或失败时各发一条通知；正在查看应用时保持静默。</string>
+    <string name="notif_run_channel_done">生成完成</string>
+    <string name="notif_run_channel_failed">生成失败</string>
+    <string name="notif_run_done">生成完成</string>
+    <string name="notif_run_failed">生成失败</string>
     <string name="notification_model_loaded_channel">模型已加载</string>
     <string name="notification_moving_models">正在移动模型</string>
     <string name="notification_downloading">正在保持下载进行</string>

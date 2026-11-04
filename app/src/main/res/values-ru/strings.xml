@@ -947,6 +947,14 @@
     <string name="notification_ready_to_use">готово к работе</string>
     <string name="notification_download_failed">загрузка не удалась</string>
     <string name="notification_keeping_model">держу загруженную модель в памяти</string>
+    <string name="notif_title">Уведомления</string>
+    <string name="notif_note">Сообщает, когда долгая генерация завершилась или упала, даже если приложение в фоне. Звук каждого канала настраивается в настройках уведомлений Android.</string>
+    <string name="notif_run">Уведомление о завершении</string>
+    <string name="notif_run_hint">Одно уведомление, когда генерация завершилась или упала. Тихо, пока приложение на экране.</string>
+    <string name="notif_run_channel_done">Генерация завершена</string>
+    <string name="notif_run_channel_failed">Генерация не удалась</string>
+    <string name="notif_run_done">Генерация завершена</string>
+    <string name="notif_run_failed">Генерация не удалась</string>
     <string name="notification_model_loaded_channel">Модель загружена</string>
     <string name="notification_moving_models">перенос моделей</string>
     <string name="notification_downloading">продолжаю загрузку</string>
