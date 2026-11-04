@@ -6,6 +6,7 @@
 <title>NM 工作台</title>
 <style>
 :root{
+  color-scheme:light; /* [LOCAL-NEWUI] 下拉/弹层强制浅色，修系统深色模式下的黑底白字错配 */
   --bg:#F2F0F7; --card:#FFFFFF; --line:#E5E1EF; --txt:#17151F; --sub:#6E6A7A;
   --pri:#6D4AE0; --pri-d:#5B39CE; --pri-soft:#EFEAFB; --pri-soft2:#F7F4FE;
   --ok:#1CA672; --bad:#D64545; --r:16px;
@@ -13,7 +14,11 @@
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{background:var(--bg);color:var(--txt);
   font:15px/1.5 system-ui,-apple-system,"HarmonyOS Sans SC","MiSans",sans-serif}
+/* [LOCAL-NEWUI] body 留白对齐 footer 高度（statBar+genBtn+statLine≈150px） */
 body{padding-bottom:150px}
+/* [LOCAL-NEWUI] App 浮动导航药丸高 84dp：footer 整体抬升让位，不再与「生成」按钮重叠 */
+html{--pill:84px}
+footer{bottom:var(--pill)}
 /* ===== 头部 ===== */
 header{position:sticky;top:0;z-index:20;background:linear-gradient(180deg,#EDE9F6 0%,#EDE9F6 85%,rgba(237,233,246,0));padding:14px 16px 18px;display:flex;align-items:center;justify-content:space-between}
 header h1{font-size:21px;font-weight:900;letter-spacing:.5px;white-space:nowrap}
@@ -111,16 +116,6 @@ footer{position:fixed;left:0;right:0;bottom:0;z-index:30;background:linear-gradi
 #genBtn:active{background:var(--pri-d)}
 #genBtn.busy{background:#8B79C9}
 #statLine{margin-top:7px;font-size:13px;color:var(--sub);min-height:18px}
-/* ===== 设置抽屉 ===== */
-#sheet{position:fixed;inset:0;z-index:50;display:none}
-#sheet.show{display:block}
-#sheet .mask{position:absolute;inset:0;background:rgba(20,16,40,.45)}
-#sheet .panel{position:absolute;left:0;right:0;bottom:0;background:var(--bg);border-radius:20px 20px 0 0;padding:18px 16px calc(16px + env(safe-area-inset-bottom));max-height:82vh;overflow:auto}
-#sheet h2{font-size:18px;font-weight:900;margin-bottom:12px}
-.note{font-size:12.5px;color:var(--sub);margin-top:8px;line-height:1.6}
-#testBtn{width:100%;margin-top:12px;border:1px solid var(--pri);color:var(--pri);background:#fff;border-radius:12px;padding:11px;font-weight:800}
-.mrow{display:flex;align-items:center;gap:10px;margin-top:10px}
-.mrow select{flex:1}
 dialog{border:none;border-radius:14px;padding:16px;max-width:86vw}
 dialog::backdrop{background:rgba(0,0,0,.4)}
 </style>
@@ -136,9 +131,6 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
     </button>
     <button class="hbtn" id="refreshBtn" title="刷新模型">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
-    </button>
-    <button class="hbtn" id="setupBtn" title="连接设置">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>
     </button>
   </div>
 </header>
@@ -273,19 +265,6 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
   <div id="statLine">就绪</div>
 </footer>
 
-<!-- 设置抽屉 -->
-<div id="sheet">
-  <div class="mask" id="mask"></div>
-  <div class="panel">
-    <h2>连接设置</h2>
-    <div class="fld"><label>API 地址</label><input id="addr" placeholder="http://127.0.0.1:8820"></div>
-    <div class="fld"><label>Token（设置 → API 中查看）</label><input id="tok" placeholder="粘贴 token"></div>
-    <button id="testBtn">测试连接 / 刷新模型</button>
-    <div class="note">① 手机端 Nightmare：<b>设置 → API</b> 打开开关；② 打开 <b>允许浏览器页面（CORS）</b>；③ 复制 token 填入上方。本页与 App 在同一台手机时，地址保持 <b>http://127.0.0.1:8820</b>。连不上时依次检查：API 开关、CORS 开关、token 是否复制完整。</div>
-    <div class="note" id="testOut"></div>
-  </div>
-</div>
-
 <dialog id="dlg"><div id="dlgMsg" style="white-space:pre-wrap;font-size:14px;line-height:1.6"></div>
 <form method="dialog" style="margin-top:12px;text-align:right"><button style="border:none;background:var(--pri);color:#fff;border-radius:10px;padding:8px 20px;font-weight:800">好</button></form></dialog>
 
@@ -294,7 +273,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 /* ================= 状态与存储 ================= */
 const LS="nmwb1";
 const S=Object.assign({
-  addr:"http://127.0.0.1:8820", tok:"", mode:"txt2img",
+  mode:"txt2img",
   w:832,h:1216,steps:29,cfg:5,sched:"",seedMode:"rand",seed:0,denoise:0.4,
   pos:"",neg:"",model:"",ckpt:"",loras:[],moss:false,
   autosave:true,pUps:false,pFace:false,pColor:false,adjBr:0,adjCo:0,adjSa:0,sampler:""
@@ -305,34 +284,35 @@ let MODELS=[],SAMPLER_NODE=null,SAMPLER_OPTS=null,HIST=[],SRC_IMG=null,IMG_NODE=
     RUNNING=false,CANCEL=false,CUR_URL="";
 
 /* ================= 通用 ================= */
-function api(path,opt){
-  const h=Object.assign({"Content-Type":"application/json"},opt&&opt.h||{});
-  if(S.tok) h["Authorization"]="Bearer "+S.tok;
-  return fetch(S.addr.replace(/\/$/,"")+path,Object.assign({},opt,{headers:h}));
+/* [LOCAL-NEWUI] 无 HTTP：Nightmare.call 走 JS 桥直连 App 内部引擎（同一路由面，免 token/CORS/开关） */
+let __callSeq=0; const __pending=new Map();
+let __lorasCb=null;
+window.__nmCallDone=function(callId,status,json){
+  if(callId==="loras"){ const cb=__lorasCb; __lorasCb=null; if(cb) cb(status,json); return; }
+  const p=__pending.get(callId); if(!p) return;
+  __pending.delete(callId);
+  let j=null; try{ j=JSON.parse(json); }catch(e){}
+  p({ok:status>=200&&status<300,status:status,json:j});
+};
+function call(method,path,body,callId){
+  return new Promise(res=>{
+    if(!(window.Nightmare&&window.Nightmare.call)){
+      res({ok:false,status:0,json:{error:"桥未就绪（本页须在 App 内运行）"}}); return;
+    }
+    const id=callId||("c"+(++__callSeq)+"_"+Date.now());
+    __pending.set(id,res);
+    try{ Nightmare.call(method,path,body==null?"":JSON.stringify(body),id); }
+    catch(e){ __pending.delete(id); res({ok:false,status:0,json:{error:String(e.message||e)}}); return; }
+    setTimeout(()=>{ if(__pending.has(id)){ __pending.delete(id); res({ok:false,status:504,json:{error:"引擎无响应（桥超时）"}}); } },180000);
+  });
 }
 function toast(m){$("dlgMsg").textContent=m;$("dlg").showModal?$("dlg").showModal():alert(m);}
 function stat(t){$("statLine").textContent=t;}
 
-/* ================= 设置面板 ================= */
-$("setupBtn").onclick=()=>{ $("addr").value=S.addr; $("tok").value=S.tok; $("sheet").classList.add("show"); };
-$("mask").onclick=()=>{ S.addr=$("addr").value.trim()||S.addr; S.tok=$("tok").value.trim(); save(); $("sheet").classList.remove("show"); };
-$("testBtn").onclick=async()=>{
-  S.addr=$("addr").value.trim()||S.addr; S.tok=$("tok").value.trim(); save();
-  $("testOut").textContent="连接中…";
-  try{
-    const r=await api("/info"); if(!r.ok) throw new Error("HTTP "+r.status);
-    const info=await r.json();
-    await loadModels();
-    $("testOut").innerHTML=`✅ 已连接 · app ${info.app} v${info.version} · busy=${info.busy} · 模型 ${MODELS.length} 个`;
-  }catch(e){
-    $("testOut").innerHTML="❌ "+e.message+"（检查：API 开关 / CORS 允许浏览器页面 / token / 地址）";
-  }
-};
-
 /* ================= 模型 ================= */
 async function loadModels(){
-  const r=await api("/models"); if(!r.ok) throw new Error("models HTTP "+r.status);
-  const j=await r.json(); MODELS=j.models||[];
+  const r=await call("GET","/models"); if(!r.ok) throw new Error("models "+r.status+" "+(r.json&&r.json.error||""));
+  const j=r.json; MODELS=j.models||[];
   if(!S.model&&MODELS.length) S.model=MODELS[0].id;
   if(!MODELS.find(m=>m.id===S.model)&&MODELS.length) S.model=MODELS[0].id;
   const cur=MODELS.find(m=>m.id===S.model);
@@ -382,16 +362,19 @@ $("modelBtn").onclick=()=>{
 $("refreshBtn").onclick=()=>loadModels().then(()=>stat("模型已刷新")).catch(e=>stat("刷新失败："+e.message));
 async function probeSampler(){
   try{
-    const r=await api("/flows/txt2img"); if(!r.ok) return;
-    const j=await r.json(); const nodes=j.nodes||[];
-    const sn=nodes.find(n=>/sampler/i.test(n.type||"")||n.widgets&&Object.keys(n.widgets).some(k=>/sampler/i.test(k)));
+    const r=await call("GET","/flows/txt2img"); if(!r.ok) return;
+    const j=r.json; const nodes=Array.isArray(j.nodes)?j.nodes:[];
+    /* [LOCAL-NEWUI] flowSchema 的 widgets 是数组 [{name,type,options...}]（旧代码按对象读，采样器永远为空） */
+    const sn=nodes.find(n=>Array.isArray(n.widgets)&&n.widgets.some(w=>w&&w.name==="sampler"))
+          ||nodes.find(n=>/sampler/i.test(n.type||""));
     if(sn){
       SAMPLER_NODE=sn.id;
-      const w=(sn.widgets&&(sn.widgets.sampler||sn.widgets[SAMPLER_NODE]))||null;
-      SAMPLER_OPTS=w&&w.options?w.options:null;
+      const w=Array.isArray(sn.widgets)?sn.widgets.find(x=>x&&x.name==="sampler"):null;
+      SAMPLER_OPTS=Array.isArray(w&&w.options)&&w.options.length?w.options:null;
       const sel=$("sampler");
       const opts=SAMPLER_OPTS||["euler","euler_a","dpmpp_2m","dpmpp_2m_sde","dpmpp_sde","ddim","heun","lcm"];
       sel.innerHTML=opts.map(o=>`<option value="${o}"${o===S.sampler?" selected":""}>${o}</option>`).join("");
+      $("sched").value=S.sched;
     }
     const inNode=nodes.find(n=>/core\.image|^image$/i.test(n.type||""));
     IMG_NODE=inNode?inNode.id:null;
@@ -503,10 +486,10 @@ async function openMossCanvas(){
       summary:{caption:cap||"a scene"},
       items:st.boxes.map(b=>({caption:norm(b.caption),bbox:[Math.round(b.x),Math.round(b.y),Math.round(b.x+b.w),Math.round(b.y+b.h)]}))};
     const txt=JSON.stringify(draft);
-    /* [LOCAL-NEWUI] App 内：草稿交回原生 MOSS 画布的同一回传通道（写回提示词+宽高），并就地关掉弹层 */
-    if(window.Nightmare&&window.Nightmare.appPng){
-      const w0=window.Nightmare.__nmMossW|0,h0=window.Nightmare.__nmMossH|0;
-      try{ Nightmare.__nmMossDraft(JSON.stringify({width:(w0||W),height:(h0||H),draft:txt})); }catch(e){}
+    /* [LOCAL-NEWUI] App 内：草稿经桥回到原生 MOSS 画布的同一回传通道（写回提示词+宽高），并就地关掉弹层 */
+    if(window.Nightmare&&window.Nightmare.openMossDraft){
+      try{ Nightmare.openMossDraft(W,H); }catch(e){}
+      window.__nmPendingMossDraft=txt;
       d.close(); return;
     }
     $("pos").value=txt; S.pos=txt; save();
@@ -517,18 +500,15 @@ async function openMossCanvas(){
 }
 
 /* ===== LoRA 选择器 ===== */
+/* [LOCAL-NEWUI] LoRA 列表 = App 自己的列表（BackendProcess.lorasDir 的 .safetensors），走桥拉取，无手动输入 */
 $("loraPick").onclick=()=>{
   const d=document.createElement("dialog");
   d.style.width="90vw";
   const cur=S.loras.map(l=>l.n+":"+l.s.toFixed(1)).join(" ");
   d.innerHTML=`<b style="font-size:16px">选择 LoRA</b>
-    <div class="hint" style="margin:4px 0 8px">按 <code>&lt;lora:名:强度&gt;</code> 标签追加到提示词；强度 0.2-1.5。</div>
+    <div class="hint" style="margin:4px 0 8px">按 <code>&lt;lora:名:强度&gt;</code> 标签追加到提示词；强度 0.2-1.5。列表 = App 模型→LoRA 页的同一份。</div>
     <input id="lpQ" placeholder="过滤…" style="width:100%;border:1px solid #D9D4E8;border-radius:10px;padding:10px 12px;font:15px inherit">
-    <div id="lpList" style="max-height:46vh;overflow:auto;margin-top:8px"></div>
-    <div style="display:flex;gap:8px;margin-top:10px">
-      <input id="lpAdd" placeholder="手动输入 LoRA 文件名（不含 .safetensors）" style="flex:1;border:1px solid #D9D4E8;border-radius:10px;padding:10px 12px;font:14px inherit">
-      <button id="lpAddBtn" class="lbtn" style="padding:9px 16px">添加</button>
-    </div>
+    <div id="lpList" style="max-height:46vh;overflow:auto;margin-top:8px"><div class="hint" style="padding:14px;text-align:center">读取中…</div></div>
     <form method="dialog" style="margin-top:12px;text-align:right"><button style="border:none;background:var(--pri);color:#fff;border-radius:10px;padding:9px 20px;font-weight:800">完成</button></form>`;
   document.body.appendChild(d);
   const list=d.querySelector("#lpList"), q=d.querySelector("#lpQ");
@@ -541,7 +521,7 @@ $("loraPick").onclick=()=>{
         <label class="sw" style="transform:scale(.8)"><input type="checkbox" ${ex?"checked":""}><i></i></label>
         <input type="range" min="0.2" max="1.5" step="0.05" value="${ex?ex.s:0.8}" style="width:110px;accent-color:var(--pri)" ${ex?"":"disabled"}>
         <b style="width:38px;text-align:right;color:var(--pri)">${ex?ex.s.toFixed(2):"—"}</b></div>`;}).join("")
-      :'<div class="hint" style="padding:14px;text-align:center">App 内还没有 LoRA —— 在 App 的 模型→LoRA 页导入后刷新</div>';
+      :'<div class="hint" style="padding:14px;text-align:center">App 内还没有 LoRA —— 在 App 的 模型→LoRA 页导入后，回到本页重新打开即可</div>';
     list.querySelectorAll(".lr").forEach(row=>{
       const n=row.dataset.n, cb=row.querySelector("input[type=checkbox]"), rg=row.querySelector("input[type=range]"), val=row.querySelector("b:last-child");
       cb.onchange=()=>{ if(cb.checked){ if(!S.loras.find(l=>l.n===n)) S.loras.push({n,s:+rg.value}); }
@@ -550,13 +530,11 @@ $("loraPick").onclick=()=>{
       rg.oninput=()=>{ const l=S.loras.find(l=>l.n===n); if(l){l.s=+rg.value; val.textContent=(+rg.value).toFixed(2); save();} };
     });
   }
-  q.oninput=render; render();
-  d.querySelector("#lpAddBtn").onclick=()=>{
-    const n=d.querySelector("#lpAdd").value.trim().replace(/\.safetensors$/,"");
-    if(!n) return;
-    if(!LORAS.includes(n)) LORAS.push(n);
-    if(!S.loras.find(l=>l.n===n)) S.loras.push({n,s:0.8});
-    d.querySelector("#lpAdd").value=""; save(); render();
+  q.oninput=render;
+  Nightmare.getLoras("loras");
+  __lorasCb=(status,json)=>{
+    try{ const j=JSON.parse(json); if(j&&Array.isArray(j.loras)) LORAS=j.loras.slice(); }catch(e){}
+    render();
   };
   d.addEventListener("close",()=>{ d.remove(); renderLoraList(); });
   d.showModal();
@@ -602,9 +580,10 @@ document.querySelectorAll("#modeSeg button").forEach(b=>b.onclick=()=>{
 });
 async function probeImg2img(){
   try{
-    const r=await api("/flows/img2img"); if(!r.ok) return stat("图生图 schema 获取失败 HTTP "+r.status);
-    const j=await r.json(); const nodes=j.nodes||[];
-    const inNode=nodes.find(n=>/core\.image/i.test(n.type||"")||(n.widgets&&n.widgets.uri));
+    const r=await call("GET","/flows/img2img"); if(!r.ok) return stat("图生图 schema 获取失败 "+r.status);
+    const j=r.json; const nodes=Array.isArray(j.nodes)?j.nodes:[];
+    const inNode=nodes.find(n=>/core\.image/i.test(n.type||""))||
+      nodes.find(n=>Array.isArray(n.widgets)&&n.widgets.some(w=>w&&w.name==="uri"));
     if(inNode){ IMG_NODE=inNode.id; stat("图生图就绪（输入节点 "+IMG_NODE+"）"); }
     else stat("图生图 schema 中未找到图片输入节点");
   }catch(e){ stat("图生图探测失败："+e.message); }
@@ -641,6 +620,8 @@ $("adjSa").oninput=e=>{S.adjSa=+e.target.value;$("saV").textContent=S.adjSa;save
 
 /* ================= 图片加载 / 保存 / 历史 ================= */
 $("loadBtn").onclick=()=>{
+  /* [LOCAL-NEWUI] App 内走桥（系统相册）；浏览器保留 <input type=file> */
+  if(window.Nightmare&&window.Nightmare.pickImage){ try{ Nightmare.pickImage(); }catch(e){ stat("打开相册失败："+e.message); } return; }
   const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*";
   inp.onchange=()=>{
     const f=inp.files[0]; if(!f) return;
@@ -655,6 +636,14 @@ $("loadBtn").onclick=()=>{
   };
   inp.click();
 };
+/* [LOCAL-NEWUI] 桥回传：系统相册选中的图，作为 data URL 落地（SRC_IMG 即 data URL） */
+window.__nmImagePicked=function(dataUrl){
+  if(!dataUrl){ stat("未选择图片"); return; }
+  showMain(dataUrl);
+  SRC_IMG=dataUrl;
+  $("srcName").value="相册图片";
+  stat(S.mode==="img2img"?"源图已加载：相册图片":"已加载预览图（切到图生图可用作源图）");
+};
 $("srcName").style.display="none";
 function showMain(url){
   CUR_URL=url;
@@ -663,17 +652,17 @@ function showMain(url){
 $("saveBtn").onclick=async()=>{
   if(!CUR_URL) return stat("没有可保存的图片");
   try{
-    const url=CUR_URL.startsWith("data:")?CUR_URL:CUR_URL+(CUR_URL.includes("?")?"&":"?")+"token="+encodeURIComponent(S.tok);
-    const b=await(await fetch(url)).blob();
+    /* [LOCAL-NEWUI] 图片现在只来自 data:/blob: URL，本地直接取字节 */
+    const b=await(await fetch(CUR_URL)).blob();
     await savePngBlob(b);
   }catch(e){ stat("保存失败："+e.message); }
 };
 /* [LOCAL-NEWUI] 保存出口：App 内走桥（WebView 里 a.download 无效），浏览器里走 <a download> */
 async function savePngBlob(b){
-  if(window.Nightmare&&window.Nightmare.appPng){
+  if(window.Nightmare&&window.Nightmare.savePng){
     const buf=new Uint8Array(await b.arrayBuffer());
     let s=""; for(let i=0;i<buf.length;i+=0x8000) s+=String.fromCharCode.apply(null,buf.subarray(i,i+0x8000));
-    window.Nightmare.appPng(btoa(s));
+    window.Nightmare.savePng(btoa(s));
   }else{
     const a=document.createElement("a"); a.href=URL.createObjectURL(b);
     a.download="nm-"+Date.now()+".png"; a.click();
@@ -689,7 +678,7 @@ function addHist(url,meta){
 }
 
 /* ================= 生成 ================= */
-$("btnCancel").onclick=()=>{ CANCEL=true; api("/cancel",{method:"POST"}).catch(()=>{}); stat("已请求取消…"); };
+$("btnCancel").onclick=()=>{ CANCEL=true; call("POST","cancel").catch(()=>{}); stat("已请求取消…"); };
 $("genBtn").onclick=RUNNING?null:runBatch;
 function buildBody(){
   const loraTags=S.loras.map(l=>`<lora:${l.n}:${l.s.toFixed(2)}>`).join(" ");
@@ -709,50 +698,30 @@ function buildBody(){
   }
   return body;
 }
+/* [LOCAL-NEWUI] /run 走桥：无 SSE——进度/日志经 __nmEvent 实时事件流，结束走 __nmCallDone */
+window.__nmEvent=function(callId,name,json){
+  if(name==="progress"&&json){ const p=Math.round(json.step/json.total*100);
+    $("progTxt").textContent=`生成中 ${json.step}/${json.total}（${p}%）`; $("progBar").style.width=p+"%";
+    stat(`step ${json.step}/${json.total}`); }
+  else if(name==="log"&&json) stat(json.text);
+  else if(name==="warn"&&json) stat("⚠ "+json.text);
+};
 async function runOnce(body,idx,total){
-  const res=await api("/run",{method:"POST",body:JSON.stringify(body)});
-  if(!res.ok&&res.status===400){
-    const t=await res.text();
-    if(t.includes("scheduler")&&body.scheduler){ delete body.scheduler; return runOnce(body,idx,total); }
-    throw new Error("400: "+t.slice(0,300));
-  }
-  if(!res.ok) throw new Error("HTTP "+res.status+": "+(await res.text()).slice(0,200));
-  const rd=res.body.getReader(), dec=new TextDecoder(); let buf="",answer=null;
-  while(true){
-    const {done,value}=await rd.read(); if(done) break;
-    buf+=dec.decode(value,{stream:true});
-    let i;
-    while((i=buf.indexOf("\n\n"))>=0){
-      const chunk=buf.slice(0,i); buf=buf.slice(i+2);
-      let ev="message",data="";
-      for(const line of chunk.split("\n")){
-        if(line.startsWith("event:")) ev=line.slice(6).trim();
-        else if(line.startsWith("data:")) data+=line.slice(5).trim();
-      }
-      if(!data) continue;
-      let j=null; try{j=JSON.parse(data)}catch(e){}
-      if(ev==="start") stat(`任务 #${idx+1}/${total} 已启动`);
-      else if(ev==="progress"&&j){ const p=Math.round(j.step/j.total*100);
-        $("progTxt").textContent=`生成中 ${j.step}/${j.total}（${p}%）`; $("progBar").style.width=p+"%";
-        stat(`#${idx+1}/${total} step ${j.step}/${j.total}`); }
-      else if(ev==="log"&&j) stat(j.text);
-      else if(ev==="warn"&&j) stat("⚠ "+j.text);
-      else if(ev==="done"){ answer=j; }
-      else if(ev==="error"){ answer=j||{error:"未知错误"}; }
-    }
-  }
-  return answer||{error:"流提前结束"};
+  const rid="r"+(++__callSeq)+"_"+Date.now();
+  const res=await call("POST","run",body,rid);
+  if(!res.ok) throw new Error(res.status+": "+((res.json&&res.json.error)||""));
+  return res.json||{error:"无结果"};
 }
 async function runBatch(){
   if(RUNNING) return;
   if(S.mode==="img2img"&&!IMG_NODE) await probeImg2img();
   let body;
   try{ body=buildBody(); }catch(e){ return stat("❌ "+e.message); }
-  if(!MODELS.length){ try{ await loadModels(); }catch(e){ return stat("❌ 未连接，先在设置里测试连接"); } 
+  if(!MODELS.length){ try{ await loadModels(); }catch(e){ return stat("❌ 未获取到模型（点右上角刷新）"); }
     const m=MODELS.find(x=>x.id===S.model)||(MODELS[0]||null); if(m) body.model=m.id; }
   RUNNING=true; CANCEL=false;
   $("genBtn").classList.add("busy"); $("genBtn").innerHTML="<span style='font-size:20px'>■</span> 生成中（点击取消）";
-  $("genBtn").onclick=()=>{CANCEL=true;api("/cancel",{method:"POST"}).catch(()=>{});};
+  $("genBtn").onclick=()=>{CANCEL=true;call("POST","cancel").catch(()=>{});};
   $("progWrap").classList.add("show"); $("progBar").style.width="0%";
   $("progTxt").textContent="准备中…";
   const t0=Date.now();
@@ -764,8 +733,12 @@ async function runBatch(){
     const rs=(ans.results&&ans.results.length)?ans.results:[];
     if(!rs.length) throw new Error(ans.warnings?ans.warnings.join(" | "):"完成，但未返回图片");
     let item=rs.find(r=>r.kind!=="video")||rs[0];
-    let url=S.addr.replace(/\/$/,"")+item.url+"?token="+encodeURIComponent(S.tok);
-    let bmp=await(await fetch(url)).blob();
+    /* [LOCAL-NEWUI] 结果图经桥取字节：/results/<run>/<file> → {ok,b64} → blob URL */
+    const rr=await call("GET",item.url);
+    if(!rr.ok||!rr.json||!rr.json.b64) throw new Error((rr.json&&rr.json.error)||"结果图获取失败 "+rr.status);
+    const bin=atob(rr.json.b64); const buf8=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) buf8[i]=bin.charCodeAt(i);
+    let bmp=new Blob([buf8],{type:"image/png"});
     /* 后期处理链：色彩校正 → 放大 ×2 */
     if(S.pColor||S.pUps){
       stat("后期处理中…");
@@ -779,7 +752,7 @@ async function runBatch(){
     }
   }catch(e){
     stat("❌ "+e.message);
-    toast("请求失败：\n"+e.message+"\n\n常见原因：API 未开启 / CORS 未打开 / token 错误 / 后端正忙（409）");
+    toast("请求失败：\n"+e.message+"\n\n常见原因：引擎正忙（409）/ 参数被拒绝 / 模型缺失");
   }finally{
     RUNNING=false; CANCEL=false;
     $("progWrap").classList.remove("show");
@@ -815,30 +788,33 @@ async function processImage(blob,doColor,doUps){
 async function tryAutoSave(bmp){
   try{ await savePngBlob(bmp); }catch(e){}
 }
-/* [LOCAL-NEWUI] App 桥：启动注入（地址+token），MOSS 画布草稿回传 */
-function __nmBoot(addr,tok){
-  if(addr) S.addr=addr;
-  if(tok) S.tok=tok;
-  save();
-  $("addr").value=S.addr; const t=$("tok"); if(t) t.value=S.tok;
-  stat("就绪（已接入 App API）");
-  loadModels().then(()=>{ stat("就绪"); }).catch(()=>{ stat("API 未连接 — 检查设置→API 开关"); });
+/* [LOCAL-NEWUI] App 内启动：无地址/token——桥直连内部引擎 */
+function __nmBoot(){
+  stat("就绪（已连接内部引擎）");
+  loadModels().then(()=>{ stat("就绪"); })
+    .catch(e=>{ stat("模型获取失败："+(e&&e.message||e)); });
+  if(window.Nightmare&&window.Nightmare.getLoras){
+    Nightmare.getLoras("loras");
+    __lorasCb=(status,json)=>{ try{ const j=JSON.parse(json); if(j&&Array.isArray(j.loras)) LORAS=j.loras.slice(); }catch(e){} };
+  }
 }
 window.__nmOnMossDraft=function(w,h,draftB64){
   try{
-    let draft=draftB64||"";
-    if(draftB64&&draftB64.indexOf("{")!==0){ draft=decodeURIComponent(escape(atob(draftB64))); }
+    /* [LOCAL-NEWUI] 草稿来源优先级：页面画布编辑版（pending）> 原生画布回传版（b64） */
+    let draft=window.__nmPendingMossDraft||""; window.__nmPendingMossDraft=null;
+    if(draftB64){
+      try{ draft=decodeURIComponent(escape(atob(draftB64))); }catch(e2){ draft=draftB64; }
+    }
     if(w) { S.w=+w; $("w").value=+w; }
     if(h) { S.h=+h; $("h").value=+h; }
-    $("pos").value=draft; S.pos=draft; save();
+    if(draft){ $("pos").value=draft; S.pos=draft; save(); }
     $("mossMeta").textContent="画布草稿已写回提示词";
     stat("MOSS 草稿已写回");
   }catch(e){ stat("草稿写回失败："+e.message); }
 };
-/* 启动：自动尝试连接（浏览器里沿用本地存档；App 内由 __nmBoot 注入后再连） */
-if(!(window.Nightmare&&window.Nightmare.appPng)&&(S.tok||S.addr)){
-  loadModels().then(()=>{ stat("就绪"); })
-  .catch(()=>{ stat("未连接 — 点右上角 ⚙ 配置 API"); }); }
+/* 启动：App 内直接连内部引擎；浏览器里没有桥，页面给出明确提示 */
+if(window.Nightmare&&window.Nightmare.call){ __nmBoot(); }
+else{ stat("本页须在 App 的 newui 视图内运行"); }
 </script>
 </body>
 </html>

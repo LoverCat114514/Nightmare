@@ -652,10 +652,23 @@ fun CanvasScreen(
     if (mainView == com.abrah.nightmare.MainView.AGENT) {
         agentContent(Modifier.fillMaxSize().padding(top = topPad).windowInsetsPadding(belowChrome(bottomPad)))
     }
-    // [LOCAL-NEWUI 2026-11-05] The web workbench fills the slot below the top bar; no
-    // inset padding here — the page lays itself out across the full screen.
+    // [LOCAL-NEWUI 2026-11-05] The web workbench fills the slot below the top bar.
+    // ⭐⭐ (2026-11-05, second round) OPAQUE: the workbench draws no background of its
+    // own, so the Default view behind it peeked out at the edges (the user: "newui和
+    // 默认ui重叠了"). This branch fills its whole slot and pads under the top bar;
+    // the page content keeps only its own bottom reserve.
     if (mainView == com.abrah.nightmare.MainView.NEWUI) {
-        newUiContent()
+        // ⭐⭐ (2026-11-05, fourth round) PAD-THEN-FILL: the padding comes BEFORE the
+        // background, so the fill starts under the top bar instead of covering it —
+        // the blank strip above (the user's image 5). Sibling order stays: the fill
+        // still covers the Default view behind.
+        Box(
+            Modifier.fillMaxSize()
+                .padding(top = topPad)
+                .background(MaterialTheme.colorScheme.background),
+        ) {
+            newUiContent()
+        }
     }
     // ⚠ Outside the Box, so the sheet's scrim covers the run bar too. Inside it
     // the bar would sit on top of the scrim and still be tappable, which is how
