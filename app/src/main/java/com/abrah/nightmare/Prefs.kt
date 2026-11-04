@@ -459,8 +459,13 @@ object Prefs {
  * library's three, then the three views of one flow. ⚠ The ORDER is the 3 × 2 tile grid's.
  */
 enum class MainView {
-    MODELS, FLOWS, RESULTS, AGENT, NODES, GRAPH;
+    MODELS, FLOWS, RESULTS, AGENT, NODES, GRAPH,
 
-    /** ⭐ A view of the flow (Agent · Nodes · Graph), not a library destination. */
-    val isCanvas get() = this == AGENT || this == NODES || this == GRAPH
+    // [LOCAL-NEWUI 2026-11-05] the fourth flow view: the web workbench. A user-added local
+    // mode, not upstream — it rides the same canvas slot: the top-left toggle, Settings'
+    // default-view picker and the view memory all treat it like AGENT/NODES/GRAPH.
+    NEWUI;
+
+    /** ⭐ A view of the flow (Agent · Nodes · Graph · NEWUI), not a library destination. */
+    val isCanvas get() = this == AGENT || this == NODES || this == GRAPH || this == NEWUI
 }

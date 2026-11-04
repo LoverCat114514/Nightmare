@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NM 工作台</title>
+<style>
+:root{
+  --bg:#F2F0F7; --card:#FFFFFF; --line:#E5E1EF; --txt:#17151F; --sub:#6E6A7A;
+  --pri:#6D4AE0; --pri-d:#5B39CE; --pri-soft:#EFEAFB; --pri-soft2:#F7F4FE;
+  --ok:#1CA672; --bad:#D64545; --r:16px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{background:var(--bg);color:var(--txt);
+  font:15px/1.5 system-ui,-apple-system,"HarmonyOS Sans SC","MiSans",sans-serif}
+body{padding-bottom:150px}
+/* ===== 头部 ===== */
+header{position:sticky;top:0;z-index:20;background:linear-gradient(180deg,#EDE9F6 0%,#EDE9F6 85%,rgba(237,233,246,0));padding:14px 16px 18px;display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:21px;font-weight:900;letter-spacing:.5px;white-space:nowrap}
+#connDot{display:none}
+.hbtns{display:flex;gap:10px;align-items:center}
+.hbtn{border:none;background:none;color:var(--pri);font-weight:800;font-size:16px;display:flex;align-items:center;gap:6px;padding:6px 8px;white-space:nowrap}
+.hbtn svg{width:22px;height:22px}
+/* ===== 卡片 ===== */
+main{padding:2px 16px;display:flex;flex-direction:column;gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+.sec-title{font-size:16px;font-weight:800;margin-bottom:10px}
+/* ===== 画布 ===== */
+#canvasBox{background:#FBFAFE;border:1px solid var(--line);border-radius:14px;position:relative;
+  min-height:46vh;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#canvasBox img{max-width:100%;max-height:60vh;object-fit:contain;display:block}
+#emptyHint{color:#9A96A8;padding:24px;text-align:center}
+#progWrap{position:absolute;inset:0;background:rgba(255,255,255,.88);backdrop-filter:blur(2px);
+  display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px}
+#progWrap.show{display:flex}
+.bar{width:70%;height:8px;background:#E8E4F4;border-radius:4px;overflow:hidden}
+.bar>i{display:block;height:100%;width:0%;background:var(--pri);border-radius:4px;transition:width .3s}
+#progTxt{font-weight:800;color:var(--pri)}
+#btnCancel{margin-top:4px;border:1px solid var(--line);background:#fff;color:var(--bad);
+  border-radius:10px;padding:8px 22px;font-weight:700}
+.crow{display:flex;gap:10px;margin-top:12px}
+.cbtn{flex:1;border:1px solid var(--line);background:var(--pri-soft2);color:var(--txt);
+  border-radius:12px;padding:12px;font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px}
+.cbtn svg{width:20px;height:20px}
+/* ===== 历史条 ===== */
+#hist{display:flex;gap:8px;overflow-x:auto;padding:2px}
+#hist:empty::after{content:"暂无历史";color:#9A96A8;font-size:13px}
+#hist img{width:64px;height:64px;object-fit:cover;border-radius:10px;border:2px solid transparent;flex:none}
+#hist img.sel{border-color:var(--pri)}
+/* ===== 表单 ===== */
+.fld{position:relative;margin-top:12px}
+.fld>label{position:absolute;top:-9px;left:12px;background:var(--card);padding:0 6px;font-size:12.5px;color:var(--sub);border-radius:4px}
+.fld>textarea,.fld>input,.fld>select{width:100%;border:1px solid #D9D4E8;border-radius:12px;
+  padding:12px 14px;font:15px/1.45 inherit;color:var(--txt);background:#fff;outline:none}
+.fld>textarea{min-height:84px;resize:vertical}
+.fld>textarea:focus,.fld>input:focus,.fld>select:focus{border-color:var(--pri)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.hint{font-size:12.5px;color:var(--sub);margin-top:6px}
+/* chips */
+.chiprow{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 14px;font-weight:700;font-size:14px;color:var(--txt)}
+.chip.on{background:var(--pri-soft);color:var(--pri);border-color:#D8CCF5}
+.chip.act{background:var(--pri);color:#fff;border-color:var(--pri)}
+/* segmented */
+.seg{display:flex;background:#fff;border:1px solid #D9D4E8;border-radius:999px;padding:4px;margin-top:10px}
+.seg>button{flex:1;border:none;background:none;padding:9px;border-radius:999px;font-weight:800;font-size:14.5px;color:var(--sub)}
+.seg>button.on{background:var(--pri-soft);color:var(--pri)}
+/* sliders */
+.sldrow{margin-top:14px}
+.sldrow .lab{display:flex;justify-content:space-between;font-weight:800}
+.sldrow .lab b{color:var(--pri);font-size:16px}
+.sldrow input[type=range]{width:100%;accent-color:var(--pri);height:34px}
+/* tag search */
+.tg{background:var(--pri-soft2);border:1px solid var(--line);border-radius:999px;padding:5px 11px;font-size:13px;color:var(--pri);font-weight:600}
+/* preset */
+.prow{display:flex;gap:10px;margin-top:10px}
+.pbtn{flex:1;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:14.5px;display:flex;align-items:center;justify-content:center;gap:7px}
+.pbtn.save{background:var(--pri);color:#fff}
+.pbtn.del{background:#fff;border:1px solid var(--line);color:#B9B4C6}
+.pbtn.del:disabled{opacity:.55}
+/* switch / lora / proc / moss-canvas */
+.swrow{display:flex;align-items:center;gap:12px;justify-content:space-between}
+.swrow>div{flex:1}
+.sw{position:relative;display:inline-block;width:52px;height:30px;flex:none}
+.sw input{opacity:0;width:0;height:0}
+.sw i{position:absolute;inset:0;background:#D8D4E4;border-radius:999px;transition:.2s}
+.sw i::after{content:"";position:absolute;left:3px;top:3px;width:24px;height:24px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.sw input:checked+i{background:var(--pri)}
+.sw input:checked+i::after{transform:translateX(22px)}
+.loraHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:6px}
+.lbtn{border:1px solid #C9C2DC;background:#fff;color:var(--pri);border-radius:12px;padding:10px 18px;font-weight:800;font-size:15px}
+.lbtn.wide{width:100%;margin-top:10px}
+.proc{display:flex;align-items:center;gap:10px;margin-top:12px}
+.pi{width:40px;height:40px;border-radius:12px;background:var(--pri-soft);display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
+.pt{flex:1;min-width:0}
+.pt b{font-size:15.5px}
+.proc .lbtn{padding:8px 14px}
+#adjPanel{background:var(--pri-soft2);border-radius:12px;padding:4px 12px 8px;margin-top:10px}
+#loraList .lr{display:flex;gap:8px;align-items:center;margin-top:8px}
+#loraList .lr input[type=text]{flex:1;border:1px solid #D9D4E8;border-radius:10px;padding:9px 12px;font:14px inherit}
+#loraList .lr input[type=range]{width:110px;accent-color:var(--pri)}
+#loraList .lr b{width:38px;text-align:right;color:var(--pri)}
+#mossCanvas{border:1px solid var(--line);border-radius:10px;background:#fff;touch-action:none;width:100%}
+.mchip{display:inline-block;background:var(--pri-soft);color:var(--pri);border-radius:8px;padding:3px 10px;font-size:12.5px;font-weight:700;margin:2px}
+/* ===== 底部固定 ===== */
+footer{position:fixed;left:0;right:0;bottom:0;z-index:30;background:linear-gradient(180deg,rgba(242,240,247,0),var(--bg) 22%);padding:10px 16px calc(12px + env(safe-area-inset-bottom))}
+#statBar{display:flex;align-items:center;gap:8px;background:#ECE8F6;border-radius:12px;padding:10px 14px;font-size:13.5px;font-weight:700;color:#3E3A4E}
+#statBar .sp{flex:1}
+#genBtn{width:100%;margin-top:10px;border:none;background:var(--pri);color:#fff;border-radius:14px;
+  padding:16px;font-size:18px;font-weight:900;display:flex;align-items:center;justify-content:center;gap:10px}
+#genBtn:active{background:var(--pri-d)}
+#genBtn.busy{background:#8B79C9}
+#statLine{margin-top:7px;font-size:13px;color:var(--sub);min-height:18px}
+/* ===== 设置抽屉 ===== */
+#sheet{position:fixed;inset:0;z-index:50;display:none}
+#sheet.show{display:block}
+#sheet .mask{position:absolute;inset:0;background:rgba(20,16,40,.45)}
+#sheet .panel{position:absolute;left:0;right:0;bottom:0;background:var(--bg);border-radius:20px 20px 0 0;padding:18px 16px calc(16px + env(safe-area-inset-bottom));max-height:82vh;overflow:auto}
+#sheet h2{font-size:18px;font-weight:900;margin-bottom:12px}
+.note{font-size:12.5px;color:var(--sub);margin-top:8px;line-height:1.6}
+#testBtn{width:100%;margin-top:12px;border:1px solid var(--pri);color:var(--pri);background:#fff;border-radius:12px;padding:11px;font-weight:800}
+.mrow{display:flex;align-items:center;gap:10px;margin-top:10px}
+.mrow select{flex:1}
+dialog{border:none;border-radius:14px;padding:16px;max-width:86vw}
+dialog::backdrop{background:rgba(0,0,0,.4)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>文生图 / 图生图</h1>
+  <div class="hbtns">
+    <button class="hbtn" id="modelBtn" title="切换模型">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+      <span id="modelLabel">未连接</span>
+    </button>
+    <button class="hbtn" id="refreshBtn" title="刷新模型">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+    </button>
+    <button class="hbtn" id="setupBtn" title="连接设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main>
+  <!-- 画布卡 -->
+  <section class="card">
+    <div id="canvasBox">
+      <div id="emptyHint">生成结果</div>
+      <img id="mainImg" style="display:none" alt="">
+      <div id="progWrap">
+        <div id="progTxt">准备中…</div>
+        <div class="bar"><i id="progBar"></i></div>
+        <button id="btnCancel">取消</button>
+      </div>
+    </div>
+    <div class="crow">
+      <button class="cbtn" id="loadBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.5-4.5L7 20"/></svg>
+        加载图片
+      </button>
+      <button class="cbtn" id="saveBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+        保存图片
+      </button>
+    </div>
+    <div class="fld" style="display:none" id="srcRow"><label>图生图源图</label><input id="srcName" readonly placeholder="未加载"></div>
+    <div id="hist" style="margin-top:12px"></div>
+  </section>
+
+  <!-- 模式 -->
+  <section class="card">
+    <div class="seg" id="modeSeg">
+      <button data-m="txt2img" class="on">✦ 文生图</button>
+      <button data-m="img2img">🖼 图生图</button>
+    </div>
+    <div class="sldrow" id="denoiseRow" style="display:none">
+      <div class="lab"><span>重绘幅度 Denoise</span><b id="dnV">0.40</b></div>
+      <input type="range" id="denoise" min="0.05" max="0.95" step="0.05" value="0.40">
+    </div>
+    <div id="mossRow" style="display:none">
+      <div class="swrow" style="margin-top:12px">
+        <div><b>Moss layout</b><div class="hint">MOSS 布局草稿：开启后，贴在提示词里的布局草稿（画框＋描述的 JSON）会在生成前编译成引擎格式。普通文字提示词不受影响。</div></div>
+        <label class="sw"><input type="checkbox" id="mossOn"><i></i></label>
+      </div>
+      <button class="lbtn wide" id="mossOpen" style="display:none">打开布局画布</button>
+      <div id="mossMeta" style="display:none" class="hint"></div>
+    </div>
+  </section>
+
+  <!-- 提示词 -->
+  <section class="card">
+    <div class="sec-title">提示词</div>
+    <div class="fld"><label>正面提示词</label><textarea id="pos" placeholder="1girl, solo, ..."></textarea></div>
+    <div class="fld"><label>负面提示词</label><textarea id="neg"></textarea></div>
+  </section>
+
+  <!-- 检查点 / LoRA -->
+  <section class="card">
+    <div class="fld"><label>检查点 · <span id="ckptFam">—</span></label>
+      <select id="ckpt"><option value="">加载中…</option></select>
+    </div>
+    <div class="loraHead">
+      <div><b>LoRA</b><div class="hint">叠加在此检查点上的适配器</div></div>
+      <button class="lbtn" id="loraPick">选择</button>
+    </div>
+    <div id="loraList"></div>
+  </section>
+
+  <!-- 参数 -->
+  <section class="card">
+    <div class="sec-title">参数</div>
+    <div class="grid2">
+      <div class="fld"><label>宽度</label><input id="w" type="number" inputmode="numeric" value="832"></div>
+      <div class="fld"><label>高度</label><input id="h" type="number" inputmode="numeric" value="1216"></div>
+    </div>
+    <div class="hint">失焦后校准为最接近的 64 倍数；总像素过大可能被分块或拒绝。</div>
+    <div class="fld"><label>采样器</label><select id="sampler"></select></div>
+    <div class="fld"><label>调度</label>
+      <select id="sched">
+        <option value="">普通</option>
+        <option>karras</option><option>exponential</option>
+        <option>sgm_uniform</option><option>simple</option><option>beta</option>
+      </select>
+    </div>
+    <div class="sldrow"><div class="lab"><span>Steps</span><b id="stV">29</b></div>
+      <input type="range" id="steps" min="4" max="60" step="1" value="29"></div>
+    <div class="sldrow"><div class="lab"><span>CFG Scale</span><b id="cfgV">5.0</b></div>
+      <input type="range" id="cfg" min="1" max="14" step="0.1" value="5"></div>
+    <div class="seg" id="seedSeg">
+      <button data-s="rand" class="on">✓ 随机 Seed</button>
+      <button data-s="fix">🔒 固定 Seed</button>
+    </div>
+    <div class="fld" id="seedRow" style="display:none"><label>Seed</label><input id="seed" type="number" inputmode="numeric" value="0"></div>
+    <div class="swrow" style="margin-top:14px">
+      <div><b>自动保存</b><div class="hint">将每次运行保留到历史</div></div>
+      <label class="sw"><input type="checkbox" id="autosave" checked><i></i></label>
+    </div>
+    <div style="font-weight:900;margin-top:16px">后期处理</div>
+    <div class="proc">
+      <div class="pi">🖼</div>
+      <div class="pt"><b>放大 ×2</b><div class="hint">渲染后放大×2（不重绘），2×出图后再面部修复</div></div>
+      <label class="sw"><input type="checkbox" id="pUps"><i></i></label>
+    </div>
+    <div class="proc">
+      <div class="pi">✨</div>
+      <div class="pt"><b>修复面部</b><div class="hint">生成后检测每张脸近距离重绘再融合</div></div>
+      <label class="sw"><input type="checkbox" id="pFace"><i></i></label>
+    </div>
+    <div class="proc">
+      <div class="pi">🎨</div>
+      <div class="pt"><b>色彩校正</b><div class="hint">修正发灰或偏色：暗部更暗、亮部更亮、去除偏色</div></div>
+      <label class="sw"><input type="checkbox" id="pColor"><i></i></label>
+    </div>
+    <div id="adjPanel" style="display:none">
+      <div class="sldrow"><div class="lab"><span>亮度</span><b id="brV">0</b></div>
+        <input type="range" id="adjBr" min="-60" max="60" value="0"></div>
+      <div class="sldrow"><div class="lab"><span>对比度</span><b id="coV">0</b></div>
+        <input type="range" id="adjCo" min="-60" max="60" value="0"></div>
+      <div class="sldrow"><div class="lab"><span>饱和度</span><b id="saV">0</b></div>
+        <input type="range" id="adjSa" min="-60" max="60" value="0"></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div id="statBar">
+    <span>⏱ <b id="statMs">—</b></span><span class="sp"></span>
+    <span>模型 <b id="statModel">—</b></span>
+  </div>
+  <button id="genBtn"><span style="font-size:20px">▶</span> 生成图片</button>
+  <div id="statLine">就绪</div>
+</footer>
+
+<!-- 设置抽屉 -->
+<div id="sheet">
+  <div class="mask" id="mask"></div>
+  <div class="panel">
+    <h2>连接设置</h2>
+    <div class="fld"><label>API 地址</label><input id="addr" placeholder="http://127.0.0.1:8820"></div>
+    <div class="fld"><label>Token（设置 → API 中查看）</label><input id="tok" placeholder="粘贴 token"></div>
+    <button id="testBtn">测试连接 / 刷新模型</button>
+    <div class="note">① 手机端 Nightmare：<b>设置 → API</b> 打开开关；② 打开 <b>允许浏览器页面（CORS）</b>；③ 复制 token 填入上方。本页与 App 在同一台手机时，地址保持 <b>http://127.0.0.1:8820</b>。连不上时依次检查：API 开关、CORS 开关、token 是否复制完整。</div>
+    <div class="note" id="testOut"></div>
+  </div>
+</div>
+
+<dialog id="dlg"><div id="dlgMsg" style="white-space:pre-wrap;font-size:14px;line-height:1.6"></div>
+<form method="dialog" style="margin-top:12px;text-align:right"><button style="border:none;background:var(--pri);color:#fff;border-radius:10px;padding:8px 20px;font-weight:800">好</button></form></dialog>
+
+<script>
+"use strict";
+/* ================= 状态与存储 ================= */
+const LS="nmwb1";
+const S=Object.assign({
+  addr:"http://127.0.0.1:8820", tok:"", mode:"txt2img",
+  w:832,h:1216,steps:29,cfg:5,sched:"",seedMode:"rand",seed:0,denoise:0.4,
+  pos:"",neg:"",model:"",ckpt:"",loras:[],moss:false,
+  autosave:true,pUps:false,pFace:false,pColor:false,adjBr:0,adjCo:0,adjSa:0,sampler:""
+},JSON.parse(localStorage.getItem(LS)||"{}"));
+const save=()=>localStorage.setItem(LS,JSON.stringify(S));
+const $=id=>document.getElementById(id);
+let MODELS=[],SAMPLER_NODE=null,SAMPLER_OPTS=null,HIST=[],SRC_IMG=null,IMG_NODE=null,LORAS=[],
+    RUNNING=false,CANCEL=false,CUR_URL="";
+
+/* ================= 通用 ================= */
+function api(path,opt){
+  const h=Object.assign({"Content-Type":"application/json"},opt&&opt.h||{});
+  if(S.tok) h["Authorization"]="Bearer "+S.tok;
+  return fetch(S.addr.replace(/\/$/,"")+path,Object.assign({},opt,{headers:h}));
+}
+function toast(m){$("dlgMsg").textContent=m;$("dlg").showModal?$("dlg").showModal():alert(m);}
+function stat(t){$("statLine").textContent=t;}
+
+/* ================= 设置面板 ================= */
+$("setupBtn").onclick=()=>{ $("addr").value=S.addr; $("tok").value=S.tok; $("sheet").classList.add("show"); };
+$("mask").onclick=()=>{ S.addr=$("addr").value.trim()||S.addr; S.tok=$("tok").value.trim(); save(); $("sheet").classList.remove("show"); };
+$("testBtn").onclick=async()=>{
+  S.addr=$("addr").value.trim()||S.addr; S.tok=$("tok").value.trim(); save();
+  $("testOut").textContent="连接中…";
+  try{
+    const r=await api("/info"); if(!r.ok) throw new Error("HTTP "+r.status);
+    const info=await r.json();
+    await loadModels();
+    $("testOut").innerHTML=`✅ 已连接 · app ${info.app} v${info.version} · busy=${info.busy} · 模型 ${MODELS.length} 个`;
+  }catch(e){
+    $("testOut").innerHTML="❌ "+e.message+"（检查：API 开关 / CORS 允许浏览器页面 / token / 地址）";
+  }
+};
+
+/* ================= 模型 ================= */
+async function loadModels(){
+  const r=await api("/models"); if(!r.ok) throw new Error("models HTTP "+r.status);
+  const j=await r.json(); MODELS=j.models||[];
+  if(!S.model&&MODELS.length) S.model=MODELS[0].id;
+  if(!MODELS.find(m=>m.id===S.model)&&MODELS.length) S.model=MODELS[0].id;
+  const cur=MODELS.find(m=>m.id===S.model);
+  $("modelLabel").textContent=cur?cur.label.split(" ")[0]:"未选";
+  $("statModel").textContent=cur?cur.id:"—";
+  renderCkpt();
+  await probeSampler();
+}
+function renderCkpt(){
+  const sel=$("ckpt");
+  sel.innerHTML=MODELS.map(m=>`<option value="${m.id}"${m.id===S.model?" selected":""}>${m.label}</option>`).join("")
+    ||"<option value=\"\">无可用模型</option>";
+  const cur=MODELS.find(m=>m.id===S.model);
+  $("ckptFam").textContent=cur?(cur.family||""):"—";
+  syncMoss();
+}
+function syncMoss(){
+  const cur=MODELS.find(m=>m.id===S.model);
+  const isMoss=/moss/i.test((cur&&(cur.family||"")+" "+(cur&&cur.id||""))||"");
+  $("mossRow").style.display=isMoss?"block":"none";
+}
+$("ckpt").onchange=e=>{
+  S.model=e.target.value; S.ckpt=S.model; save();
+  const m=MODELS.find(x=>x.id===S.model);
+  $("modelLabel").textContent=m?m.label.split(" ")[0]:"未选";
+  $("statModel").textContent=m?m.id:"—";
+  renderCkpt(); stat("检查点已切换："+(m?m.id:""));
+};
+$("modelBtn").onclick=()=>{
+  if(!MODELS.length) return stat("未连接，先测试连接");
+  const html=MODELS.map(m=>`<button class="tg" data-mid="${m.id}" style="display:block;width:100%;text-align:left;margin:6px 0;padding:10px 14px;border-radius:12px;border:1px solid ${m.id===S.model?'var(--pri)':'var(--line)'};background:${m.id===S.model?'var(--pri-soft)':'#fff'};color:var(--txt);font-weight:700">
+    ${m.label}<div style="font-size:12px;color:var(--sub);font-weight:500">${m.id} · ${m.native||""} · ${m.family||""}</div></button>`).join("");
+  const d=document.createElement("dialog");
+  d.innerHTML=`<div style="font-weight:900;margin-bottom:6px">选择模型</div><div style="max-height:60vh;overflow:auto">${html}</div>
+  <form method="dialog" style="margin-top:8px;text-align:right"><button style="border:none;background:var(--pri);color:#fff;border-radius:10px;padding:8px 18px;font-weight:800">关闭</button></form>`;
+  document.body.appendChild(d);
+  d.querySelectorAll("[data-mid]").forEach(b=>b.onclick=()=>{
+    S.model=b.dataset.mid; save();
+    const m=MODELS.find(x=>x.id===S.model);
+    $("modelLabel").textContent=m.label.split(" ")[0];
+    $("statModel").textContent=m.id;
+    stat("模型已切换："+m.id);
+    d.close(); d.remove();
+  });
+  d.showModal();
+};
+$("refreshBtn").onclick=()=>loadModels().then(()=>stat("模型已刷新")).catch(e=>stat("刷新失败："+e.message));
+async function probeSampler(){
+  try{
+    const r=await api("/flows/txt2img"); if(!r.ok) return;
+    const j=await r.json(); const nodes=j.nodes||[];
+    const sn=nodes.find(n=>/sampler/i.test(n.type||"")||n.widgets&&Object.keys(n.widgets).some(k=>/sampler/i.test(k)));
+    if(sn){
+      SAMPLER_NODE=sn.id;
+      const w=(sn.widgets&&(sn.widgets.sampler||sn.widgets[SAMPLER_NODE]))||null;
+      SAMPLER_OPTS=w&&w.options?w.options:null;
+      const sel=$("sampler");
+      const opts=SAMPLER_OPTS||["euler","euler_a","dpmpp_2m","dpmpp_2m_sde","dpmpp_sde","ddim","heun","lcm"];
+      sel.innerHTML=opts.map(o=>`<option value="${o}"${o===S.sampler?" selected":""}>${o}</option>`).join("");
+    }
+    const inNode=nodes.find(n=>/core\.image|^image$/i.test(n.type||""));
+    IMG_NODE=inNode?inNode.id:null;
+  }catch(e){}
+}
+
+/* ===== Moss layout 开关 + 画布 ===== */
+$("mossOn").checked=!!S.moss;
+$("mossOpen").style.display=S.moss?"block":"none";
+$("mossMeta").style.display=S.moss?"block":"none";
+$("mossOn").onchange=e=>{
+  S.moss=e.target.checked; save();
+  $("mossOpen").style.display=S.moss?"block":"none";
+  $("mossMeta").style.display=S.moss?"block":"none";
+  if(S.moss&&!S.pos.includes('"items"')) stat("提示：把布局草稿 JSON 贴进正面提示词后生效（或用画布生成）");
+};
+$("mossOpen").onclick=()=>openMossCanvas();
+async function openMossCanvas(){
+  const W=S.w,H=S.h;
+  const d=document.createElement("dialog");
+  d.style.width="92vw"; d.style.maxWidth="none";
+  d.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <b style="font-size:16px">MOSS 布局画布 ${W}×${H}</b>
+    <button id="mcX" style="border:none;background:none;font-size:20px;color:var(--sub)">✕</button></div>
+  <canvas id="mossCanvas" width="${W}" height="${H}"></canvas>
+  <div id="mcHint" class="hint">长按空白拖出画框；点画框选中，可拖动/缩放（角点）；Del 删除选中。</div>
+  <div style="margin-top:6px"><span class="mchip" id="mcN">0 框</span>
+    <button class="lbtn" id="mcJson" style="margin-left:6px">导入 JSON</button></div>
+  <form method="dialog" style="margin-top:12px;display:flex;gap:10px">
+    <button type="submit" id="mcCancel" style="flex:1;border:1px solid var(--line);background:#fff;border-radius:12px;padding:11px;font-weight:800">取消</button>
+    <button type="button" id="mcOk" style="flex:2;border:none;background:var(--pri);color:#fff;border-radius:12px;padding:11px;font-weight:900">生成草稿并写入提示词</button>
+  </form>`;
+  document.body.appendChild(d);
+  const cv=d.querySelector("#mossCanvas"), ctx=cv.getContext("2d");
+  const st={boxes:[],sel:-1,drag:null,scale:W/cv.clientWidth};
+  const norm=caption=>caption.replace(/"/g,"'").trim()||"object";
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.strokeStyle="#DDD8EC"; ctx.lineWidth=1;
+    for(let x=0;x<=W;x+=64){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<=H;y+=64){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    st.boxes.forEach((b,i)=>{
+      const selB=i===st.sel;
+      ctx.fillStyle=selB?"rgba(109,74,224,.18)":"rgba(109,74,224,.08)";
+      ctx.strokeStyle=selB?"#6D4AE0":"#9B87E8"; ctx.lineWidth=selB?3:2;
+      ctx.fillRect(b.x,b.y,b.w,b.h); ctx.strokeRect(b.x,b.y,b.w,b.h);
+      ctx.fillStyle=selB?"#6D4AE0":"#9B87E8";
+      ctx.font="bold 13px system-ui";
+      ctx.fillText(b.caption,b.x+6,Math.min(b.y+16,H-4));
+      if(selB){ctx.fillStyle="#fff";ctx.strokeStyle="#6D4AE0";ctx.lineWidth=2;
+        [[b.x,b.y],[b.x+b.w,b.y],[b.x,b.y+b.h],[b.x+b.w,b.y+b.h]].forEach(p=>{ctx.fillRect(p[0]-5,p[1]-5,10,10);ctx.strokeRect(p[0]-5,p[1]-5,10,10);});}
+    });
+    d.querySelector("#mcN").textContent=st.boxes.length+" 框";
+  }
+  function toXY(ev){const r=cv.getBoundingClientRect();const t=ev.touches?ev.touches[0]:ev;
+    return {x:(t.clientX-r.left)*W/r.width,y:(t.clientY-r.top)*H/r.height};}
+  function near(m,b){const g=18*W/cv.clientWidth;
+    return {tl:Math.abs(m.x-b.x)<g&&Math.abs(m.y-b.y)<g,tr:Math.abs(m.x-b.x-b.w)<g&&Math.abs(m.y-b.y)<g,
+      bl:Math.abs(m.x-b.x)<g&&Math.abs(m.y-b.y-b.h)<g,br:Math.abs(m.x-b.x-b.w)<g&&Math.abs(m.y-b.y-b.h)<g};}
+  let mode=null;
+  const down=ev=>{
+    const m=toXY(ev);
+    for(let i=st.boxes.length-1;i>=0;i--){const b=st.boxes[i];const n=near(m,b);
+      if(n.tl||n.tr||n.bl||n.br){st.sel=i;mode="resize";st.drag={m,b0:Object.assign({},b)};draw();return;}
+      if(m.x>=b.x&&m.x<=b.x+b.w&&m.y>=b.y&&m.y<=b.y+b.h){st.sel=i;mode="move";st.drag={m,b0:Object.assign({},b)};draw();return;}}
+    st.sel=st.boxes.length; mode="new"; st.drag={sx:m.x,sy:m.y};
+    st.boxes.push({x:m.x,y:m.y,w:0,h:0,caption:"object"}); draw();
+  };
+  const move=ev=>{
+    if(!st.drag) return; ev.preventDefault();
+    const m=toXY(ev);
+    const b=st.boxes[st.sel]; if(!b) return;
+    if(mode==="new"){b.x=Math.min(st.drag.sx,m.x);b.y=Math.min(st.drag.sy,m.y);b.w=Math.abs(m.x-st.drag.sx);b.h=Math.abs(m.y-st.drag.sy);}
+    else if(mode==="move"){b.x=st.drag.b0.x+(m.x-st.drag.m.x);b.y=st.drag.b0.y+(m.y-st.drag.m.y);}
+    else if(mode==="resize"){const d0=st.drag.b0;const n=near({x:st.drag.m.x,y:st.drag.m.y},d0);
+      if(n.tl){b.x=Math.min(m.x,d0.x+d0.w-8);b.y=Math.min(m.y,d0.y+d0.h-8);b.w=d0.x+d0.w-b.x;b.h=d0.y+d0.h-b.y;}
+      else if(n.tr){b.y=Math.min(m.y,d0.y+d0.h-8);b.w=Math.max(8,m.x-d0.x);b.h=d0.y+d0.h-b.y;}
+      else if(n.bl){b.x=Math.min(m.x,d0.x+d0.w-8);b.w=d0.x+d0.w-b.x;b.h=Math.max(8,m.y-d0.y);}
+      else {b.w=Math.max(8,m.x-b.x);b.h=Math.max(8,m.y-b.y);}}
+    draw();
+  };
+  const up=()=>{ st.drag=null; mode=null; };
+  cv.addEventListener("mousedown",down); cv.addEventListener("mousemove",move);
+  window.addEventListener("mouseup",up);
+  cv.addEventListener("touchstart",down,{passive:false}); cv.addEventListener("touchmove",move,{passive:false});
+  window.addEventListener("touchend",up);
+  cv.addEventListener("contextmenu",ev=>{ev.preventDefault();
+    if(st.sel>=0){st.boxes.splice(st.sel,1);st.sel=-1;draw();}});
+  d.querySelector("#mcX").onclick=()=>d.close();
+  d.addEventListener("close",()=>d.remove());
+  d.querySelector("#mcJson").onclick=()=>{
+    const inp=prompt("粘贴布局草稿 JSON："); if(!inp) return;
+    try{
+      const j=JSON.parse(inp);
+      let items=j.items||[]; let cw=j.width||W,ch=j.height||H;
+      if(j.elements){const cen=j.bbox_coord_space!=="abs";
+        items=j.elements.map(e=>({caption:e.caption||e.label||"object",bbox:cen?(()=>{const[y1,x1,y2,x2]=e.bbox;return[x1+cw/2,y1+ch/2,x2+cw/2,y2+ch/2];})():e.bbox.slice()}));}
+      const sx=W/cw,sy=H/ch;
+      st.boxes=items.filter(it=>Array.isArray(it.bbox)&&it.bbox.length===4).map(it=>({
+        x:it.bbox[0]*sx,y:it.bbox[1]*sy,w:(it.bbox[2]-it.bbox[0])*sx,h:(it.bbox[3]-it.bbox[1])*sy,
+        caption:it.caption||it.label||"object"}));
+      st.sel=-1; draw();
+    }catch(e){alert("JSON 解析失败："+e.message);}
+  };
+  d.querySelector("#mcOk").onclick=()=>{
+    if(!st.boxes.length) return alert("画布为空");
+    const cap=prompt("整图描述（summary caption）：","a scene"); 
+    const draft={width:W,height:H,bbox_coord_space:"abs",bbox_format:"xyxy",
+      summary:{caption:cap||"a scene"},
+      items:st.boxes.map(b=>({caption:norm(b.caption),bbox:[Math.round(b.x),Math.round(b.y),Math.round(b.x+b.w),Math.round(b.y+b.h)]}))};
+    const txt=JSON.stringify(draft);
+    /* [LOCAL-NEWUI] App 内：草稿交回原生 MOSS 画布的同一回传通道（写回提示词+宽高），并就地关掉弹层 */
+    if(window.Nightmare&&window.Nightmare.appPng){
+      const w0=window.Nightmare.__nmMossW|0,h0=window.Nightmare.__nmMossH|0;
+      try{ Nightmare.__nmMossDraft(JSON.stringify({width:(w0||W),height:(h0||H),draft:txt})); }catch(e){}
+      d.close(); return;
+    }
+    $("pos").value=txt; S.pos=txt; save();
+    $("mossMeta").textContent="已写入草稿："+st.boxes.length+" 个画框 → 正面提示词";
+    d.close();
+  };
+  draw();
+}
+
+/* ===== LoRA 选择器 ===== */
+$("loraPick").onclick=()=>{
+  const d=document.createElement("dialog");
+  d.style.width="90vw";
+  const cur=S.loras.map(l=>l.n+":"+l.s.toFixed(1)).join(" ");
+  d.innerHTML=`<b style="font-size:16px">选择 LoRA</b>
+    <div class="hint" style="margin:4px 0 8px">按 <code>&lt;lora:名:强度&gt;</code> 标签追加到提示词；强度 0.2-1.5。</div>
+    <input id="lpQ" placeholder="过滤…" style="width:100%;border:1px solid #D9D4E8;border-radius:10px;padding:10px 12px;font:15px inherit">
+    <div id="lpList" style="max-height:46vh;overflow:auto;margin-top:8px"></div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <input id="lpAdd" placeholder="手动输入 LoRA 文件名（不含 .safetensors）" style="flex:1;border:1px solid #D9D4E8;border-radius:10px;padding:10px 12px;font:14px inherit">
+      <button id="lpAddBtn" class="lbtn" style="padding:9px 16px">添加</button>
+    </div>
+    <form method="dialog" style="margin-top:12px;text-align:right"><button style="border:none;background:var(--pri);color:#fff;border-radius:10px;padding:9px 20px;font-weight:800">完成</button></form>`;
+  document.body.appendChild(d);
+  const list=d.querySelector("#lpList"), q=d.querySelector("#lpQ");
+  function render(){
+    const kw=q.value.trim().toLowerCase();
+    const src=kw?LORAS.filter(l=>l.toLowerCase().includes(kw)):LORAS;
+    list.innerHTML=src.length?src.map(n=>{
+      const ex=S.loras.find(l=>l.n===n);
+      return `<div class="lr" data-n="${n}"><b style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${n}</b>
+        <label class="sw" style="transform:scale(.8)"><input type="checkbox" ${ex?"checked":""}><i></i></label>
+        <input type="range" min="0.2" max="1.5" step="0.05" value="${ex?ex.s:0.8}" style="width:110px;accent-color:var(--pri)" ${ex?"":"disabled"}>
+        <b style="width:38px;text-align:right;color:var(--pri)">${ex?ex.s.toFixed(2):"—"}</b></div>`;}).join("")
+      :'<div class="hint" style="padding:14px;text-align:center">App 内还没有 LoRA —— 在 App 的 模型→LoRA 页导入后刷新</div>';
+    list.querySelectorAll(".lr").forEach(row=>{
+      const n=row.dataset.n, cb=row.querySelector("input[type=checkbox]"), rg=row.querySelector("input[type=range]"), val=row.querySelector("b:last-child");
+      cb.onchange=()=>{ if(cb.checked){ if(!S.loras.find(l=>l.n===n)) S.loras.push({n,s:+rg.value}); }
+        else S.loras=S.loras.filter(l=>l.n!==n);
+        rg.disabled=!cb.checked; val.textContent=cb.checked?(+rg.value).toFixed(2):"—"; save(); };
+      rg.oninput=()=>{ const l=S.loras.find(l=>l.n===n); if(l){l.s=+rg.value; val.textContent=(+rg.value).toFixed(2); save();} };
+    });
+  }
+  q.oninput=render; render();
+  d.querySelector("#lpAddBtn").onclick=()=>{
+    const n=d.querySelector("#lpAdd").value.trim().replace(/\.safetensors$/,"");
+    if(!n) return;
+    if(!LORAS.includes(n)) LORAS.push(n);
+    if(!S.loras.find(l=>l.n===n)) S.loras.push({n,s:0.8});
+    d.querySelector("#lpAdd").value=""; save(); render();
+  };
+  d.addEventListener("close",()=>{ d.remove(); renderLoraList(); });
+  d.showModal();
+};
+function renderLoraList(){
+  const el=$("loraList");
+  el.innerHTML=S.loras.map((l,i)=>`<div class="lr">
+    <input type="text" value="${l.n}" readonly>
+    <input type="range" min="0.2" max="1.5" step="0.05" value="${l.s}" data-i="${i}">
+    <b>${l.s.toFixed(2)}</b>
+    <button class="lbtn" style="padding:6px 10px" data-del="${i}">✕</button></div>`).join("");
+  el.querySelectorAll("input[type=range]").forEach(rg=>rg.oninput=()=>{
+    const i=+rg.dataset.i; S.loras[i].s=+rg.value;
+    rg.parentElement.querySelector("b").textContent=S.loras[i].s.toFixed(2); save();});
+  el.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
+    S.loras.splice(+b.dataset.del,1); save(); renderLoraList();});
+}
+renderLoraList();
+
+/* ================= UI 绑定 ================= */
+$("pos").value=S.pos; $("neg").value=S.neg;
+$("w").value=S.w; $("h").value=S.h; $("steps").value=S.steps; $("stV").textContent=S.steps;
+$("cfg").value=S.cfg; $("cfgV").textContent=S.cfg.toFixed(1);
+$("denoise").value=S.denoise; $("dnV").textContent=S.denoise.toFixed(2);
+$("seed").value=S.seed;
+$("sched").value=S.sched; $("sampler").value=S.sampler;
+$("autosave").checked=!!S.autosave; $("pUps").checked=!!S.pUps; $("pFace").checked=!!S.pFace; $("pColor").checked=!!S.pColor;
+$("adjBr").value=S.adjBr; $("brV").textContent=S.adjBr;
+$("adjCo").value=S.adjCo; $("coV").textContent=S.adjCo;
+$("adjSa").value=S.adjSa; $("saV").textContent=S.adjSa;
+$("adjPanel").style.display=S.pColor?"block":"none";
+document.querySelectorAll("#modeSeg button").forEach(b=>b.classList.toggle("on",b.dataset.m===S.mode));
+setModeUI();
+function setModeUI(){
+  const i2i=S.mode==="img2img";
+  $("denoiseRow").style.display=i2i?"block":"none";
+  $("srcRow").style.display=i2i?"block":"none";
+}
+document.querySelectorAll("#modeSeg button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#modeSeg button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); S.mode=b.dataset.m; save(); setModeUI();
+  if(S.mode==="img2img"&&!IMG_NODE) probeImg2img();
+});
+async function probeImg2img(){
+  try{
+    const r=await api("/flows/img2img"); if(!r.ok) return stat("图生图 schema 获取失败 HTTP "+r.status);
+    const j=await r.json(); const nodes=j.nodes||[];
+    const inNode=nodes.find(n=>/core\.image/i.test(n.type||"")||(n.widgets&&n.widgets.uri));
+    if(inNode){ IMG_NODE=inNode.id; stat("图生图就绪（输入节点 "+IMG_NODE+"）"); }
+    else stat("图生图 schema 中未找到图片输入节点");
+  }catch(e){ stat("图生图探测失败："+e.message); }
+}
+$("sched").onchange=e=>{S.sched=e.target.value;save()};
+$("sampler").onchange=e=>{S.sampler=e.target.value;save()};
+$("steps").oninput=e=>$("stV").textContent=e.target.value;
+$("steps").onchange=e=>{S.steps=+e.target.value;save()};
+$("cfg").oninput=e=>$("cfgV").textContent=(+e.target.value).toFixed(1);
+$("cfg").onchange=e=>{S.cfg=+e.target.value;save()};
+$("denoise").oninput=e=>$("dnV").textContent=(+e.target.value).toFixed(2);
+$("denoise").onchange=e=>{S.denoise=+e.target.value;save()};
+["pos","neg","w","h"].forEach(id=>$(id).onchange=e=>{S[id]=isNaN(+e.target.value)?e.target.value:e.target.value;save()});
+["w","h"].forEach(id=>$(id).onblur=e=>{
+  let v=Math.round(+e.target.value/64)*64; v=Math.max(256,Math.min(2048,v));
+  e.target.value=v; S[id]=v; save();
+  if(S.w*S.h>2097152) stat("提示：总像素较大，可能被分块或被后端拒绝");
+});
+document.querySelectorAll("#seedSeg button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#seedSeg button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); S.seedMode=b.dataset.s; save();
+  $("seedRow").style.display=S.seedMode==="fix"?"block":"none";
+});
+document.querySelectorAll("#seedSeg button").forEach(b=>b.classList.toggle("on",b.dataset.s===S.seedMode));
+if(S.seedMode==="fix") $("seedRow").style.display="block";
+$("seed").onchange=e=>{S.seed=+e.target.value;save()};
+$("autosave").onchange=e=>{S.autosave=e.target.checked;save()};
+$("pUps").onchange=e=>{S.pUps=e.target.checked;save()};
+$("pFace").onchange=e=>{S.pFace=e.target.checked;save()};
+$("pColor").onchange=e=>{S.pColor=e.target.checked;save();$("adjPanel").style.display=S.pColor?"block":"none"};
+$("adjBr").oninput=e=>{S.adjBr=+e.target.value;$("brV").textContent=S.adjBr;save()};
+$("adjCo").oninput=e=>{S.adjCo=+e.target.value;$("coV").textContent=S.adjCo;save()};
+$("adjSa").oninput=e=>{S.adjSa=+e.target.value;$("saV").textContent=S.adjSa;save()};
+
+/* ================= 图片加载 / 保存 / 历史 ================= */
+$("loadBtn").onclick=()=>{
+  const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*";
+  inp.onchange=()=>{
+    const f=inp.files[0]; if(!f) return;
+    const rd=new FileReader();
+    rd.onload=()=>{
+      const url=rd.result;
+      showMain(url);
+      if(S.mode==="img2img"){ SRC_IMG=url; $("srcName").value=f.name; stat("源图已加载："+f.name); }
+      else { SRC_IMG=url; $("srcName").value=f.name; stat("已加载预览图（切到图生图可用作源图）"); }
+    };
+    rd.readAsDataURL(f);
+  };
+  inp.click();
+};
+$("srcName").style.display="none";
+function showMain(url){
+  CUR_URL=url;
+  $("mainImg").src=url; $("mainImg").style.display="block"; $("emptyHint").style.display="none";
+}
+$("saveBtn").onclick=async()=>{
+  if(!CUR_URL) return stat("没有可保存的图片");
+  try{
+    const url=CUR_URL.startsWith("data:")?CUR_URL:CUR_URL+(CUR_URL.includes("?")?"&":"?")+"token="+encodeURIComponent(S.tok);
+    const b=await(await fetch(url)).blob();
+    await savePngBlob(b);
+  }catch(e){ stat("保存失败："+e.message); }
+};
+/* [LOCAL-NEWUI] 保存出口：App 内走桥（WebView 里 a.download 无效），浏览器里走 <a download> */
+async function savePngBlob(b){
+  if(window.Nightmare&&window.Nightmare.appPng){
+    const buf=new Uint8Array(await b.arrayBuffer());
+    let s=""; for(let i=0;i<buf.length;i+=0x8000) s+=String.fromCharCode.apply(null,buf.subarray(i,i+0x8000));
+    window.Nightmare.appPng(btoa(s));
+  }else{
+    const a=document.createElement("a"); a.href=URL.createObjectURL(b);
+    a.download="nm-"+Date.now()+".png"; a.click();
+  }
+}
+function addHist(url,meta){
+  const rec={url,meta}; HIST.unshift(rec); if(HIST.length>24) HIST.pop();
+  const img=new Image(); img.src=url;
+  img.onclick=()=>{ showMain(url); document.querySelectorAll("#hist img").forEach(x=>x.classList.remove("sel")); img.classList.add("sel");
+    if(rec.meta) stat(`${rec.meta.w}×${rec.meta.h} · seed ${rec.meta.seed??"随机"} · ${(rec.meta.ms/1000).toFixed(1)}s`); };
+  $("hist").prepend(img);
+  document.querySelectorAll("#hist img").forEach(x=>x.classList.remove("sel")); img.classList.add("sel");
+}
+
+/* ================= 生成 ================= */
+$("btnCancel").onclick=()=>{ CANCEL=true; api("/cancel",{method:"POST"}).catch(()=>{}); stat("已请求取消…"); };
+$("genBtn").onclick=RUNNING?null:runBatch;
+function buildBody(){
+  const loraTags=S.loras.map(l=>`<lora:${l.n}:${l.s.toFixed(2)}>`).join(" ");
+  const body={flow:S.mode,stream:true,prompt:(loraTags+" "+$("pos").value.trim()).trim(),negative:$("neg").value.trim(),
+    width:S.w,height:S.h,steps:S.steps,cfg:S.cfg};
+  if(S.sched) body.scheduler=S.sched;
+  if(S.seedMode==="fix") body.seed=S.seed;
+  const m=MODELS.find(x=>x.id===S.model)||(MODELS[0]||null);
+  if(m) body.model=m.id;
+  if(SAMPLER_NODE) body.params={[SAMPLER_NODE]:Object.assign(S.sampler?{sampler:S.sampler}:{},S.moss?{moss_layout:"true"}:{})};
+  else if(S.moss) throw new Error("未探测到采样器节点 id，Moss layout 开关无法下发 —— 请先测试连接刷新流程");
+  if(S.mode==="img2img"){
+    body.denoise=S.denoise;
+    if(!SRC_IMG) throw new Error("图生图需要先加载源图");
+    if(!IMG_NODE) throw new Error("未能识别 img2img 流程的图片输入节点");
+    body.images={[IMG_NODE]:SRC_IMG};
+  }
+  return body;
+}
+async function runOnce(body,idx,total){
+  const res=await api("/run",{method:"POST",body:JSON.stringify(body)});
+  if(!res.ok&&res.status===400){
+    const t=await res.text();
+    if(t.includes("scheduler")&&body.scheduler){ delete body.scheduler; return runOnce(body,idx,total); }
+    throw new Error("400: "+t.slice(0,300));
+  }
+  if(!res.ok) throw new Error("HTTP "+res.status+": "+(await res.text()).slice(0,200));
+  const rd=res.body.getReader(), dec=new TextDecoder(); let buf="",answer=null;
+  while(true){
+    const {done,value}=await rd.read(); if(done) break;
+    buf+=dec.decode(value,{stream:true});
+    let i;
+    while((i=buf.indexOf("\n\n"))>=0){
+      const chunk=buf.slice(0,i); buf=buf.slice(i+2);
+      let ev="message",data="";
+      for(const line of chunk.split("\n")){
+        if(line.startsWith("event:")) ev=line.slice(6).trim();
+        else if(line.startsWith("data:")) data+=line.slice(5).trim();
+      }
+      if(!data) continue;
+      let j=null; try{j=JSON.parse(data)}catch(e){}
+      if(ev==="start") stat(`任务 #${idx+1}/${total} 已启动`);
+      else if(ev==="progress"&&j){ const p=Math.round(j.step/j.total*100);
+        $("progTxt").textContent=`生成中 ${j.step}/${j.total}（${p}%）`; $("progBar").style.width=p+"%";
+        stat(`#${idx+1}/${total} step ${j.step}/${j.total}`); }
+      else if(ev==="log"&&j) stat(j.text);
+      else if(ev==="warn"&&j) stat("⚠ "+j.text);
+      else if(ev==="done"){ answer=j; }
+      else if(ev==="error"){ answer=j||{error:"未知错误"}; }
+    }
+  }
+  return answer||{error:"流提前结束"};
+}
+async function runBatch(){
+  if(RUNNING) return;
+  if(S.mode==="img2img"&&!IMG_NODE) await probeImg2img();
+  let body;
+  try{ body=buildBody(); }catch(e){ return stat("❌ "+e.message); }
+  if(!MODELS.length){ try{ await loadModels(); }catch(e){ return stat("❌ 未连接，先在设置里测试连接"); } 
+    const m=MODELS.find(x=>x.id===S.model)||(MODELS[0]||null); if(m) body.model=m.id; }
+  RUNNING=true; CANCEL=false;
+  $("genBtn").classList.add("busy"); $("genBtn").innerHTML="<span style='font-size:20px'>■</span> 生成中（点击取消）";
+  $("genBtn").onclick=()=>{CANCEL=true;api("/cancel",{method:"POST"}).catch(()=>{});};
+  $("progWrap").classList.add("show"); $("progBar").style.width="0%";
+  $("progTxt").textContent="准备中…";
+  const t0=Date.now();
+  try{
+    const ans=await runOnce(body,0,1);
+    if(ans.error) throw new Error(ans.error);
+    $("progBar").style.width="100%";
+    const ms=ans.ms||0; $("statMs").textContent=(ms/1000).toFixed(1)+"s";
+    const rs=(ans.results&&ans.results.length)?ans.results:[];
+    if(!rs.length) throw new Error(ans.warnings?ans.warnings.join(" | "):"完成，但未返回图片");
+    let item=rs.find(r=>r.kind!=="video")||rs[0];
+    let url=S.addr.replace(/\/$/,"")+item.url+"?token="+encodeURIComponent(S.tok);
+    let bmp=await(await fetch(url)).blob();
+    /* 后期处理链：色彩校正 → 放大 ×2 */
+    if(S.pColor||S.pUps){
+      stat("后期处理中…");
+      bmp=await processImage(bmp,S.pColor,S.pUps);
+    }
+    const outUrl=URL.createObjectURL(bmp);
+    showMain(outUrl);
+    if(S.autosave!==false){
+      addHist(outUrl,{w:item.w||body.width,h:item.h||body.height,ms,seed:body.seed});
+      tryAutoSave(bmp);
+    }
+  }catch(e){
+    stat("❌ "+e.message);
+    toast("请求失败：\n"+e.message+"\n\n常见原因：API 未开启 / CORS 未打开 / token 错误 / 后端正忙（409）");
+  }finally{
+    RUNNING=false; CANCEL=false;
+    $("progWrap").classList.remove("show");
+    $("genBtn").classList.remove("busy"); $("genBtn").innerHTML="<span style='font-size:20px'>▶</span> 生成图片";
+    $("genBtn").onclick=runBatch;
+    if(!$("statLine").textContent.startsWith("❌")) stat("就绪");
+  }
+}
+async function processImage(blob,doColor,doUps){
+  const bmp=await createImageBitmap(blob);
+  let cv=document.createElement("canvas");
+  let w=bmp.width,h=bmp.height;
+  if(doUps){w*=2;h*=2;}
+  cv.width=w; cv.height=h;
+  const c=cv.getContext("2d");
+  c.imageSmoothingEnabled=true; c.imageSmoothingQuality="high";
+  c.drawImage(bmp,0,0,w,h);
+  if(doColor){
+    const im=c.getImageData(0,0,w,h),px=im.data;
+    const br=S.adjBr*2.55, co=1+S.adjCo/100, sa=1+S.adjSa/100;
+    for(let i=0;i<px.length;i+=4){
+      for(let k=0;k<3;k++){
+        let v=px[i+k];
+        v=(v-128)*co+128+br;          // 对比度 + 亮度
+        v=128+(v-128)*sa;             // 饱和度
+        px[i+k]=v<0?0:v>255?255:v;
+      }
+    }
+    c.putImageData(im,0,0);
+  }
+  return new Promise(r=>cv.toBlob(r,"image/png"));
+}
+async function tryAutoSave(bmp){
+  try{ await savePngBlob(bmp); }catch(e){}
+}
+/* [LOCAL-NEWUI] App 桥：启动注入（地址+token），MOSS 画布草稿回传 */
+function __nmBoot(addr,tok){
+  if(addr) S.addr=addr;
+  if(tok) S.tok=tok;
+  save();
+  $("addr").value=S.addr; const t=$("tok"); if(t) t.value=S.tok;
+  stat("就绪（已接入 App API）");
+  loadModels().then(()=>{ stat("就绪"); }).catch(()=>{ stat("API 未连接 — 检查设置→API 开关"); });
+}
+window.__nmOnMossDraft=function(w,h,draftB64){
+  try{
+    let draft=draftB64||"";
+    if(draftB64&&draftB64.indexOf("{")!==0){ draft=decodeURIComponent(escape(atob(draftB64))); }
+    if(w) { S.w=+w; $("w").value=+w; }
+    if(h) { S.h=+h; $("h").value=+h; }
+    $("pos").value=draft; S.pos=draft; save();
+    $("mossMeta").textContent="画布草稿已写回提示词";
+    stat("MOSS 草稿已写回");
+  }catch(e){ stat("草稿写回失败："+e.message); }
+};
+/* 启动：自动尝试连接（浏览器里沿用本地存档；App 内由 __nmBoot 注入后再连） */
+if(!(window.Nightmare&&window.Nightmare.appPng)&&(S.tok||S.addr)){
+  loadModels().then(()=>{ stat("就绪"); })
+  .catch(()=>{ stat("未连接 — 点右上角 ⚙ 配置 API"); }); }
+</script>
+</body>
+</html>

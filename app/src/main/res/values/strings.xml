@@ -1033,6 +1033,13 @@
     <string name="agent_models_none">No model matches. The name you typed is used as it is</string>
     <string name="view_nodes">Default</string>
     <string name="view_graph">Advanced</string>
+    <!-- [LOCAL-NEWUI 2026-11-05] the fourth view: the web workbench (a local addition, not upstream). -->
+    <string name="view_newui">newui</string>
+    <string name="views_info_newui">The web workbench: a standalone text-to-image page over the same local API.</string>
+    <string name="settings_ui_mode">Interface mode</string>
+    <string name="settings_ui_mode_note">Which interface the app shows. The three original views stay; switch any time from the top-left toggle.</string>
+    <string name="settings_ui_mode_agent_note">Needs an AI key of your own before it can make pictures.</string>
+    <string name="newui_saved">Saved to %1$s</string>
     <string name="view_ask_title">How do you want to work?</string>
     <string name="view_ask_body">Default shows one step at a time: prompt, then the picture settings, then the result. It is the easy way in. Advanced shows the whole flow as connected boxes, for building your own. You can switch at the top at any time, and change this in Settings.</string>
     <string name="view_ask_nodes">Default (simple)</string>

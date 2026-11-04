@@ -1025,6 +1025,13 @@
     <string name="agent_models_none">Нет совпадений: будет использовано введённое имя</string>
     <string name="view_nodes">Обычный</string>
     <string name="view_graph">Расширенный</string>
+    <!-- [LOCAL-NEWUI 2026-11-05] четвёртый вид: веб-верстак (локальное добавление, не из upstream). -->
+    <string name="view_newui">newui</string>
+    <string name="views_info_newui">Веб-верстак: отдельная страница генерации поверх того же локального API.</string>
+    <string name="settings_ui_mode">Режим интерфейса</string>
+    <string name="settings_ui_mode_note">Какой интерфейс показывает приложение. Три исходных вида остаются; переключение — кнопкой слева сверху.</string>
+    <string name="settings_ui_mode_agent_note">Для картинок сначала нужен ваш собственный ИИ-ключ.</string>
+    <string name="newui_saved">Сохранено в %1$s</string>
     <string name="view_ask_title">Как вы хотите работать?</string>
     <string name="view_ask_body">«Обычный» показывает по одному шагу: описание, настройки картинки, результат. Это самый простой путь. «Расширенный» показывает всю схему соединёнными блоками, чтобы собирать свои. Переключаться можно вверху в любой момент; это меняется и в Настройках.</string>
     <string name="view_ask_nodes">Обычный (просто)</string>

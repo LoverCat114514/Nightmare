@@ -290,6 +290,43 @@ fun SettingsScreen(
                     SectionHeading(stringResource(R.string.accent_title), stringResource(R.string.accent_note))
                     AccentSwatches(accent, onAccent)
                 }
+                // [LOCAL-NEWUI 2026-11-05] Interface mode: the SAME choice the top-left toggle makes
+                // (the flow views of MainView), now also in Settings — the three original views
+                // stay, the fourth (newui) is the web workbench. It writes through
+                // onDefaultView → chooseDefaultView (persists + applies at once), the same
+                // channel the pickers below use.
+                StudioCard {
+                    SectionHeading(stringResource(R.string.settings_ui_mode), stringResource(R.string.settings_ui_mode_note))
+                    for (v in listOf(
+                        com.abrah.nightmare.MainView.AGENT,
+                        com.abrah.nightmare.MainView.NODES,
+                        com.abrah.nightmare.MainView.GRAPH,
+                        com.abrah.nightmare.MainView.NEWUI,
+                    )) {
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onDefaultView(v) },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = defaultView == v, onClick = { onDefaultView(v) })
+                            Column {
+                                Text(
+                                    stringResource(
+                                        when (v) {
+                                            com.abrah.nightmare.MainView.AGENT -> R.string.agent_title
+                                            com.abrah.nightmare.MainView.NODES -> R.string.view_nodes
+                                            com.abrah.nightmare.MainView.GRAPH -> R.string.view_graph
+                                            else -> R.string.view_newui
+                                        },
+                                    ),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
+                                if (v == com.abrah.nightmare.MainView.AGENT) {
+                                    Text(stringResource(R.string.settings_ui_mode_agent_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
                 // ⭐ The views (2026-10-08): which one opens, and Nodes side to side or top to bottom.
                 // ⚠ Agent is not offered as the default — it needs a key first.
                 StudioCard {

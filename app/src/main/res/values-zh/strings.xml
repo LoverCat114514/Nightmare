@@ -1004,6 +1004,13 @@
     <string name="agent_models_none">没有匹配的模型，将直接使用你输入的名称</string>
     <string name="view_nodes">默认</string>
     <string name="view_graph">高级</string>
+    <!-- [LOCAL-NEWUI 2026-11-05] 第四视图：网页工作台（本地新增，非上游）。 -->
+    <string name="view_newui">newui</string>
+    <string name="views_info_newui">网页工作台：独立一页的文生图界面，走同一套本地 API 生成。</string>
+    <string name="settings_ui_mode">界面模式</string>
+    <string name="settings_ui_mode_note">选择应用的主界面。原三视图保留，随时可在左上角切换。</string>
+    <string name="settings_ui_mode_agent_note">需要先配置你自己的 AI 密钥才能出图。</string>
+    <string name="newui_saved">已保存到 %1$s</string>
     <string name="view_ask_title">你想怎样使用？</string>
     <string name="view_ask_body">默认视图一次显示一步，提示词、图片设置、结果，是最简单的入门方式。高级视图以连接的方框显示整个工作流，适合自己搭建。随时可在顶部切换，也可在设置中更改。</string>
     <string name="view_ask_nodes">默认（简单）</string>

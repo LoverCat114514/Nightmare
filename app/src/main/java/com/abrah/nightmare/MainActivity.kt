@@ -570,6 +570,8 @@ fun HarnessScreen(
             onView = vm::openDestination,
             nodesVertical = vm.nodesVertical,
             hideChat = vm.hideChat,
+            // [LOCAL-NEWUI 2026-11-05] the web workbench, mounted as the fourth view's body.
+            newUiContent = { com.abrah.nightmare.newui.NewUiScreen() },
             // ⭐⭐ The Agent view — a full page below the top bar (the user's call, 2026-10-08: the
             // panel fought the keyboard and covered Run).
             agentContent = { m ->

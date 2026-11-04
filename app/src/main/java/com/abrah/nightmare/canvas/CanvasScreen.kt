@@ -197,6 +197,9 @@ fun CanvasScreen(
     hideChat: Boolean = false,
     /** ⭐ The Agent view's body, below the top bar (`ui/AgentScreen.kt`). */
     agentContent: @Composable (Modifier) -> Unit = {},
+    // [LOCAL-NEWUI 2026-11-05] The web workbench's body — a fullscreen slot with no insets
+    // padding of ours: the page owns the whole screen under the top bar.
+    newUiContent: @Composable () -> Unit = {},
     /** ⭐ The shell's height, for a destination drawn below it from outside (the library). */
     onShellHeight: (androidx.compose.ui.unit.Dp) -> Unit = {},
     /**
@@ -648,6 +651,11 @@ fun CanvasScreen(
 
     if (mainView == com.abrah.nightmare.MainView.AGENT) {
         agentContent(Modifier.fillMaxSize().padding(top = topPad).windowInsetsPadding(belowChrome(bottomPad)))
+    }
+    // [LOCAL-NEWUI 2026-11-05] The web workbench fills the slot below the top bar; no
+    // inset padding here — the page lays itself out across the full screen.
+    if (mainView == com.abrah.nightmare.MainView.NEWUI) {
+        newUiContent()
     }
     // ⚠ Outside the Box, so the sheet's scrim covers the run bar too. Inside it
     // the bar would sit on top of the scrim and still be tappable, which is how
@@ -1150,10 +1158,14 @@ private fun TopBar(
             // floating bar had sunk UNDER this page's cards (an earlier sibling in the same Box),
             // while the top bar draws above everything. The model entry point is the bottom bar's
             // Models slot; [modelLabel] stays in the signature for previews/restores.
-            RunButton(
-                busy = busy, onRun = onRun, onCancelRun = onCancelRun,
-                modifier = Modifier.weight(1f, fill = false).defaultMinSize(minWidth = RUN_WIDTH),
-            )
+            // [LOCAL-NEWUI 2026-11-05] The web workbench runs itself — its own generate
+            // button lives in the page, so the top bar keeps only the view pill there.
+            if (mainView != com.abrah.nightmare.MainView.NEWUI) {
+                RunButton(
+                    busy = busy, onRun = onRun, onCancelRun = onCancelRun,
+                    modifier = Modifier.weight(1f, fill = false).defaultMinSize(minWidth = RUN_WIDTH),
+                )
+            }
             // (2026-11-04: the standalone ⓘ is gone — it moved into the ViewSwitch pill's
             // third slot, freeing this row's right end.)
         }
@@ -1175,6 +1187,8 @@ private fun ViewsInfoDialog(onDismiss: () -> Unit) {
                     Triple(com.abrah.nightmare.ui.GraphIcon, R.string.view_graph, R.string.views_info_advanced),
                     // ⚠ Chat last: it is optional (Settings), the other two are the app (the user's call, 2026-10-16).
                     Triple(com.abrah.nightmare.ui.AgentIcon, R.string.agent_title, R.string.views_info_chat),
+                    // [LOCAL-NEWUI 2026-11-05] the fourth view's line.
+                    Triple(com.abrah.nightmare.ui.SparkleIcon, R.string.view_newui, R.string.views_info_newui),
                 )) {
                     Row(verticalAlignment = Alignment.Top) {
                         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 2.dp).size(20.dp))
@@ -1225,6 +1239,8 @@ private fun ViewSwitch(
     fun glyph(v: com.abrah.nightmare.MainView) = when (v) {
         com.abrah.nightmare.MainView.AGENT -> com.abrah.nightmare.ui.AgentIcon to R.string.agent_title
         com.abrah.nightmare.MainView.NODES -> com.abrah.nightmare.ui.NodesIcon to R.string.view_nodes
+        // [LOCAL-NEWUI 2026-11-05] the fourth view: the web workbench.
+        com.abrah.nightmare.MainView.NEWUI -> com.abrah.nightmare.ui.SparkleIcon to R.string.view_newui
         else -> com.abrah.nightmare.ui.GraphIcon to R.string.view_graph
     }
     var menu by remember { mutableStateOf(false) }
