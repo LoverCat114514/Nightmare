@@ -256,19 +256,22 @@ fun SettingsScreen(
     ) {
         // ⚠ No ✕: Settings is a pull-down sheet since 2026-09-26 ([PullDownSheet]).
         // ⭐ No ☰ of its own — the main bar's, in the sheet's gap, is the one (2026-10-10).
-        // ⭐ A ONE-PAGE card draws NO header and NO pills: its title is the menu row that
-        // opened it, and one page needs no switcher. The sheet keeps both, so nothing
-        // about the pull-down panel changes.
+        // ⭐ The ONE-PAGE card keeps its pill row (the user, 2026-11-05: 图二展开后将其余
+        // 选项胶囊放到上方提供快捷切换页面): the pills are the quick switch between the
+        // five pages. No header still — its title is the menu row that opened it.
         if (single == null) ScreenHeader(stringResource(R.string.settings), onClose = null, onMenu = null)
         SwipeTabs(
             labels = shown.map { stringResource(it.label) },
-            // ⚠⚠ `fillMaxSize` rather than `weight(1f)`: a card has no header above the
-            // pager to reserve room for, and the page scrolls inside the card.
-            modifier = if (single != null) Modifier.fillMaxSize()
+            // ⚠⚠ `weight(1f)` for the card, `fillMaxSize` for the sheet: the pill row
+            // now sits above the pager in the card, so the pager takes what is left
+            // (fillHeight gives the page exactly that), while the pull-down panel's
+            // own header owns its padding.
+            modifier = if (single != null) Modifier.weight(1f)
             else Modifier.weight(1f).padding(top = 8.dp),
             fillHeight = true,
             initialPage = if (single != null) 0 else initialPage,
-            showPills = single == null,
+            // ⭐ The card's quick switch — the pills above its page (the user's call).
+            showPills = true,
         ) { index ->
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 6.dp, bottom = 16.dp),

@@ -1,7 +1,6 @@
 package com.abrah.nightmare.ui
 
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -9,15 +8,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -38,31 +38,30 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import com.abrah.nightmare.R
 
 /**
- * ⭐⭐⭐ The Settings menu — the vertical list that grows UP out of the bottom bar's
- * Settings slot (the user, 2026-11-05: *"点击设置后按照箭头1的方向向上展开设置里面的
- * 功能，依次竖向排开，整体右靠"*).
+ * ⭐⭐⭐ The Settings menu — SIX SEPARATE CAPSULES that grow up out of the bottom
+ * bar's Settings slot (the user, 2026-11-05: *"图一展开的这样子不好看，要那种胶囊型
+ * 分开的"*).
  *
- * ⭐  Six rows, right-aligned, five of them Settings' own pages and the last one
- * the whole screen: 外观 / 模型 / 性能 / 高级 / 提示词 / 设置.
+ * ⭐  Six pills, right-aligned and clear of the bar, the first five being Settings'
+ * own pages and the last one the whole screen: 外观 / 模型 / 性能 / 高级 / 提示词 /
+ * 设置. No card behind them — the capsules ARE the menu.
  *
  * ⚠⚠ The ORDER is the user's, not [SettingsScreen]'s page order — hence the
  * explicit index pair on every row rather than a list of page enums. A row's
  * `Int` is the index into Settings' FIXED page order (`Appearance, Prompts,
- * Models, Performance, Advanced`), which is what `SettingsScreen`'s `onlyPage`
- * takes.
+ * Models, Performance, Advanced`).
  *
- * ⭐  Motion (`motion-design` skill, Corporate personality): the card grows from
- * its BOTTOM-RIGHT corner upward (a Y scale about `TransformOrigin(1f, 1f)`,
- * 220 ms `cubic-bezier(0.2, 0, 0, 1)`), and the rows fade in 30 ms apart starting
- * 70 ms in — a Standard stagger, 420 ms total, inside the skill's < 500 ms budget.
- * The exit is `ease-in` at 150 ms, the skill's 65–75 % of the entrance.
+ * ⭐  Motion (`motion-design` skill, Corporate personality): the capsules pop up
+ * one at a time from their own bottom (a Y scale about `TransformOrigin(0.5f, 1f)`,
+ * 220 ms `cubic-bezier(0.2, 0, 0, 1)`, 30 ms apart from 60 ms in — the skill's own
+ * Dropdown recipe). 430 ms total, inside its < 500 ms budget. The exit fades all
+ * six together at 150 ms `ease-in`, the skill's 65–75 % of the entrance.
  */
 @Composable
 internal fun SettingsMenu(
@@ -92,75 +91,36 @@ internal fun SettingsMenu(
             .padding(end = 16.dp, bottom = BOTTOM_BAR_RESERVE + 8.dp),
         contentAlignment = Alignment.BottomEnd,
     ) {
-        // ⭐ The card's own growth: bottom-right origin, so it unfolds UPWARD.
-        val grow by animateFloatAsState(
-            targetValue = if (open) 1f else 0f,
-            animationSpec = if (open) {
-                tween(220, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f))
-            } else {
-                tween(150, easing = CubicBezierEasing(0.4f, 0f, 1f, 1f))
-            },
-            label = "settingsMenuGrow",
-        )
-        if (grow > 0f) {
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                tonalElevation = 3.dp,
-                shadowElevation = 10.dp,
-                border = BorderStroke(
-                    0.5.dp,
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                ),
-                modifier = Modifier
-                    .width(168.dp)
-                    .graphicsLayer {
-                        alpha = grow
-                        // ⚠ 0.72 rather than 0: a full collapse reads as a flicker
-                        // on the first frame, and the skill's 3 % overshoot budget
-                        // is about the settled state, not the start.
-                        scaleY = 0.72f + 0.28f * grow
-                        scaleX = 0.96f + 0.04f * grow
-                        transformOrigin = TransformOrigin(1f, 1f)
-                    },
-            ) {
-                Column(Modifier.padding(vertical = 6.dp)) {
-                    rows.forEachIndexed { i, row ->
-                        MenuRow(
-                            label = row.second,
-                            open = open,
-                            index = i,
-                            onClick = { onPick(row.first) },
-                        )
-                    }
-                    // ⭐ The rule before the last row: the five pages are one kind
-                    // of thing, "Settings" the whole of it.
-                    Box(
-                        Modifier
-                            .padding(horizontal = 14.dp, vertical = 2.dp)
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(MaterialTheme.colorScheme.outlineVariant),
-                    )
-                    MenuRow(
-                        label = fullLabel,
-                        open = open,
-                        index = rows.size,
-                        onClick = onFull,
-                    )
-                }
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            rows.forEachIndexed { i, row ->
+                MenuCapsule(
+                    label = row.second,
+                    open = open,
+                    index = i,
+                    onClick = { onPick(row.first) },
+                )
             }
+            MenuCapsule(
+                label = fullLabel,
+                open = open,
+                index = rows.size,
+                onClick = onFull,
+            )
         }
     }
 }
 
 /**
- * ⭐ One row: right-aligned text, fading in [index] × 30 ms after the card starts
- * growing, and rising 10 dp into place — the skill's Secondary layer (the card's
- * scale is the Primary one).
+ * ⭐ One capsule: a full-round pill on `surfaceContainer` with a faint outline —
+ * the bar's own glass. Fades in [index] × 30 ms after the bar opens the menu, and
+ * rises into place from its own bottom (the Secondary layer; the capsule's scale is
+ * the Primary one).
  */
 @Composable
-private fun MenuRow(
+private fun MenuCapsule(
     label: String,
     open: Boolean,
     index: Int,
@@ -168,38 +128,53 @@ private fun MenuRow(
 ) {
     val p by animateFloatAsState(
         targetValue = if (open) 1f else 0f,
-        animationSpec = tween(
-            durationMillis = 170,
-            // ⚠ Stagger on the way IN only: an exit that walked the rows back out
-            // would take 6 × 30 ms longer than the card and read as a stutter.
-            delayMillis = if (open) 70 + index * 30 else 0,
-            easing = LinearOutSlowInEasing,
-        ),
-        label = "settingsMenuRow$index",
+        animationSpec = if (open) {
+            tween(
+                durationMillis = 220,
+                delayMillis = 60 + index * 30,
+                easing = CubicBezierEasing(0.2f, 0f, 0f, 1f),
+            )
+        } else {
+            // ⚠ No exit stagger: one that walked the capsules back out would take
+            // 6 × 30 ms longer than the menu and read as a stutter.
+            tween(150, easing = CubicBezierEasing(0.4f, 0f, 1f, 1f))
+        },
+        label = "settingsMenuCapsule$index",
     )
-    Box(
-        Modifier
-            .fillMaxWidth()
+    Surface(
+        shape = RoundedCornerShape(percent = 50),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 1.dp,
+        shadowElevation = 4.dp,
+        border = BorderStroke(
+            0.5.dp,
+            MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+        ),
+        modifier = Modifier
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,
             )
+            .widthIn(min = 96.dp, max = 200.dp)
+            .heightIn(min = 40.dp)
+            .padding(horizontal = 18.dp, vertical = 10.dp)
             .graphicsLayer {
                 alpha = p
-                translationY = (1f - p) * 10.dp.toPx()
-            }
-            .padding(horizontal = 18.dp, vertical = 12.dp),
-        contentAlignment = Alignment.CenterEnd,
+                translationY = (1f - p) * 12.dp.toPx()
+                scaleY = 0.85f + 0.15f * p
+                scaleX = 0.97f + 0.03f * p
+                transformOrigin = TransformOrigin(0.5f, 1f)
+            },
     ) {
         Text(
             label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Medium,
-            fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
-            textAlign = TextAlign.End,
+            softWrap = false,
+            textAlign = TextAlign.Center,
         )
     }
 }
@@ -246,6 +221,11 @@ internal fun SettingsMenuScrim(
  * rather than the whole pull-down panel — the canvas stays visible around it,
  * which is what makes the growth read as growth. The content scrolls inside and
  * the card itself never resizes (the reason `SwipeTabs` takes `fillHeight`).
+ *
+ * ⭐  What the card draws above the page — the quick switch the user asked for
+ * (*"图二展开后将其余选项胶囊放到上方提供快捷切换页面"*) — is the page's own pill
+ * row ([SettingsScreen]'s `onlyPage`), so the page opened is the page shown and
+ * the rest are one tap away.
  */
 @Composable
 internal fun SettingsCardSheet(
