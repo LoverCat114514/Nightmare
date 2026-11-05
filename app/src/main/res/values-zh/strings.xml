@@ -1434,7 +1434,6 @@
     <string name="newui_src_empty">未加载</string>
     <string name="newui_choose">选择</string>
     <string name="newui_loras_hint">叠加在此检查点上的适配器</string>
-    <string name="newui_todo">此版本暂未接入</string>
     <string name="newui_size_hint">运行时校准到最接近的 64 倍数；总像素过大可能被分块或拒绝</string>
     <string name="newui_model">模型 %1$s</string>
 </resources>

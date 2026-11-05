@@ -665,7 +665,9 @@ fun CanvasScreen(
         Box(
             Modifier.fillMaxSize()
                 .padding(top = topPad)
-                .background(MaterialTheme.colorScheme.background),
+                // ⭐ (2026-11-05, seventh round) The workbench's own page colour
+                // (nm-workbench.html --bg), not the app theme's.
+                .background(Color(0xFFF2F0F7)),
         ) {
             newUiContent()
         }

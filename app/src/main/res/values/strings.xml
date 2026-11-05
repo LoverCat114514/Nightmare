@@ -1465,7 +1465,6 @@
     <string name="newui_src_empty">none loaded</string>
     <string name="newui_choose">Choose</string>
     <string name="newui_loras_hint">Adapters stacked on this checkpoint</string>
-    <string name="newui_todo">Not wired up in this build</string>
     <string name="newui_size_hint">Snapped to the nearest multiple of 64 on run; very large totals may be tiled or refused</string>
     <string name="newui_model">Model %1$s</string>
 </resources>

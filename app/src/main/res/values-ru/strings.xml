@@ -1461,7 +1461,6 @@
     <string name="newui_src_empty">не загружено</string>
     <string name="newui_choose">Выбрать</string>
     <string name="newui_loras_hint">Адаптеры поверх этого чекпоинта</string>
-    <string name="newui_todo">В этой сборке не подключено</string>
     <string name="newui_size_hint">Округляется до кратного 64 при запуске; слишком большие размеры могут быть разбиты или отклонены</string>
     <string name="newui_model">Модель %1$s</string>
 </resources>

@@ -64,7 +64,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -77,6 +79,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -84,6 +87,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.abrah.nightmare.HarnessOps
@@ -164,18 +168,33 @@ private class WbState {
     // The post-processing block, the HTML page's S.pUps/pFace/pColor/adj*.
     var autosave: Boolean = true
     var pUps: Boolean = false
-    var pFace: Boolean = false // placeholder: the engine has no face endpoint
+    // ⭐ (2026-11-05, eighth round) Wired for real: the flags ride the request as
+    // fix_faces/fix_hands knobs — the engine re-draws each found part in-render.
+    var pFace: Boolean = false
     var pColor: Boolean = false
     var adjBr: Int = 0
     var adjCo: Int = 0
     var adjSa: Int = 0
     var warm: Int = 0 // the warmth slider (±60), with the colour adjust
     var adjOn: Boolean = false // the adjust-colour row's per-run switch
-    var pHands: Boolean = false // placeholder, like pFace
+    var pHands: Boolean = false
 }
 
 /** The single background thread [ApiCore.run] lives on (it blocks). */
 private val RUN_EX = Executors.newSingleThreadExecutor()
+
+/**
+ * The families with NO fix widgets on their sampler — [com.abrah.nightmare.detail.Detailer]'s
+ * own exclusion list (offersDetail). Sending the knobs to those anyway would 400 the
+ * whole render in [applyOverrides]'s checked().
+ */
+private val DETAIL_EXCLUDED = setOf(
+    com.abrah.nightmare.Family.IRIS,
+    com.abrah.nightmare.Family.WAN,
+    com.abrah.nightmare.Family.IDEOGRAM,
+    com.abrah.nightmare.Family.FLUX3,
+    com.abrah.nightmare.Family.FIBO2,
+)
 
 /** The workbench's prefs file — same store the app's own screens use. */
 private const val WB_PREFS = "newui_wb"
@@ -272,6 +291,15 @@ private fun buildRequest(
     if (s.cfg > 0f) knobs["cfg"] = s.cfg.toString()
     if (img2img) knobs["denoise"] = s.denoise.toString()
     if (s.fixedSeed && s.seed > 0L) knobs["seed"] = s.seed.toString()
+    // ⭐ (2026-11-05, eighth round) Fix faces / hands ride the SAME knobs channel as
+    // steps/cfg: every family with a masked render declares the fix widgets on its
+    // sampler (Fused.detailWidgets) and re-draws each found part in the render
+    // itself — no local second pipeline. ⚠ Family-gated: a sampler without the
+    // widget would 400 the whole render in checked() (IRIS/WAN/IDEOGRAM/FLUX3/FIBO2).
+    if (model.family !in DETAIL_EXCLUDED) {
+        if (s.pFace) knobs[com.abrah.nightmare.detail.Detailer.FIX_FACES] = "true"
+        if (s.pHands) knobs[com.abrah.nightmare.detail.Detailer.FIX_HANDS] = "true"
+    }
     if (s.loras.isNotEmpty()) {
         knobs["loras"] = s.loras.joinToString(", ") { (n, w) -> "$n.safetensors@$w" }
     }
@@ -366,6 +394,12 @@ fun NewUiScreen() {
     var srcDataUrl by remember { mutableStateOf<String?>(null) }
     var srcName by remember { mutableStateOf("") }
     var modelId by remember { mutableStateOf(s.modelId) }
+    // ⭐ (2026-11-05, eighth round) The mode is STATE here, not a plain read of
+    // [s.mode]: WbState has no recompose signal, so the ResultCard froze on the
+    // composition-time value (the user's report: img2img picked, no Load button).
+    // Same shape as [modelId] above; the ModeCard writes BOTH, and buildRequest
+    // keeps reading [s.mode].
+    var modeState by remember { mutableStateOf(s.mode) }
     // The global follows the workbench's restored pick (symmetric with the
     // picker's double write), so the engine and the Default UI agree.
     LaunchedEffect(Unit) {
@@ -412,6 +446,7 @@ fun NewUiScreen() {
         // ── Card 1: the result ────────────────────────────────────────────
         ResultCard(
             ctx, busy.value, progTxt.value, progFrac.value, srcName, postVer.intValue,
+            mode = modeState,
             onPickSrc = { uri, name ->
                 srcDataUrl = uri?.let { uriToDataUrl(ctx, it) }
                 srcName = name
@@ -421,14 +456,16 @@ fun NewUiScreen() {
         // ── Card 2: the mode ──────────────────────────────────────────────
         ModeCard(
             s,
+            family = ModelCatalog.byId(modelId)?.family ?: SelectedModel.spec.family,
+            onMode = { modeState = it },
             onDraft = { positive = it },
             onDraftSize = { w, h -> s.w = w; s.h = h; modelVer++ },
         )
 
         // ── Card 3: the prompts ───────────────────────────────────────────
-        Card(Modifier.fillMaxWidth()) {
+        Card(Modifier.fillMaxWidth().border(1.dp, Nm.line, RoundedCornerShape(16.dp)), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Nm.card), elevation = CardDefaults.cardElevation(0.dp)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(stringResource(R.string.newui_prompt), style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.newui_prompt), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, color = Nm.ink)
                 OutlinedTextField(
                     value = positive, onValueChange = { positive = it },
                     label = { Text(stringResource(R.string.newui_positive)) },
@@ -475,8 +512,9 @@ fun NewUiScreen() {
             onClick = { onTapGenerate(ctx, s, positive, negative, srcDataUrl, busy, progTxt, progFrac, statusLine, msLine) },
             enabled = true,
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(16.dp),
-        ) { Text(runLabel, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium) }
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Nm.pri, contentColor = Color.White),
+        ) { Text(runLabel, fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium) }
         Text(
             statusLine.value.ifBlank { stringResource(R.string.newui_ready) },
             style = MaterialTheme.typography.labelSmall,
@@ -508,6 +546,63 @@ private fun modelLabel(): String =
  * the progress bar + cancel while the engine runs, the load/save row, the
  * img2img source line, and this session's history strip.
  */
+// ⭐⭐ (2026-11-05, seventh round) THE WORKBENCH LOOK — nm-workbench.html's
+// palette and shapes as local tokens (the user: the Compose port read nothing
+// like the HTML). Light-only, exactly like the HTML (it pins color-scheme too).
+// The app theme is untouched: these live inside the newui tree only.
+private object Nm {
+    val bg = Color(0xFFF2F0F7)       // --bg, the lavender-grey page
+    val card = Color(0xFFFFFFFF)     // --card
+    val line = Color(0xFFE5E1EF)     // --line, the hairline stroke
+    val ink = Color(0xFF17151F)      // --txt
+    val sub = Color(0xFF6E6A7A)      // --sub, secondary text
+    val pri = Color(0xFF6D4AE0)      // --pri, the violet
+    val priD = Color(0xFF5B39CE)     // --pri-d
+    val priSoft = Color(0xFFEFEAFB)  // --pri-soft, selected chips
+    val soft2 = Color(0xFFF7F4FE)    // --pri-soft2, tinted panels
+    val canvas = Color(0xFFFBFAFE)   // #canvasBox
+    val fld = Color(0xFFD9D4E8)      // the field stroke
+}
+
+/** The HTML .seg: a pill container, the selected half in the soft violet. */
+@Composable
+private fun SegmentedRow(
+    selLeft: Boolean,
+    left: String,
+    right: String,
+    onLeft: () -> Unit,
+    onRight: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .background(Nm.card, RoundedCornerShape(999.dp))
+            .border(1.dp, Nm.fld, RoundedCornerShape(999.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(
+            Modifier.weight(1f)
+                .clip(RoundedCornerShape(999.dp))
+                .background(if (selLeft) Nm.priSoft else Color.Transparent)
+                .clickable { onLeft() }
+                .padding(vertical = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(left, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (selLeft) Nm.priD else Nm.sub)
+        }
+        Box(
+            Modifier.weight(1f)
+                .clip(RoundedCornerShape(999.dp))
+                .background(if (!selLeft) Nm.priSoft else Color.Transparent)
+                .clickable { onRight() }
+                .padding(vertical = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(right, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (!selLeft) Nm.priD else Nm.sub)
+        }
+    }
+}
+
 @Composable
 private fun ResultCard(
     ctx: Context,
@@ -516,14 +611,16 @@ private fun ResultCard(
     progFrac: Float?,
     srcName: String,
     ver: Int,
+    mode: String,
     onPickSrc: (Uri?, String) -> Unit,
 ) {
-    Card(Modifier.fillMaxWidth()) {
+    Card(Modifier.fillMaxWidth().border(1.dp, Nm.line, RoundedCornerShape(16.dp)), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Nm.card), elevation = CardDefaults.cardElevation(0.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(
                 Modifier.fillMaxWidth().aspectRatio(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Nm.canvas)
+                    .border(1.dp, Nm.line, RoundedCornerShape(14.dp)),
                 contentAlignment = Alignment.Center,
             ) {
                 val shot = LAST_SHOT.get()
@@ -556,8 +653,12 @@ private fun ResultCard(
                 if (uri != null) onPickSrc(uri, queryDisplayName(ctx, uri) ?: "image")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { pickSrc.launch(arrayOf("image/*")) }) {
-                    Text(stringResource(R.string.newui_load))
+                // ⭐ (2026-11-05, seventh round) The source picker only exists for
+                // img2img — txt2img has no use for one (the user).
+                if (mode == "img2img") {
+                    OutlinedButton(onClick = { pickSrc.launch(arrayOf("image/*")) }) {
+                        Text(stringResource(R.string.newui_load))
+                    }
                 }
                 Spacer(Modifier.weight(1f))
                 val have = LAST_SHOT.get() != null
@@ -589,7 +690,7 @@ private fun ResultCard(
                         Image(
                             bitmap = sh.bitmap, contentDescription = null,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(84.dp).clip(RoundedCornerShape(10.dp)),
+                            modifier = Modifier.size(84.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Nm.pri, RoundedCornerShape(12.dp)),
                         )
                     }
                 }
@@ -603,22 +704,26 @@ private fun ResultCard(
  * only) and the MOSS block (the switch, the open-canvas button when on).
  */
 @Composable
-private fun ModeCard(s: WbState, onDraft: (String) -> Unit, onDraftSize: (Int, Int) -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
+private fun ModeCard(
+    s: WbState,
+    family: com.abrah.nightmare.Family,
+    onDraft: (String) -> Unit,
+    onDraftSize: (Int, Int) -> Unit,
+    // ⭐ (2026-11-05, eighth round) The screen's mode STATE follows the pick: the
+    // ResultCard reads that state (a plain write into [s] has no recompose signal).
+    onMode: (String) -> Unit = {},
+) {
+    Card(Modifier.fillMaxWidth().border(1.dp, Nm.line, RoundedCornerShape(16.dp)), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Nm.card), elevation = CardDefaults.cardElevation(0.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             var mode by remember { mutableStateOf(s.mode) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = mode != "img2img",
-                    onClick = { mode = "txt2img"; s.mode = "txt2img" },
-                    label = { Text("✦ " + stringResource(R.string.newui_txt2img)) },
-                )
-                FilterChip(
-                    selected = mode == "img2img",
-                    onClick = { mode = "img2img"; s.mode = "img2img" },
-                    label = { Text("🖼 " + stringResource(R.string.newui_img2img)) },
-                )
-            }
+            // ⭐ (2026-11-05, seventh round) The HTML .seg: one pill, two halves.
+            SegmentedRow(
+                selLeft = mode != "img2img",
+                left = "✦ " + stringResource(R.string.newui_txt2img),
+                right = "🖼 " + stringResource(R.string.newui_img2img),
+                onLeft = { mode = "txt2img"; s.mode = "txt2img"; onMode("txt2img") },
+                onRight = { mode = "img2img"; s.mode = "img2img"; onMode("img2img") },
+            )
             if (mode == "img2img") {
                 PostSlider(
                     stringResource(R.string.newui_denoise),
@@ -626,6 +731,9 @@ private fun ModeCard(s: WbState, onDraft: (String) -> Unit, onDraftSize: (Int, I
                 ) { s.denoise = it }
             }
             var mossOn by remember { mutableStateOf(s.mossOn) }
+            // ⭐ (2026-11-05, seventh round) The MOSS draft is a MOSS-only feature:
+            // the block only exists when the picked model is Family.MOSS (the user).
+            if (family == com.abrah.nightmare.Family.MOSS) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(stringResource(R.string.newui_moss_layout), style = MaterialTheme.typography.titleSmall)
@@ -659,6 +767,7 @@ private fun ModeCard(s: WbState, onDraft: (String) -> Unit, onDraftSize: (Int, I
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.moss_open_canvas)) }
             }
+            }
         }
     }
 }
@@ -674,7 +783,7 @@ private fun ModeCard(s: WbState, onDraft: (String) -> Unit, onDraftSize: (Int, I
 @Composable
 private fun ModelCard(ctx: Context, s: WbState, modelId: String, onPicked: (String) -> Unit) {
     val installed = remember { ModelCatalog.installed(ctx) }
-    Card(Modifier.fillMaxWidth()) {
+    Card(Modifier.fillMaxWidth().border(1.dp, Nm.line, RoundedCornerShape(16.dp)), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Nm.card), elevation = CardDefaults.cardElevation(0.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             val picked = ModelCatalog.byId(modelId)
             CheckpointPicker(
@@ -819,9 +928,9 @@ private fun ParamsCard(
     onPicked: () -> Unit,
     onApply: (Int) -> Unit,
 ) {
-    Card(Modifier.fillMaxWidth()) {
+    Card(Modifier.fillMaxWidth().border(1.dp, Nm.line, RoundedCornerShape(16.dp)), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Nm.card), elevation = CardDefaults.cardElevation(0.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(stringResource(R.string.newui_params), style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.newui_params), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, color = Nm.ink)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 NumField(stringResource(R.string.knob_width), s.w, onCommit = {
                     s.w = snap64(it); onPicked()
@@ -947,9 +1056,15 @@ private fun ParamsCard(
                         seedTxt = t
                         s.seed = t.filter { it.isDigit() }.take(18).toLongOrNull() ?: 0L
                     },
-                    label = { Text(stringResource(R.string.knob_seed)) },
+                    label = { Text(stringResource(R.string.knob_seed), color = Nm.sub) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Nm.pri, unfocusedBorderColor = Nm.fld,
+                focusedLabelColor = Nm.pri, unfocusedLabelColor = Nm.sub,
+                cursorColor = Nm.pri, focusedTextColor = Nm.ink, unfocusedTextColor = Nm.ink,
+            ),
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -975,6 +1090,8 @@ private fun ParamsCard(
                 Text(
                     stringResource(R.string.post_processing),
                     style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Nm.ink,
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = { postOpen = !postOpen }) {
@@ -1029,6 +1146,8 @@ private fun ParamsCard(
                 Text(
                     stringResource(R.string.more_options),
                     style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Nm.ink,
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = { moreOpen = !moreOpen }) {
@@ -1045,22 +1164,18 @@ private fun ParamsCard(
                         withSwitch = false,
                         actionLabel = stringResource(R.string.post_upscale_now),
                     ) { onApply(3) }
-                    PostTool(
+                    SwitchRow(
                         stringResource(R.string.knob_fix_faces),
                         stringResource(R.string.newui_p_face_hint),
-                        on = false,
-                        onFlag = { },
-                        withSwitch = false,
-                        actionLabel = stringResource(R.string.newui_todo),
-                    ) { }
-                    PostTool(
+                        on = s.pFace,
+                        onFlag = { s.pFace = it; onPicked() },
+                    )
+                    SwitchRow(
                         stringResource(R.string.knob_fix_hands),
                         stringResource(R.string.newui_p_hands_hint),
-                        on = false,
-                        onFlag = { },
-                        withSwitch = false,
-                        actionLabel = stringResource(R.string.newui_todo),
-                    ) { }
+                        on = s.pHands,
+                        onFlag = { s.pHands = it; onPicked() },
+                    )
                     TextButton(onClick = {
                         s.steps = 29; s.cfg = 5.0f
                         s.adjBr = 0; s.adjCo = 0; s.adjSa = 0; s.warm = 0
@@ -1096,7 +1211,7 @@ private fun PostTool(
 ) {
     var onNow by remember(on) { mutableStateOf(on) }
     Column {
-        Text(title, style = MaterialTheme.typography.titleSmall)
+        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Nm.ink)
         Text(
             desc,
             style = MaterialTheme.typography.bodySmall,
@@ -1116,6 +1231,28 @@ private fun PostTool(
     }
 }
 
+/**
+ * One labelled switch row — the ModeCard's MOSS-layout block shape, extracted so
+ * the More-options render-time flags (fix faces / fix hands) read the same. The
+ * flags ride the NEXT request as fix_faces/fix_hands knobs; there is no per-run
+ * "apply now" on them (the HTML page's S.pFace / S.pHands are plain checkboxes).
+ */
+@Composable
+private fun SwitchRow(
+    title: String,
+    desc: String,
+    on: Boolean,
+    onFlag: (Boolean) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Nm.ink)
+            Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = on, onCheckedChange = onFlag)
+    }
+}
+
 /** One labelled slider row (Steps/CFG and the colour adjust). */
 @Composable
 private fun PostSlider(
@@ -1128,10 +1265,17 @@ private fun PostSlider(
     var v by remember(value) { mutableStateOf(value) }
     Column {
         Row {
-            Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-            Text(fmt(v), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            Text(label, style = MaterialTheme.typography.labelMedium, color = Nm.sub, modifier = Modifier.weight(1f))
+            Text(fmt(v), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Nm.ink)
         }
-        Slider(value = v, onValueChange = { v = it; onSet(it) }, valueRange = range)
+        Slider(
+            value = v,
+            onValueChange = { v = it; onSet(it) },
+            valueRange = range,
+            colors = SliderDefaults.colors(
+                thumbColor = Nm.pri, activeTrackColor = Nm.pri, inactiveTrackColor = Nm.line,
+            ),
+        )
     }
 }
 
@@ -1145,9 +1289,15 @@ private fun NumField(label: String, value: Int, onCommit: (Int) -> Unit, modifie
             txt = t
             t.toIntOrNull()?.let(onCommit)
         },
-        label = { Text(label) },
+        label = { Text(label, color = Nm.sub) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         singleLine = true,
+        colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Nm.pri, unfocusedBorderColor = Nm.fld,
+                focusedLabelColor = Nm.pri, unfocusedLabelColor = Nm.sub,
+                cursorColor = Nm.pri, focusedTextColor = Nm.ink, unfocusedTextColor = Nm.ink,
+            ),
+        shape = RoundedCornerShape(12.dp),
         modifier = modifier,
     )
 }
@@ -1170,8 +1320,14 @@ private fun DropdownWire(
             value = textOf(current),
             onValueChange = {},
             readOnly = true,
-            label = { Text(label) },
+            label = { Text(label, color = Nm.sub) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Nm.pri, unfocusedBorderColor = Nm.fld,
+                focusedLabelColor = Nm.pri, unfocusedLabelColor = Nm.sub,
+                cursorColor = Nm.pri, focusedTextColor = Nm.ink, unfocusedTextColor = Nm.ink,
+            ),
+            shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth()
                 .menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable),
         )
