@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -159,12 +158,6 @@ private fun MenuCapsule(
                 indication = null,
                 onClick = onClick,
             )
-            // ⭐ A comfortable size, one lap bigger than the slim pill (the user,
-            // 2026-11-05): a 120×48 hit area that is easy to press, never a full
-            // block. Space is tight on the right, so this is the floor, not the cap.
-            .widthIn(min = 120.dp)
-            .heightIn(min = 48.dp)
-            .padding(horizontal = 20.dp, vertical = 12.dp)
             .graphicsLayer {
                 alpha = p
                 translationY = (1f - p) * 12.dp.toPx()
@@ -173,16 +166,27 @@ private fun MenuCapsule(
                 transformOrigin = TransformOrigin(0.5f, 1f)
             },
     ) {
-        Text(
-            label,
-            modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            softWrap = false,
-            textAlign = TextAlign.Center,
-        )
+        // ⭐⭐ The size lives INSIDE, on the content box: the capsule WRAPS its
+        // label (floor 120×48 — one lap bigger than the slim pill, the user's
+        // 2026-11-05 call) and centers it. Never `fillMaxWidth` here: that was
+        // what stretched the pills across the whole screen (the user's 图二).
+        Box(
+            Modifier
+                .widthIn(min = 120.dp)
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
