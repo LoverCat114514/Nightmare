@@ -1463,6 +1463,8 @@
     <string name="newui_loras_hint">Адаптеры поверх этого чекпоинта</string>
     <string name="newui_lora_pick_hint">Добавляется в промпт тегом &lt;lora:имя:сила&gt;; сила 0.2-1.5. Список тот же, что в Модели → LoRA.</string>
     <string name="newui_lora_filter">Фильтр…</string>
+    <string name="newui_lora_sheet_title">Выбрать LoRA</string>
+    <string name="newui_lora_import">Импорт</string>
     <string name="newui_lora_empty">В приложении пока нет LoRA — импортируйте в Модели → LoRA и откройте эту страницу заново</string>
     <string name="newui_size_hint">Округляется до кратного 64 при запуске; слишком большие размеры могут быть разбиты или отклонены</string>
     <string name="newui_model">Модель %1$s</string>

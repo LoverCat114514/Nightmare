@@ -1436,6 +1436,8 @@
     <string name="newui_loras_hint">叠加在此检查点上的适配器</string>
     <string name="newui_lora_pick_hint">按 &lt;lora:名:强度&gt; 标签追加到提示词；强度 0.2-1.5。列表 = App 模型→LoRA 页的同一份。</string>
     <string name="newui_lora_filter">过滤…</string>
+    <string name="newui_lora_sheet_title">选择 LoRA</string>
+    <string name="newui_lora_import">导入</string>
     <string name="newui_lora_empty">App 内还没有 LoRA —— 在 App 的 模型→LoRA 页导入后，回到本页重新打开即可</string>
     <string name="newui_size_hint">运行时校准到最接近的 64 倍数；总像素过大可能被分块或拒绝</string>
     <string name="newui_model">模型 %1$s</string>

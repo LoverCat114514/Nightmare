@@ -129,7 +129,6 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.TextStyle
 import java.util.Locale
 import androidx.compose.ui.text.style.TextAlign
-import com.abrah.nightmare.canvas.LoraPicker
 
 
 /** Live progress of the executor's run, if any (step, total). */
@@ -630,7 +629,7 @@ private fun modelLabel(): String =
  * paints its own card with — left unset it stays the app's near-black in dark
  * mode, and the sheet would be dark in a light workbench.
  */
-private fun nmScheme(dark: Boolean): androidx.compose.material3.ColorScheme {
+internal fun nmScheme(dark: Boolean): androidx.compose.material3.ColorScheme {
     val base = if (dark) androidx.compose.material3.darkColorScheme()
                else androidx.compose.material3.lightColorScheme()
     return base.copy(
@@ -659,7 +658,7 @@ private fun nmScheme(dark: Boolean): androidx.compose.material3.ColorScheme {
 }
 
 /** The sheet's own corner: the HTML's 20px on the card, 10 on a field. */
-private val NmSheetShapes = androidx.compose.material3.Shapes(
+internal val NmSheetShapes = androidx.compose.material3.Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(10.dp),
     medium = RoundedCornerShape(14.dp),
@@ -667,7 +666,7 @@ private val NmSheetShapes = androidx.compose.material3.Shapes(
     extraLarge = RoundedCornerShape(24.dp),
 )
 
-private object Nm {
+internal object Nm {
     val bg = Color(0xFFF2F0F7)       // --bg, the lavender-grey page
     val card = Color(0xFFFFFFFF)     // --card
     val line = Color(0xFFE5E1EF)     // --line, the hairline stroke
@@ -679,6 +678,8 @@ private object Nm {
     val soft2 = Color(0xFFF7F4FE)    // --pri-soft2, tinted panels
     val canvas = Color(0xFFFBFAFE)   // #canvasBox
     val fld = Color(0xFFD9D4E8)      // the field stroke
+    val priLine = Color(0xFFD8CCF5)  // a SELECTED chip's edge (.chip.on border)
+    val bad = Color(0xFFD64545)      // --bad, a missing file
 }
 
 /** The HTML .seg: a pill container, the selected half in the soft violet. */
@@ -1014,11 +1015,10 @@ private fun ModelCard(
                 }
                 TextButton(onClick = { picking = true }) { Text(stringResource(R.string.newui_choose)) }
             }
-            // ⭐⭐⭐ (2026-11-05, tenth round) The Default UI's OWN picker — the
-            // canvas sheet the node inspector opens ([LoraPicker]): the search
-            // field, the ⋮ notes, the import button, a slider per file, the
-            // family's base chip. This is the app's shipped design, not a
-            // redrawing of it (the user: "lora选择这块的ui按照默认ui的设计来吧").
+            // ⭐⭐⭐ (2026-11-05, thirteenth round) The card's own sheet
+            // ([NewUiLoraPicker]): the workbench's 选择 LoRA look, carrying the
+            // four things the user kept from the Default UI's — grouping, search,
+            // import and the ⋮ menu (the user: "算了，lora选择的ui重写吧").
             if (picking) {
                 // ⚠ Off the main thread, re-keyed on [loraEpoch]: a file imported
                 // from the sheet shows up without leaving the card. Null until the
@@ -1053,16 +1053,14 @@ private fun ModelCard(
                 // every chosen LoRA missing (the inspector's own rule).
                 if (installed != null && notesRead != null) {
                     val loraNotes = savedNotes ?: notesRead
-                    // ⭐⭐⭐ (2026-11-05, twelfth round) The SAME sheet, in the
-                    // workbench's palette: one MaterialTheme override restyles the
-                    // violet accent, the white card, the hairline and the ink text.
-                    // ⚠ Nothing else changes — every callback below is untouched.
-                    androidx.compose.material3.MaterialTheme(
-                        colorScheme = nmScheme(androidx.compose.foundation.isSystemInDarkTheme()),
-                        shapes = NmSheetShapes,
-                    ) {
-                    LoraPicker(
+                    // ⭐⭐⭐ (2026-11-05, thirteenth round) The workbench's OWN
+                    // sheet ([NewUiLoraPicker]), drawn to the HTML's 选择 LoRA
+                    // rather than inheriting the inspector's Material one. Same
+                    // data, same callbacks — the four functions the user kept
+                    // (grouping / search / import / the ⋮ menu) all live inside it.
+                    NewUiLoraPicker(
                         installed = installed,
+                        library = library,
                         spec = s.loras.joinToString(", ") { (n, w) ->
                             if (w == 1.0f) n else "$n@" + LoraSpec.number(w.toDouble())
                         },
@@ -1081,13 +1079,11 @@ private fun ModelCard(
                             savedNotes = com.abrah.nightmare.LoraNotes.write(loraDir, name, note)
                         },
                         onDelete = onDeleteLora,
-                        library = library,
                         nodeBase = com.abrah.nightmare.LoraLibrary.Base.of(family),
                         experimental = com.abrah.nightmare.LoraSources.Target.experimental(family),
                         // ⭐ Below 0 where the engine takes it (DiT families, GitHub #51).
                         allowNegative = family.dit,
                     )
-                    } // MaterialTheme — the workbench's palette
                 }
             }
         }
