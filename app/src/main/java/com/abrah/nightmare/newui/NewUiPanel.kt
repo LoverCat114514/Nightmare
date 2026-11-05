@@ -615,6 +615,58 @@ private fun modelLabel(): String =
 // palette and shapes as local tokens (the user: the Compose port read nothing
 // like the HTML). Light-only, exactly like the HTML (it pins color-scheme too).
 // The app theme is untouched: these live inside the newui tree only.
+/**
+ * ⭐⭐⭐ (2026-11-05, twelfth round) The workbench's colours AS a Material scheme,
+ * so the Default UI's own sheet can be drawn in the HTML's palette without
+ * touching a line of it (the user: "主要是风格，功能不要变").
+ *
+ * Every colour the canvas [com.abrah.nightmare.canvas.LoraPicker] reads comes
+ * from a role below — the violet accent on the checkbox, the slider and the
+ * Done button (`--pri`), the white card (`--card`), the hairline (`--line`),
+ * the field stroke (`--fld`), the ink text (`--txt`) and the grey hints
+ * (`--sub`). Overriding the roles is the whole of the restyle.
+ *
+ * ⚠ `surfaceContainerHigh` is what an [androidx.compose.material3.AlertDialog]
+ * paints its own card with — left unset it stays the app's near-black in dark
+ * mode, and the sheet would be dark in a light workbench.
+ */
+private fun nmScheme(dark: Boolean): androidx.compose.material3.ColorScheme {
+    val base = if (dark) androidx.compose.material3.darkColorScheme()
+               else androidx.compose.material3.lightColorScheme()
+    return base.copy(
+        primary = Nm.pri,
+        onPrimary = Color.White,
+        primaryContainer = Nm.priSoft,
+        onPrimaryContainer = Nm.priD,
+        secondary = Nm.priD,
+        onSecondary = Color.White,
+        secondaryContainer = Nm.priSoft,
+        onSecondaryContainer = Nm.priD,
+        tertiary = Nm.pri,
+        tertiaryContainer = Nm.priSoft,
+        onTertiaryContainer = Nm.priD,
+        background = Nm.bg,
+        onBackground = Nm.ink,
+        surface = Nm.card,
+        onSurface = Nm.ink,
+        surfaceVariant = Nm.soft2,
+        onSurfaceVariant = Nm.sub,
+        surfaceContainerHigh = Nm.card,
+        surfaceContainerHighest = Nm.soft2,
+        outline = Nm.fld,
+        outlineVariant = Nm.line,
+    )
+}
+
+/** The sheet's own corner: the HTML's 20px on the card, 10 on a field. */
+private val NmSheetShapes = androidx.compose.material3.Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(14.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(24.dp),
+)
+
 private object Nm {
     val bg = Color(0xFFF2F0F7)       // --bg, the lavender-grey page
     val card = Color(0xFFFFFFFF)     // --card
@@ -1001,6 +1053,14 @@ private fun ModelCard(
                 // every chosen LoRA missing (the inspector's own rule).
                 if (installed != null && notesRead != null) {
                     val loraNotes = savedNotes ?: notesRead
+                    // ⭐⭐⭐ (2026-11-05, twelfth round) The SAME sheet, in the
+                    // workbench's palette: one MaterialTheme override restyles the
+                    // violet accent, the white card, the hairline and the ink text.
+                    // ⚠ Nothing else changes — every callback below is untouched.
+                    androidx.compose.material3.MaterialTheme(
+                        colorScheme = nmScheme(androidx.compose.foundation.isSystemInDarkTheme()),
+                        shapes = NmSheetShapes,
+                    ) {
                     LoraPicker(
                         installed = installed,
                         spec = s.loras.joinToString(", ") { (n, w) ->
@@ -1027,6 +1087,7 @@ private fun ModelCard(
                         // ⭐ Below 0 where the engine takes it (DiT families, GitHub #51).
                         allowNegative = family.dit,
                     )
+                    } // MaterialTheme — the workbench's palette
                 }
             }
         }
