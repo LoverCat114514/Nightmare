@@ -169,6 +169,7 @@ private fun MenuCapsule(
         },
         label = "settingsMenuCapsule$index",
     )
+    val interaction = remember { MutableInteractionSource() }
     // ⭐⭐⭐ The SURFACE, sized to the label — the bar's own glass (a translucent
     // `surfaceContainer` pill with a faint outline), not a big hand-rolled block.
     // This is the reference the user pointed at (2026-11-05): slim floating capsules.
@@ -185,10 +186,16 @@ private fun MenuCapsule(
         ),
         modifier = Modifier
             .onGloballyPositioned { coords.value = it }
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = { coords.value?.let(onTap) },
+            // ⚠⚠ Clickable ONLY while open: an alpha-0 capsule is invisible but
+            // STILL hit-testable, and the closed menu's capsules sat over the
+            // canvas eating every tap and drag that started under them — the
+            // user's frozen page (2026-11-05). Closed = INERT, taps pass through.
+            .then(
+                if (open) Modifier.clickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = { coords.value?.let(onTap) },
+                ) else Modifier,
             )
             .graphicsLayer {
                 alpha = p
@@ -305,6 +312,10 @@ internal fun SettingsCardSheet(
                 )
             }
         }
+        // ⚠⚠ Measured, never composed: the dialog's insets never reach Compose
+        // ([PullDownSheet]'s measurement) — a `navigationBarsPadding()` here
+        // padded ZERO and the bar sank under the nav bar (the user, 2026-11-05).
+        val bottomPad = bottomInset(window)
         Box(Modifier.fillMaxSize()) {
             // ⭐ A tap beside the card closes it — back to the canvas.
             Box(
@@ -313,13 +324,10 @@ internal fun SettingsCardSheet(
                     .background(Color.Black.copy(alpha = 0.34f * p.value))
                     .pointerInput(Unit) { detectTapGestures { onDismiss() } },
             )
-            // ⚠ No contentAlignment: the card TOP-aligns (`align` on the Surface),
-            // so its top edge is stable and the anchor's Y lands INSIDE it.
             Box(
                 Modifier
                     .fillMaxSize()
-                    .navigationBarsPadding()
-                    .padding(start = 16.dp, end = 16.dp, bottom = BOTTOM_BAR_RESERVE + 8.dp),
+                    .padding(start = 16.dp, end = 16.dp, bottom = bottomPad + BOTTOM_BAR_RESERVE + 8.dp),
             ) {
                 Surface(
                     shape = RoundedCornerShape(20.dp),
@@ -331,29 +339,32 @@ internal fun SettingsCardSheet(
                         MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                     ),
                     modifier = Modifier
-                        // ⭐ Top-end: the card hangs at the capsule row's height and
-                        // grows LEFT out of the tapped capsule.
-                        .align(Alignment.TopEnd)
+                        // ⭐ BOTTOM-centre (the user, 2026-11-05: the card belongs at
+                        // the bottom, per their mock) — and it still unfolds LEFT out
+                        // of the tapped capsule: the origin rides the card's RIGHT
+                        // edge at the capsule's height projected into the card.
+                        .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        // ⚠ A smaller share than before (the user, 2026-11-05: the
-                        // card was too big) — the canvas stays visible around it.
                         .fillMaxHeight(0.62f)
                         .graphicsLayer {
                             val v = p.value
                             alpha = v
-                            // ⭐ The unfold: LEFT out of the tapped capsule — X leads
-                            // (24 dp), Y follows lightly (10 dp); the origin rides the
-                            // capsule's height on the card's RIGHT edge.
+                            // The capsule's height within THIS card: the card is the
+                            // bottom 62 % of the area the anchor is a fraction of.
+                            val oy = ((anchorY - 0.38f) / 0.62f).coerceIn(0.15f, 0.9f)
+                            // ⭐ The unfold: LEFT out of the capsule — X leads (24 dp),
+                            // Y follows lightly (10 dp).
                             translationX = (1f - v) * 24.dp.toPx()
                             translationY = (1f - v) * 10.dp.toPx()
                             scaleX = 0.88f + 0.12f * v
                             scaleY = 0.94f + 0.06f * v
-                            transformOrigin = TransformOrigin(1f, anchorY.coerceIn(0f, 1f))
+                            transformOrigin = TransformOrigin(1f, oy)
                         },
                 ) { content() }
             }
-            // ⭐ The bar rides INSIDE the card's window, so navigation stays live.
-            Box(Modifier.fillMaxSize()) { overlay() }
+            // ⭐ The bar rides INSIDE the card's window, padded by the SAME measured
+            // inset as [PullDownSheet]'s overlay — Compose's own insets read 0 here.
+            Column(Modifier.padding(bottom = bottomPad)) { overlay() }
         }
     }
 }

@@ -300,7 +300,7 @@ fun PullDownSheet(
  * insets and CONSUMES them, so no layout under the decor pads a second time.
  */
 @Composable
-private fun bottomInset(window: android.view.Window?): androidx.compose.ui.unit.Dp {
+internal fun bottomInset(window: android.view.Window?): androidx.compose.ui.unit.Dp {
     val density = LocalDensity.current
     var px by remember { mutableStateOf(0) }
     androidx.compose.runtime.DisposableEffect(window) {
