@@ -575,7 +575,6 @@ fun HarnessScreen(
             // NEWUI; the Results entry moved into the workbench's source row.
             newUiContent = {
                 com.abrah.nightmare.newui.NewUiScreen(
-                    onResults = { vm.setResultsVisible(true) },
                     // ⭐ (2026-11-05, eleventh round) The LoRA sheet's ⋮ and browse —
                     // the very actions the Default UI's inspector binds (lines above).
                     onBrowseLoras = vm::openLoraBrowser,

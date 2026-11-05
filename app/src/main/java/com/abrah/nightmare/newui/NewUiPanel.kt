@@ -399,7 +399,6 @@ private fun saveShot(context: Context, shot: Shot) {
  */
 @Composable
 fun NewUiScreen(
-    onResults: () -> Unit = {},
     // ⭐ (2026-11-05, eleventh round) The LoRA sheet's ⋮ (delete) and browse
     // entries, threaded from MainActivity's view model.
     onBrowseLoras: ((com.abrah.nightmare.LoraSources.Target) -> Unit)? = null,
@@ -524,7 +523,6 @@ fun NewUiScreen(
                 srcName = name
             },
             onSave = { LAST_SHOT.get()?.let { saveShot(ctx, it) } },
-            onResults = onResults,
             // ⭐ (2026-11-05, ninth round, third re-marking) The run block's own
             // inputs: the elapsed time and model, and the tap that starts a render.
             msLine = msLine.value,
@@ -737,9 +735,8 @@ private fun ResultCard(
     statusTxt: String,
     onPickSrc: (Uri?, String) -> Unit,
     onSave: () -> Unit,
-    // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar's Results entry
-    // lives in this card's source row now.
-    onResults: () -> Unit,
+    // ⚠ (2026-11-05, fourteenth round) No Results entry here any more: the
+    // bottom nav's own tab is the one door (the user's image-1 arrow).
     // ⭐⭐ (2026-11-05, ninth round, third re-marking) The run block is back at
     // the card's foot (the user's image-2 arrow): the time/model strip above,
     // the full-width Generate below — the shipped workbench's own shape.
@@ -831,16 +828,9 @@ private fun ResultCard(
                 if (srcName.isNotBlank()) {
                     TextButton(onClick = { onPickSrc(null, "") }) { Text("✕") }
                 }
-                // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar's only
-                // survivor — the Results entry — landed here, the row's right
-                // end (the user's image-2 arrow), at icon-button size.
-                IconButton(onClick = onResults) {
-                    Icon(
-                        com.abrah.nightmare.ui.ResultsIcon,
-                        contentDescription = stringResource(R.string.nav_results),
-                        tint = Nm.sub,
-                    )
-                }
+                // ⭐⭐ (2026-11-05, fourteenth round) The Results icon is GONE
+                // from here: the bottom nav already carries it, and two doors to
+                // one room is one door too many (the user's image-1 arrow).
             }
             val hist = SESSION.toList()
             if (hist.isNotEmpty()) {
