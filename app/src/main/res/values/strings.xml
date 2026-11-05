@@ -1465,6 +1465,9 @@
     <string name="newui_src_empty">none loaded</string>
     <string name="newui_choose">Choose</string>
     <string name="newui_loras_hint">Adapters stacked on this checkpoint</string>
+    <string name="newui_lora_pick_hint">Appended to the prompt as &lt;lora:name:strength&gt;; strength 0.2-1.5. The list is the same one Models → LoRA shows.</string>
+    <string name="newui_lora_filter">Filter…</string>
+    <string name="newui_lora_empty">No LoRA in the app yet — import one on Models → LoRA, then reopen this page</string>
     <string name="newui_size_hint">Snapped to the nearest multiple of 64 on run; very large totals may be tiled or refused</string>
     <string name="newui_model">Model %1$s</string>
 </resources>

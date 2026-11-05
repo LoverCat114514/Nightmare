@@ -54,6 +54,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -99,6 +101,8 @@ import com.abrah.nightmare.api.ApiCore
 import com.abrah.nightmare.api.ApiError
 import com.abrah.nightmare.api.RunRequest
 import com.abrah.nightmare.canvas.MossCanvasActivity
+import com.abrah.nightmare.canvas.rememberOffMain
+import com.abrah.nightmare.LoraSpec
 import com.abrah.nightmare.ui.BOTTOM_BAR_RESERVE
 import java.io.File
 import java.util.concurrent.Executors
@@ -116,6 +120,15 @@ import androidx.compose.runtime.mutableIntStateOf
 import com.abrah.nightmare.BackendProcess
 import com.abrah.nightmare.ModelSpec
 import com.abrah.nightmare.Res
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.text.TextStyle
+import java.util.Locale
+import androidx.compose.ui.text.style.TextAlign
 
 
 /** Live progress of the executor's run, if any (step, total). */
@@ -126,6 +139,20 @@ private val RUN_LOG = java.util.concurrent.atomic.AtomicReference<String?>(null)
 
 /** Set when the person asks to cancel; the run thread calls [ApiCore.cancel] on it. */
 @Volatile private var RUN_CANCEL = false
+
+/**
+ * ⭐ (2026-11-05, ninth round, revised) The top-bar Run bridge — the Run button
+ * lives in CanvasScreen's TopBar now, but the workbench's run action needs the
+ * screen's local states (busy, prompts, source...). [NewUiScreen] publishes the
+ * tap here on every recomposition and hands the bridge's own busy state to its
+ * run loop, so one flag flips the button in both places.
+ */
+object NewUiRun {
+    /** Shared busy flag — the same instance the screen's run loop flips. */
+    val busy: androidx.compose.runtime.MutableState<Boolean> = androidx.compose.runtime.mutableStateOf(false)
+    /** The screen's generate/cancel tap; null before the first NEWUI composition. */
+    var onTap: (() -> Unit)? = null
+}
 
 /** The [ApiCore] for the NEWUI view. Built once; holder "newui" so RunLock scopes it. */
 private fun core(ctx: Context): ApiCore = CoreHolder.get(ctx)
@@ -168,6 +195,7 @@ private class WbState {
     // The post-processing block, the HTML page's S.pUps/pFace/pColor/adj*.
     var autosave: Boolean = true
     var pUps: Boolean = false
+    var pUps2: Boolean = false // the More-options x2, per run
     // ⭐ (2026-11-05, eighth round) Wired for real: the flags ride the request as
     // fix_faces/fix_hands knobs — the engine re-draws each found part in-render.
     var pFace: Boolean = false
@@ -220,6 +248,7 @@ private fun loadState(ctx: Context): WbState {
         mode = p.getString("mode", "txt2img") ?: "txt2img"
         autosave = p.getBoolean("autosave", true)
         pUps = p.getBoolean("pUps", false)
+        pUps2 = p.getBoolean("pUps2", false)
         pFace = p.getBoolean("pFace", false)
         pColor = p.getBoolean("pColor", false)
         adjBr = p.getInt("adjBr", 0)
@@ -248,6 +277,7 @@ private fun saveState(ctx: Context, s: WbState) {
         .putString("mode", s.mode)
         .putBoolean("autosave", s.autosave)
         .putBoolean("pUps", s.pUps)
+        .putBoolean("pUps2", s.pUps2)
         .putBoolean("pFace", s.pFace)
         .putBoolean("pColor", s.pColor)
         .putInt("adjBr", s.adjBr)
@@ -368,7 +398,7 @@ private fun saveShot(context: Context, shot: Shot) {
  * screen flips [RUN_BUSY] and polls [RUN_PROGRESS]/[RUN_LOG].
  */
 @Composable
-fun NewUiScreen() {
+fun NewUiScreen(onResults: () -> Unit = {}) {
     val ctx = LocalContext.current
     // The checkpoint display and the request read ONE source: the modelId state
     // (SelectedModel is @Volatile but no state signal — a plain read here would
@@ -386,7 +416,9 @@ fun NewUiScreen() {
     }
     var positive by remember { mutableStateOf("") }
     var negative by remember { mutableStateOf("") }
-    val busy = remember { mutableStateOf(false) }
+    // ⭐ (2026-11-05, ninth round, revised) The busy flag is the bridge's own
+    // state: the top bar's Run reads the same instance, one render flips both.
+    val busy = NewUiRun.busy
     val progTxt = remember { mutableStateOf("") }
     val progFrac = remember { mutableStateOf<Float?>(null) }
     val statusLine = remember { mutableStateOf("") }
@@ -400,6 +432,15 @@ fun NewUiScreen() {
     // Same shape as [modelId] above; the ModeCard writes BOTH, and buildRequest
     // keeps reading [s.mode].
     var modeState by remember { mutableStateOf(s.mode) }
+    // ⭐ (2026-11-05, ninth round, revised) Publish the run action to the bridge
+    // on every recomposition — the prompt/source states captured here are the
+    // fresh ones; leaving the view unpublishes so a stale tap can't fire.
+    androidx.compose.runtime.SideEffect {
+        NewUiRun.onTap = { onTapGenerate(ctx, s, positive, negative, srcDataUrl, busy, progTxt, progFrac, statusLine, msLine) }
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { NewUiRun.onTap = null }
+    }
     // The global follows the workbench's restored pick (symmetric with the
     // picker's double write), so the engine and the Default UI agree.
     LaunchedEffect(Unit) {
@@ -417,6 +458,25 @@ fun NewUiScreen() {
     // The Default UI's APPLY NOW: the tool re-renders the displayed shot from its
     // ORIGINAL file (no compounding), on [RUN_EX]; postVer redraws the frame.
     val postVer = remember { mutableIntStateOf(0) }
+    // ⭐ (2026-11-05, ninth round) LoRA import from the workbench's own picker —
+    // the same _loras folder the Default UI's picker fills, copied off the main
+    // thread. [loraEpoch] re-keys the picker's file scan, so the file a person
+    // just picked shows up without leaving the card.
+    var loraEpoch by remember { mutableIntStateOf(0) }
+    val loraImport = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val name = queryDisplayName(ctx, uri) ?: "lora-" + System.currentTimeMillis() + ".safetensors"
+            RUN_EX.execute {
+                try {
+                    val dst = java.io.File(BackendProcess.lorasDir(ctx), name)
+                    ctx.contentResolver.openInputStream(uri)?.use { inp ->
+                        dst.outputStream().use { inp.copyTo(it) }
+                    }
+                } catch (_: Exception) {}
+            }
+            loraEpoch++
+        }
+    }
     val applyPost: (Int) -> Unit = { tool ->
         val cur = LAST_SHOT.get()
         if (cur != null) {
@@ -440,17 +500,32 @@ fun NewUiScreen() {
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp).padding(top = 8.dp, bottom = BOTTOM_BAR_RESERVE + 12.dp),
+            // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar is gone:
+            // the host leaves the very top to this page, so the page keeps one
+            // module gap (12dp) at its head — the spacing every card keeps.
+            .padding(horizontal = 16.dp).padding(top = 12.dp, bottom = BOTTOM_BAR_RESERVE + 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // ── Card 1: the result ────────────────────────────────────────────
+        // ⭐ (2026-11-05, ninth round, revised) The run head is in the top bar
+        // now (the brand's old spot); the card keeps status + save icon.
         ResultCard(
             ctx, busy.value, progTxt.value, progFrac.value, srcName, postVer.intValue,
             mode = modeState,
+            statusTxt = statusLine.value.ifBlank { stringResource(R.string.newui_ready) },
             onPickSrc = { uri, name ->
                 srcDataUrl = uri?.let { uriToDataUrl(ctx, it) }
                 srcName = name
             },
+            onSave = { LAST_SHOT.get()?.let { saveShot(ctx, it) } },
+            onResults = onResults,
+            // ⭐ (2026-11-05, ninth round, third re-marking) The run block's own
+            // inputs: the elapsed time and model, and the tap that starts a render.
+            msLine = msLine.value,
+            modelLbl = modelLabel(),
+            runLabel = if (busy.value) stringResource(R.string.cancel_run)
+                       else stringResource(R.string.newui_generate),
+            onRun = { onTapGenerate(ctx, s, positive, negative, srcDataUrl, busy, progTxt, progFrac, statusLine, msLine) },
         )
 
         // ── Card 2: the mode ──────────────────────────────────────────────
@@ -481,7 +556,15 @@ fun NewUiScreen() {
         }
 
         // ── Card 4: the model ─────────────────────────────────────────────
-        ModelCard(ctx, s, modelId, onPicked = { id -> modelId = id; s.modelId = id; modelVer++ })
+        ModelCard(
+            ctx, s,
+            modelId = modelId,
+            family = ModelCatalog.byId(modelId)?.family ?: SelectedModel.spec.family,
+            loraEpoch = loraEpoch,
+            onPicked = { id -> modelId = id; s.modelId = id; modelVer++ },
+            onLorasChanged = { modelVer++ },
+            onImportLora = { loraImport.launch(arrayOf("application/octet-stream", "*/*")) },
+        )
 
         // ── Card 5: the parameters ────────────────────────────────────────
         ParamsCard(
@@ -491,35 +574,8 @@ fun NewUiScreen() {
             onApply = { applyPost(it) },
         )
 
-        // ── The footer line: time · model, then the GENERATE button, then the
-        // status — the HTML footer's three rows, padded above the nav pill.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "⏱ ${msLine.value}",
-                style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                stringResource(R.string.newui_model, modelLabel()),
-                style = MaterialTheme.typography.labelMedium,
-            )
-        }
-        val runLabel = when {
-            busy.value -> stringResource(R.string.cancel_run)
-            else -> stringResource(R.string.newui_generate)
-        }
-        Button(
-            onClick = { onTapGenerate(ctx, s, positive, negative, srcDataUrl, busy, progTxt, progFrac, statusLine, msLine) },
-            enabled = true,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Nm.pri, contentColor = Color.White),
-        ) { Text(runLabel, fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium) }
-        Text(
-            statusLine.value.ifBlank { stringResource(R.string.newui_ready) },
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        // ⭐ (2026-11-05, ninth round) The footer (time · model · GENERATE ·
+        // status) moved INTO the result card's head — the user's items 5-6.
     }
 
     // The progress + result poll while the engine is on (the run thread cannot
@@ -612,10 +668,34 @@ private fun ResultCard(
     srcName: String,
     ver: Int,
     mode: String,
+    // ⭐ (2026-11-05, ninth round, revised) The status line stays — it answers
+    // the top-bar Run, which took the brand's spot; the run head itself left
+    // the card (the user's re-marking). Save is now the top-bar icon, so the
+    // card takes [onSave].
+    statusTxt: String,
     onPickSrc: (Uri?, String) -> Unit,
+    onSave: () -> Unit,
+    // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar's Results entry
+    // lives in this card's source row now.
+    onResults: () -> Unit,
+    // ⭐⭐ (2026-11-05, ninth round, third re-marking) The run block is back at
+    // the card's foot (the user's image-2 arrow): the time/model strip above,
+    // the full-width Generate below — the shipped workbench's own shape.
+    msLine: String,
+    modelLbl: String,
+    runLabel: String,
+    onRun: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth().border(1.dp, Nm.line, RoundedCornerShape(16.dp)), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Nm.card), elevation = CardDefaults.cardElevation(0.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // ⭐ (2026-11-05, ninth round, revised) The run head is gone from the
+            // card — the Run lives in the top bar now (the brand's old spot; the
+            // user's re-marking). The status stays at the head to answer it.
+            Text(
+                statusTxt,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Box(
                 Modifier.fillMaxWidth().aspectRatio(1f)
                     .clip(RoundedCornerShape(14.dp))
@@ -661,9 +741,16 @@ private fun ResultCard(
                     }
                 }
                 Spacer(Modifier.weight(1f))
+                // ⭐ (2026-11-05, ninth round, revised) The top bar's save icon
+                // lives here now — the row's right end, where the Save button
+                // was — at icon-button size to fit the row (the user's re-marking).
                 val have = LAST_SHOT.get() != null
-                OutlinedButton(onClick = { LAST_SHOT.get()?.let { saveShot(ctx, it) } }, enabled = have) {
-                    Text(stringResource(R.string.save))
+                IconButton(onClick = onSave, enabled = have) {
+                    Icon(
+                        com.abrah.nightmare.ui.SaveIcon,
+                        contentDescription = stringResource(R.string.save),
+                        tint = if (have) Nm.sub else Nm.sub.copy(alpha = 0.4f),
+                    )
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -682,6 +769,16 @@ private fun ResultCard(
                 if (srcName.isNotBlank()) {
                     TextButton(onClick = { onPickSrc(null, "") }) { Text("✕") }
                 }
+                // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar's only
+                // survivor — the Results entry — landed here, the row's right
+                // end (the user's image-2 arrow), at icon-button size.
+                IconButton(onClick = onResults) {
+                    Icon(
+                        com.abrah.nightmare.ui.ResultsIcon,
+                        contentDescription = stringResource(R.string.nav_results),
+                        tint = Nm.sub,
+                    )
+                }
             }
             val hist = SESSION.toList()
             if (hist.isNotEmpty()) {
@@ -694,6 +791,44 @@ private fun ResultCard(
                         )
                     }
                 }
+            }
+            // ⭐⭐ (2026-11-05, ninth round, third re-marking) The run block, at
+            // the card's foot (the user's image-2 arrow) and in the shipped
+            // workbench's shape (their image 1): the tinted time/model strip on
+            // top, the full-width Generate under it. Busy swaps the label for
+            // Cancel — the tap runs through [onTapGenerate]'s own guard.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Nm.soft2)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "⏱ $msLine",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Nm.sub,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    stringResource(R.string.newui_model, modelLbl),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Nm.sub,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Button(
+                onClick = onRun,
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Nm.pri, contentColor = Color.White),
+            ) {
+                Text(
+                    if (busy) runLabel else "▶  " + runLabel,
+                    fontWeight = FontWeight.ExtraBold,
+                    style = MaterialTheme.typography.titleMedium,
+                )
             }
         }
     }
@@ -781,7 +916,16 @@ private fun ModeCard(
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
 )
 @Composable
-private fun ModelCard(ctx: Context, s: WbState, modelId: String, onPicked: (String) -> Unit) {
+private fun ModelCard(
+    ctx: Context,
+    s: WbState,
+    modelId: String,
+    family: com.abrah.nightmare.Family,
+    loraEpoch: Int,
+    onPicked: (String) -> Unit,
+    onLorasChanged: () -> Unit,
+    onImportLora: (() -> Unit)?,
+) {
     val installed = remember { ModelCatalog.installed(ctx) }
     Card(Modifier.fillMaxWidth().border(1.dp, Nm.line, RoundedCornerShape(16.dp)), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Nm.card), elevation = CardDefaults.cardElevation(0.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -805,74 +949,58 @@ private fun ModelCard(ctx: Context, s: WbState, modelId: String, onPicked: (Stri
                 }
                 TextButton(onClick = { picking = true }) { Text(stringResource(R.string.newui_choose)) }
             }
-            if (ver >= 0 && s.loras.isNotEmpty()) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    s.loras.forEachIndexed { i, (name, w) ->
-                        Row(
-                            Modifier.clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.secondaryContainer)
-                                .clickable { s.loras.removeAt(i); ver++ }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                name.removeSuffix(".safetensors"),
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                String.format("%.2f", w),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            )
-                        }
-                    }
-                }
+            // ⭐⭐ (2026-11-05) The HTML's `#loraList` — the spec the user named:
+            // one row per chosen LoRA, a read-only name field, a 0.2-1.5 slider,
+            // the weight in violet, ✕. NOT the canvas chips with no weight.
+            val loraNeg = family.dit
+            if (ver >= 0) s.loras.forEachIndexed { li, (name, w) ->
+                LoraCardRow(
+                    name = name,
+                    weight = w,
+                    allowNegative = loraNeg,
+                    onWeight = { nw ->
+                        if (li < s.loras.size) s.loras[li] = name to nw
+                        ver++
+                        onLorasChanged()
+                    },
+                    onRemove = { s.loras.removeAt(li); ver++; onLorasChanged() },
+                )
             }
             if (picking) {
-                AlertDialog(
-                    onDismissRequest = { picking = false },
-                    confirmButton = {
-                        TextButton(onClick = { picking = false }) { Text(stringResource(R.string.ok)) }
-                    },
-                    title = { Text(stringResource(R.string.loras_title)) },
-                    text = {
-                        Column {
-                            val files = BackendProcess.lorasDir(ctx)
-                                .listFiles { f -> f.name.endsWith(".safetensors") }
-                                ?.map { it.name }?.sorted().orEmpty()
-                            if (files.isEmpty()) {
-                                Text(stringResource(R.string.newui_pick_unavailable), style = MaterialTheme.typography.bodyMedium)
+                // ⚠ Off the main thread, re-keyed on [loraEpoch]: the file a person
+                // just imported shows up without leaving the card.
+                val files = rememberOffMain("newui-loras", "lora files", loraEpoch) {
+                    BackendProcess.lorasDir(ctx).listFiles { f ->
+                        f.isFile && f.extension.equals("safetensors", ignoreCase = true)
+                    }.orEmpty().map { it.name }.sortedBy { it.lowercase() }
+                }
+                if (files != null) {
+                    // ⭐⭐ (2026-11-05) The HTML's own dialog (选择 LoRA): the tag
+                    // hint, a filter box, checkbox + slider + weight per file,
+                    // Done. Live writes, like the HTML's save().
+                    NewUiLoraPicker(
+                        installed = files,
+                        chosen = s.loras.toList(),
+                        allowNegative = loraNeg,
+                        onToggle = { n, on ->
+                            val had = s.loras.firstOrNull { it.first == n }
+                            if (on) {
+                                if (had == null) s.loras.add(n to 0.8f)
+                            } else {
+                                s.loras.removeAll { it.first == n }
                             }
-                            for (name in files) {
-                                val on = s.loras.any { it.first == name }
-                                Row(
-                                    Modifier.fillMaxWidth().clickable {
-                                        if (on) s.loras.removeAll { it.first == name }
-                                        else s.loras.add(name to 0.8f)
-                                        ver++
-                                    }.padding(vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        name.removeSuffix(".safetensors"),
-                                        Modifier.weight(1f),
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                        color = if (on) MaterialTheme.colorScheme.primary
-                                                else MaterialTheme.colorScheme.onSurface,
-                                    )
-                                    if (on) {
-                                        Text(
-                                            String.format("%.2f", s.loras.first { it.first == name }.second),
-                                            style = MaterialTheme.typography.labelMedium,
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    },
-                )
+                            ver++
+                            onLorasChanged()
+                        },
+                        onWeight = { n, nw ->
+                            val at = s.loras.indexOfFirst { it.first == n }
+                            if (at >= 0) s.loras[at] = n to nw
+                            ver++
+                            onLorasChanged()
+                        },
+                        onDismiss = { picking = false },
+                    )
+                }
             }
         }
     }
@@ -1156,14 +1284,14 @@ private fun ParamsCard(
             }
             AnimatedVisibility(moreOpen) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PostTool(
+                    // ⭐ (2026-11-05, ninth round) A per-run switch like the face/
+                    // hand fixes, not a one-shot button (the user's item 1).
+                    SwitchRow(
                         stringResource(R.string.knob_enlarge),
                         stringResource(R.string.newui_m_ups_hint),
-                        on = false,
-                        onFlag = { },
-                        withSwitch = false,
-                        actionLabel = stringResource(R.string.post_upscale_now),
-                    ) { onApply(3) }
+                        on = s.pUps2,
+                        onFlag = { s.pUps2 = it; onPicked() },
+                    )
                     SwitchRow(
                         stringResource(R.string.knob_fix_faces),
                         stringResource(R.string.newui_p_face_hint),
@@ -1179,7 +1307,7 @@ private fun ParamsCard(
                     TextButton(onClick = {
                         s.steps = 29; s.cfg = 5.0f
                         s.adjBr = 0; s.adjCo = 0; s.adjSa = 0; s.warm = 0
-                        s.pUps = false; s.pColor = false; s.adjOn = false
+                        s.pUps = false; s.pUps2 = false; s.pColor = false; s.adjOn = false
                         s.pFace = false; s.pHands = false
                         ModelCatalog.schedulersFor(family).firstOrNull()?.let {
                             wire = it; s.scheduler = it; schedVer++
@@ -1209,7 +1337,11 @@ private fun PostTool(
     withSwitch: Boolean = true,
     onAction: () -> Unit,
 ) {
-    var onNow by remember(on) { mutableStateOf(on) }
+    // ⭐ (2026-11-05, ninth round) NOT keyed on [on]: a keyed remember re-runs
+    // only when the OUTSIDE value changes, so a flip here updated [on]'s source
+    // but kept the OLD local — the switch looked dead until the card was folded
+    // away and back (the user's item 2). Stateless: the flag IS the state.
+    var onNow by remember { mutableStateOf(on) }
     Column {
         Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Nm.ink)
         Text(
@@ -1428,9 +1560,16 @@ private fun onTapGenerate(
             var out = bmp
             if (s.pColor) out = autoColour(out)
             if (s.adjOn) out = applyAdjust(out, s)
+            // ⭐ (2026-11-05, ninth round) The upscale switches: the main row's
+            // x4 and the More-options x2 (now a per-run switch, the user). Both
+            // may be on — they stack; each hint says what it does.
             if (s.pUps) {
                 statusLine.value = "post-processing…"
                 out = android.graphics.Bitmap.createScaledBitmap(out, out.width * 4, out.height * 4, true)
+            }
+            if (s.pUps2) {
+                statusLine.value = "post-processing…"
+                out = android.graphics.Bitmap.createScaledBitmap(out, out.width * 2, out.height * 2, true)
             }
             val shot = Shot(out.asImageBitmap(), System.currentTimeMillis(), 0L, f)
             LAST_SHOT.set(shot)
@@ -1545,3 +1684,220 @@ private fun applyAdjust(src: android.graphics.Bitmap, s: WbState): android.graph
     return out
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ⭐⭐⭐ (2026-11-05) The workbench's own LoRA picker — a native copy of
+ * `nm-workbench.html`, NOT the canvas sheet (the user: "选择lora的ui要按照html
+ * 那样"). The HTML is the spec, down to its two shapes:
+ *
+ *  1. IN THE CARD — `#loraList .lr`: a read-only name field (1px #D9D4E8,
+ *     10dp radius), a 110px slider, the weight in violet at 38px, ✕.
+ *  2. THE DIALOG — `选择 LoRA` at 90vw: the `<lora:名:强度>` hint, a filter
+ *     box, then one row per INSTALLED file — name, checkbox, a slider that is
+ *     dead until the box is ticked, and the weight (or "—"). Done closes it.
+ *
+ * ⚠ The HTML's range is 0.2-1.5 step .05 — NOT the canvas sheet's 0.0-2.0.
+ * The one exception is a DiT family, which the engine takes below zero for
+ * (GitHub #51): [allowNegative] opens the floor to -1.5.
+ * ⚠ Writes LIVE: every tick and every slider move persists, as the HTML's
+ * save() does — backing out never means something different.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** The HTML's slider range: `min="0.2" max="1.5" step="0.05"`. */
+private const val LORA_LO = 0.2f
+private const val LORA_HI = 1.5f
+private const val LORA_LO_NEG = -1.5f
+private const val LORA_STEP = 0.05f
+
+/** `toFixed(2)` — the HTML always prints two places. */
+private fun loraTwo(v: Float): String = String.format(Locale.ROOT, "%.2f", v)
+
+/** The HTML lists bare names, not `x.safetensors`. */
+private fun loraBare(n: String): String = n.removeSuffix(".safetensors")
+
+/** The .05 step, snapped — the HTML's `step` attribute, not a tick mark. */
+private fun loraSnap(v: Float, lo: Float): Float {
+    val k = Math.round((v - lo) / LORA_STEP)
+    return (lo + k * LORA_STEP).coerceIn(lo, LORA_HI)
+}
+
+/** `#loraList .lr` — one chosen LoRA: name field, slider, weight, ✕. */
+@Composable
+private fun LoraCardRow(
+    name: String,
+    weight: Float,
+    allowNegative: Boolean,
+    onWeight: (Float) -> Unit,
+    onRemove: () -> Unit,
+) {
+    val lo = if (allowNegative) LORA_LO_NEG else LORA_LO
+    Row(
+        Modifier.fillMaxWidth().padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(10.dp))
+                .border(1.dp, Nm.fld, RoundedCornerShape(10.dp))
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+        ) {
+            Text(
+                loraBare(name),
+                style = TextStyle(fontSize = 14.sp, color = Nm.ink),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Slider(
+            value = weight.coerceIn(lo, LORA_HI),
+            onValueChange = { onWeight(loraSnap(it, lo)) },
+            valueRange = lo..LORA_HI,
+            modifier = Modifier.width(110.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = Nm.pri,
+                activeTrackColor = Nm.pri,
+                inactiveTrackColor = Nm.fld,
+            ),
+        )
+        Text(
+            loraTwo(weight),
+            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Nm.pri),
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(38.dp),
+        )
+        TextButton(onClick = onRemove, modifier = Modifier.size(width = 40.dp, height = 40.dp)) {
+            Text("✕", color = Nm.sub)
+        }
+    }
+}
+
+/** `选择 LoRA` — the HTML dialog: hint, filter, checkbox+slider rows, Done. */
+@Composable
+private fun NewUiLoraPicker(
+    installed: List<String>,
+    chosen: List<Pair<String, Float>>,
+    allowNegative: Boolean,
+    onToggle: (String, Boolean) -> Unit,
+    onWeight: (String, Float) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val lo = if (allowNegative) LORA_LO_NEG else LORA_LO
+    var q by remember { mutableStateOf("") }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            Modifier
+                .fillMaxWidth(0.9f)
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color.White)
+                .padding(18.dp),
+        ) {
+            Text(
+                stringResource(R.string.loras_title),
+                style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Nm.ink),
+            )
+            Text(
+                stringResource(R.string.newui_lora_pick_hint),
+                style = TextStyle(fontSize = 13.sp, color = Nm.sub),
+                modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
+            )
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .border(1.dp, Nm.fld, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                if (q.isEmpty()) {
+                    Text(
+                        stringResource(R.string.newui_lora_filter),
+                        style = TextStyle(fontSize = 15.sp, color = Nm.sub),
+                    )
+                }
+                BasicTextField(
+                    value = q,
+                    onValueChange = { q = it },
+                    textStyle = TextStyle(fontSize = 15.sp, color = Nm.ink),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            val kw = q.trim().lowercase(Locale.ROOT)
+            val shown = if (kw.isEmpty()) installed else installed.filter { it.lowercase(Locale.ROOT).contains(kw) }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 380.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 8.dp),
+            ) {
+                if (shown.isEmpty()) {
+                    Text(
+                        stringResource(R.string.newui_lora_empty),
+                        style = TextStyle(fontSize = 13.sp, color = Nm.sub, textAlign = TextAlign.Center),
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    )
+                }
+                shown.forEach { n ->
+                    val cur = chosen.firstOrNull { it.first == n }
+                    val on = cur != null
+                    val w = cur?.second ?: 0.8f
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            loraBare(n),
+                            style = TextStyle(fontSize = 14.sp, color = Nm.ink),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Checkbox(
+                            checked = on,
+                            onCheckedChange = { onToggle(n, it) },
+                            colors = CheckboxDefaults.colors(checkedColor = Nm.pri, uncheckedColor = Nm.fld),
+                        )
+                        Slider(
+                            value = w.coerceIn(lo, LORA_HI),
+                            onValueChange = { if (on) onWeight(n, loraSnap(it, lo)) },
+                            valueRange = lo..LORA_HI,
+                            enabled = on,
+                            modifier = Modifier.width(110.dp),
+                            colors = SliderDefaults.colors(
+                                thumbColor = Nm.pri,
+                                activeTrackColor = Nm.pri,
+                                inactiveTrackColor = Nm.fld,
+                                disabledThumbColor = Nm.fld,
+                                disabledActiveTrackColor = Nm.fld,
+                                disabledInactiveTrackColor = Nm.fld,
+                            ),
+                        )
+                        Text(
+                            if (on) loraTwo(w) else "—",
+                            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Nm.pri),
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.width(38.dp),
+                        )
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.End) {
+                // The HTML's `完成`: violet, white, 10dp radius, 800 weight.
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Nm.pri)
+                        .clickable { onDismiss() }
+                        .padding(horizontal = 20.dp, vertical = 9.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.crop_done),
+                        style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = Color.White),
+                    )
+                }
+            }
+        }
+    }
+}

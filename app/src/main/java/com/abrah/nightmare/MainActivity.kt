@@ -571,7 +571,11 @@ fun HarnessScreen(
             nodesVertical = vm.nodesVertical,
             hideChat = vm.hideChat,
             // [LOCAL-NEWUI 2026-11-05] the web workbench, mounted as the fourth view's body.
-            newUiContent = { com.abrah.nightmare.newui.NewUiScreen() },
+            // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar is gone on
+            // NEWUI; the Results entry moved into the workbench's source row.
+            newUiContent = { com.abrah.nightmare.newui.NewUiScreen(onResults = { vm.setResultsVisible(true) }) },
+            // [LOCAL-NEWUI 2026-11-05, ninth round] the workbench's flows entry.
+            onFlows = { vm.showView(com.abrah.nightmare.MainView.FLOWS) },
             // ⭐⭐ The Agent view — a full page below the top bar (the user's call, 2026-10-08: the
             // panel fought the keyboard and covered Run).
             agentContent = { m ->

@@ -150,6 +150,9 @@ fun CanvasScreen(
     onRun: () -> Unit,
     /** ⭐ Stop the run in flight. Null hides the affordance (previews, goldens). */
     onCancelRun: (() -> Unit)? = null,
+    /** ⭐ (2026-11-05, ninth round) NEWUI's flows entry — the top-bar icon on that
+     *  view (the user's item 4: the shipped flows were unreachable from newui). */
+    onFlows: () -> Unit = {},
     /** ⭐ Open the Batch sheet. See `BatchSheet.kt`. */
     onBatch: () -> Unit = {},
     /** ⭐ Which run of how many, while a sweep is going. Null when it is not. */
@@ -545,6 +548,7 @@ fun CanvasScreen(
             busy = busy,
             onRun = onRun,
             onCancelRun = onCancelRun,
+            onFlows = onFlows,
             hideChat = hideChat,
             modelLabel = modelLabel,
             mainView = toggleView ?: mainView,
@@ -658,16 +662,18 @@ fun CanvasScreen(
     // 默认ui重叠了"). This branch fills its whole slot and pads under the top bar;
     // the page content keeps only its own bottom reserve.
     if (mainView == com.abrah.nightmare.MainView.NEWUI) {
-        // ⭐⭐ (2026-11-05, fourth round) PAD-THEN-FILL: the padding comes BEFORE the
-        // background, so the fill starts under the top bar instead of covering it —
-        // the blank strip above (the user's image 5). Sibling order stays: the fill
-        // still covers the Default view behind.
+        // ⭐⭐ (2026-11-05, ninth round, re-re-marking) The top bar is gone on
+        // NEWUI, so the workbench fills from the very top: FILL-THEN-INSET —
+        // the page colour first (it must cover the Default view behind), then
+        // the status-bar inset plus one module gap (12dp), so the cards start
+        // lower with the same breathing room every card already keeps.
         Box(
             Modifier.fillMaxSize()
-                .padding(top = topPad)
                 // ⭐ (2026-11-05, seventh round) The workbench's own page colour
                 // (nm-workbench.html --bg), not the app theme's.
-                .background(Color(0xFFF2F0F7)),
+                .background(Color(0xFFF2F0F7))
+                .statusBarsPadding()
+                .padding(top = 12.dp),
         ) {
             newUiContent()
         }
@@ -1106,10 +1112,18 @@ private fun TopBar(
     busy: Boolean = false,
     onRun: () -> Unit = {},
     onCancelRun: (() -> Unit)? = null,
+    /** ⭐ (2026-11-05, ninth round) NEWUI's flows entry, where Run would sit. */
+    onFlows: () -> Unit = {},
     hideChat: Boolean = false,
     /** ⭐ The build, beside the name (the user, 2026-10-09: "show version number in main page"). */
     version: String = "",
 ) {
+    // ⭐⭐ (2026-11-05, ninth round, re-re-marking) On NEWUI the top bar is GONE
+    // entirely — run button, view pill, flows icon, all of it (the user: "将图一
+    // 的所有东西全都删了"). The one survivor, the Results icon, moved into the
+    // workbench's source row; the run button's new spot comes later. Nothing is
+    // measured, so [topBarPx] stays 0 and the page fills from the very top.
+    if (mainView == com.abrah.nightmare.MainView.NEWUI) return
     var explaining by remember { mutableStateOf(false) }
     Column(
         modifier
@@ -1173,9 +1187,19 @@ private fun TopBar(
             // floating bar had sunk UNDER this page's cards (an earlier sibling in the same Box),
             // while the top bar draws above everything. The model entry point is the bottom bar's
             // Models slot; [modelLabel] stays in the signature for previews/restores.
-            // [LOCAL-NEWUI 2026-11-05] The web workbench runs itself — its own generate
-            // button lives in the page, so the top bar keeps only the view pill there.
-            if (mainView != com.abrah.nightmare.MainView.NEWUI) {
+            // [LOCAL-NEWUI 2026-11-05] The web workbench runs itself — its generate
+            // button lives in the page's result card (round 9), and the freed room
+            // carries the FLOWS entry instead (the user's item 4: the shipped
+            // flows were unreachable from newui).
+            if (mainView == com.abrah.nightmare.MainView.NEWUI) {
+                IconButton(onClick = onFlows) {
+                    Icon(
+                        com.abrah.nightmare.ui.FlowsIcon,
+                        contentDescription = stringResource(R.string.nav_flows),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
                 RunButton(
                     busy = busy, onRun = onRun, onCancelRun = onCancelRun,
                     modifier = Modifier.weight(1f, fill = false).defaultMinSize(minWidth = RUN_WIDTH),
