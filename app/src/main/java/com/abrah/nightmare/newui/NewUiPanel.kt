@@ -399,7 +399,13 @@ private fun saveShot(context: Context, shot: Shot) {
  * screen flips [RUN_BUSY] and polls [RUN_PROGRESS]/[RUN_LOG].
  */
 @Composable
-fun NewUiScreen(onResults: () -> Unit = {}) {
+fun NewUiScreen(
+    onResults: () -> Unit = {},
+    // ⭐ (2026-11-05, eleventh round) The LoRA sheet's ⋮ (delete) and browse
+    // entries, threaded from MainActivity's view model.
+    onBrowseLoras: ((com.abrah.nightmare.LoraSources.Target) -> Unit)? = null,
+    onDeleteLora: ((String) -> Unit)? = null,
+) {
     val ctx = LocalContext.current
     // The checkpoint display and the request read ONE source: the modelId state
     // (SelectedModel is @Volatile but no state signal — a plain read here would
@@ -565,6 +571,8 @@ fun NewUiScreen(onResults: () -> Unit = {}) {
             onPicked = { id -> modelId = id; s.modelId = id; modelVer++ },
             onLorasChanged = { modelVer++ },
             onImportLora = { loraImport.launch(arrayOf("application/octet-stream", "*/*")) },
+            onBrowseLoras = onBrowseLoras,
+            onDeleteLora = onDeleteLora,
         )
 
         // ── Card 5: the parameters ────────────────────────────────────────
@@ -926,6 +934,10 @@ private fun ModelCard(
     onPicked: (String) -> Unit,
     onLorasChanged: () -> Unit,
     onImportLora: (() -> Unit)?,
+    // ⭐⭐ (2026-11-05, eleventh round) The sheet's ⋮ and browse entries — the
+    // same two the Default UI's node inspector hands its picker.
+    onBrowseLoras: ((com.abrah.nightmare.LoraSources.Target) -> Unit)? = null,
+    onDeleteLora: ((String) -> Unit)? = null,
 ) {
     val installed = remember { ModelCatalog.installed(ctx) }
     Card(Modifier.fillMaxWidth().border(1.dp, Nm.line, RoundedCornerShape(16.dp)), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Nm.card), elevation = CardDefaults.cardElevation(0.dp)) {
@@ -964,7 +976,31 @@ private fun ModelCard(
                         f.isFile && f.extension.equals("safetensors", ignoreCase = true)
                     }.orEmpty().map { it.name to it.length() }.sortedBy { it.first.lowercase() }
                 }
-                if (installed != null) {
+                // ⭐⭐ (2026-11-05, eleventh round) Each file's SIZE, DATE and BASE
+                // ([LoraLibrary]) — this is what draws the "Anima / 132 MB" line
+                // under every row of the Default UI's sheet (the user's image), and
+                // what feeds its base grouping. Headers only, cached, off the main
+                // thread — the same read the node inspector makes.
+                val library by androidx.compose.runtime.produceState<
+                    List<com.abrah.nightmare.LoraLibrary.Item>?>(null, loraEpoch) {
+                    value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.abrah.nightmare.LoraLibrary.list(
+                            BackendProcess.lorasDir(ctx),
+                            com.abrah.nightmare.LoraLibrary.baseOverrides(ctx),
+                        )
+                    }
+                }
+                // ⭐ The ⋮ per file ([LoraNotes]): read beside the files, written
+                // straight back on save. ⚠ Without these the ⋮ is not drawn at all.
+                val loraDir = BackendProcess.lorasDir(ctx)
+                val notesRead = rememberOffMain("newui-loras", "lora notes", loraEpoch) {
+                    com.abrah.nightmare.LoraNotes.read(loraDir)
+                }
+                var savedNotes by remember(loraEpoch) { mutableStateOf<Map<String, String>?>(null) }
+                // ⚠ Nothing until both land: a picker drawn on an EMPTY list marks
+                // every chosen LoRA missing (the inspector's own rule).
+                if (installed != null && notesRead != null) {
+                    val loraNotes = savedNotes ?: notesRead
                     LoraPicker(
                         installed = installed,
                         spec = s.loras.joinToString(", ") { (n, w) ->
@@ -977,7 +1013,17 @@ private fun ModelCard(
                         },
                         onDismiss = { picking = false },
                         onImport = onImportLora,
+                        // ⭐ Only where this family's LoRAs can be searched.
+                        onBrowse = com.abrah.nightmare.LoraSources.Target.of(family)
+                            ?.let { t -> onBrowseLoras?.let { cb -> { cb(t) } } },
+                        notes = loraNotes,
+                        onSaveNote = { name, note ->
+                            savedNotes = com.abrah.nightmare.LoraNotes.write(loraDir, name, note)
+                        },
+                        onDelete = onDeleteLora,
+                        library = library,
                         nodeBase = com.abrah.nightmare.LoraLibrary.Base.of(family),
+                        experimental = com.abrah.nightmare.LoraSources.Target.experimental(family),
                         // ⭐ Below 0 where the engine takes it (DiT families, GitHub #51).
                         allowNegative = family.dit,
                     )

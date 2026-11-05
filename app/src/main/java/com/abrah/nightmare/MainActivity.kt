@@ -573,7 +573,15 @@ fun HarnessScreen(
             // [LOCAL-NEWUI 2026-11-05] the web workbench, mounted as the fourth view's body.
             // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar is gone on
             // NEWUI; the Results entry moved into the workbench's source row.
-            newUiContent = { com.abrah.nightmare.newui.NewUiScreen(onResults = { vm.setResultsVisible(true) }) },
+            newUiContent = {
+                com.abrah.nightmare.newui.NewUiScreen(
+                    onResults = { vm.setResultsVisible(true) },
+                    // ⭐ (2026-11-05, eleventh round) The LoRA sheet's ⋮ and browse —
+                    // the very actions the Default UI's inspector binds (lines above).
+                    onBrowseLoras = vm::openLoraBrowser,
+                    onDeleteLora = vm::deleteLora,
+                )
+            },
             // [LOCAL-NEWUI 2026-11-05, ninth round] the workbench's flows entry.
             onFlows = { vm.showView(com.abrah.nightmare.MainView.FLOWS) },
             // ⭐⭐ The Agent view — a full page below the top bar (the user's call, 2026-10-08: the
