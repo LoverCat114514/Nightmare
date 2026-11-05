@@ -129,6 +129,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.TextStyle
 import java.util.Locale
 import androidx.compose.ui.text.style.TextAlign
+import com.abrah.nightmare.canvas.LoraPicker
 
 
 /** Live progress of the executor's run, if any (step, total). */
@@ -949,56 +950,36 @@ private fun ModelCard(
                 }
                 TextButton(onClick = { picking = true }) { Text(stringResource(R.string.newui_choose)) }
             }
-            // ⭐⭐ (2026-11-05) The HTML's `#loraList` — the spec the user named:
-            // one row per chosen LoRA, a read-only name field, a 0.2-1.5 slider,
-            // the weight in violet, ✕. NOT the canvas chips with no weight.
-            val loraNeg = family.dit
-            if (ver >= 0) s.loras.forEachIndexed { li, (name, w) ->
-                LoraCardRow(
-                    name = name,
-                    weight = w,
-                    allowNegative = loraNeg,
-                    onWeight = { nw ->
-                        if (li < s.loras.size) s.loras[li] = name to nw
-                        ver++
-                        onLorasChanged()
-                    },
-                    onRemove = { s.loras.removeAt(li); ver++; onLorasChanged() },
-                )
-            }
+            // ⭐⭐⭐ (2026-11-05, tenth round) The Default UI's OWN picker — the
+            // canvas sheet the node inspector opens ([LoraPicker]): the search
+            // field, the ⋮ notes, the import button, a slider per file, the
+            // family's base chip. This is the app's shipped design, not a
+            // redrawing of it (the user: "lora选择这块的ui按照默认ui的设计来吧").
             if (picking) {
-                // ⚠ Off the main thread, re-keyed on [loraEpoch]: the file a person
-                // just imported shows up without leaving the card.
-                val files = rememberOffMain("newui-loras", "lora files", loraEpoch) {
+                // ⚠ Off the main thread, re-keyed on [loraEpoch]: a file imported
+                // from the sheet shows up without leaving the card. Null until the
+                // scan lands — an empty list would mark every pick missing.
+                val installed = rememberOffMain("newui-loras", "lora files", loraEpoch) {
                     BackendProcess.lorasDir(ctx).listFiles { f ->
                         f.isFile && f.extension.equals("safetensors", ignoreCase = true)
-                    }.orEmpty().map { it.name }.sortedBy { it.lowercase() }
+                    }.orEmpty().map { it.name to it.length() }.sortedBy { it.first.lowercase() }
                 }
-                if (files != null) {
-                    // ⭐⭐ (2026-11-05) The HTML's own dialog (选择 LoRA): the tag
-                    // hint, a filter box, checkbox + slider + weight per file,
-                    // Done. Live writes, like the HTML's save().
-                    NewUiLoraPicker(
-                        installed = files,
-                        chosen = s.loras.toList(),
-                        allowNegative = loraNeg,
-                        onToggle = { n, on ->
-                            val had = s.loras.firstOrNull { it.first == n }
-                            if (on) {
-                                if (had == null) s.loras.add(n to 0.8f)
-                            } else {
-                                s.loras.removeAll { it.first == n }
-                            }
-                            ver++
-                            onLorasChanged()
+                if (installed != null) {
+                    LoraPicker(
+                        installed = installed,
+                        spec = s.loras.joinToString(", ") { (n, w) ->
+                            if (w == 1.0f) n else "$n@" + LoraSpec.number(w.toDouble())
                         },
-                        onWeight = { n, nw ->
-                            val at = s.loras.indexOfFirst { it.first == n }
-                            if (at >= 0) s.loras[at] = n to nw
+                        onSet = { txt ->
+                            s.loras = LoraSpec.parse(txt).map { it.name to it.strength.toFloat() }.toMutableList()
                             ver++
                             onLorasChanged()
                         },
                         onDismiss = { picking = false },
+                        onImport = onImportLora,
+                        nodeBase = com.abrah.nightmare.LoraLibrary.Base.of(family),
+                        // ⭐ Below 0 where the engine takes it (DiT families, GitHub #51).
+                        allowNegative = family.dit,
                     )
                 }
             }
@@ -1682,222 +1663,4 @@ private fun applyAdjust(src: android.graphics.Bitmap, s: WbState): android.graph
         android.graphics.Paint().apply { colorFilter = android.graphics.ColorMatrixColorFilter(m) },
     )
     return out
-}
-
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * ⭐⭐⭐ (2026-11-05) The workbench's own LoRA picker — a native copy of
- * `nm-workbench.html`, NOT the canvas sheet (the user: "选择lora的ui要按照html
- * 那样"). The HTML is the spec, down to its two shapes:
- *
- *  1. IN THE CARD — `#loraList .lr`: a read-only name field (1px #D9D4E8,
- *     10dp radius), a 110px slider, the weight in violet at 38px, ✕.
- *  2. THE DIALOG — `选择 LoRA` at 90vw: the `<lora:名:强度>` hint, a filter
- *     box, then one row per INSTALLED file — name, checkbox, a slider that is
- *     dead until the box is ticked, and the weight (or "—"). Done closes it.
- *
- * ⚠ The HTML's range is 0.2-1.5 step .05 — NOT the canvas sheet's 0.0-2.0.
- * The one exception is a DiT family, which the engine takes below zero for
- * (GitHub #51): [allowNegative] opens the floor to -1.5.
- * ⚠ Writes LIVE: every tick and every slider move persists, as the HTML's
- * save() does — backing out never means something different.
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-/** The HTML's slider range: `min="0.2" max="1.5" step="0.05"`. */
-private const val LORA_LO = 0.2f
-private const val LORA_HI = 1.5f
-private const val LORA_LO_NEG = -1.5f
-private const val LORA_STEP = 0.05f
-
-/** `toFixed(2)` — the HTML always prints two places. */
-private fun loraTwo(v: Float): String = String.format(Locale.ROOT, "%.2f", v)
-
-/** The HTML lists bare names, not `x.safetensors`. */
-private fun loraBare(n: String): String = n.removeSuffix(".safetensors")
-
-/** The .05 step, snapped — the HTML's `step` attribute, not a tick mark. */
-private fun loraSnap(v: Float, lo: Float): Float {
-    val k = Math.round((v - lo) / LORA_STEP)
-    return (lo + k * LORA_STEP).coerceIn(lo, LORA_HI)
-}
-
-/** `#loraList .lr` — one chosen LoRA: name field, slider, weight, ✕. */
-@Composable
-private fun LoraCardRow(
-    name: String,
-    weight: Float,
-    allowNegative: Boolean,
-    onWeight: (Float) -> Unit,
-    onRemove: () -> Unit,
-) {
-    val lo = if (allowNegative) LORA_LO_NEG else LORA_LO
-    Row(
-        Modifier.fillMaxWidth().padding(top = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Box(
-            Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(10.dp))
-                .border(1.dp, Nm.fld, RoundedCornerShape(10.dp))
-                .padding(horizontal = 12.dp, vertical = 9.dp),
-        ) {
-            Text(
-                loraBare(name),
-                style = TextStyle(fontSize = 14.sp, color = Nm.ink),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Slider(
-            value = weight.coerceIn(lo, LORA_HI),
-            onValueChange = { onWeight(loraSnap(it, lo)) },
-            valueRange = lo..LORA_HI,
-            modifier = Modifier.width(110.dp),
-            colors = SliderDefaults.colors(
-                thumbColor = Nm.pri,
-                activeTrackColor = Nm.pri,
-                inactiveTrackColor = Nm.fld,
-            ),
-        )
-        Text(
-            loraTwo(weight),
-            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Nm.pri),
-            textAlign = TextAlign.End,
-            modifier = Modifier.width(38.dp),
-        )
-        TextButton(onClick = onRemove, modifier = Modifier.size(width = 40.dp, height = 40.dp)) {
-            Text("✕", color = Nm.sub)
-        }
-    }
-}
-
-/** `选择 LoRA` — the HTML dialog: hint, filter, checkbox+slider rows, Done. */
-@Composable
-private fun NewUiLoraPicker(
-    installed: List<String>,
-    chosen: List<Pair<String, Float>>,
-    allowNegative: Boolean,
-    onToggle: (String, Boolean) -> Unit,
-    onWeight: (String, Float) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val lo = if (allowNegative) LORA_LO_NEG else LORA_LO
-    var q by remember { mutableStateOf("") }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(
-            Modifier
-                .fillMaxWidth(0.9f)
-                .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
-                .padding(18.dp),
-        ) {
-            Text(
-                stringResource(R.string.loras_title),
-                style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Nm.ink),
-            )
-            Text(
-                stringResource(R.string.newui_lora_pick_hint),
-                style = TextStyle(fontSize = 13.sp, color = Nm.sub),
-                modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
-            )
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .border(1.dp, Nm.fld, RoundedCornerShape(10.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-            ) {
-                if (q.isEmpty()) {
-                    Text(
-                        stringResource(R.string.newui_lora_filter),
-                        style = TextStyle(fontSize = 15.sp, color = Nm.sub),
-                    )
-                }
-                BasicTextField(
-                    value = q,
-                    onValueChange = { q = it },
-                    textStyle = TextStyle(fontSize = 15.sp, color = Nm.ink),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            val kw = q.trim().lowercase(Locale.ROOT)
-            val shown = if (kw.isEmpty()) installed else installed.filter { it.lowercase(Locale.ROOT).contains(kw) }
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 380.dp)
-                    .verticalScroll(rememberScrollState())
-                    .padding(top = 8.dp),
-            ) {
-                if (shown.isEmpty()) {
-                    Text(
-                        stringResource(R.string.newui_lora_empty),
-                        style = TextStyle(fontSize = 13.sp, color = Nm.sub, textAlign = TextAlign.Center),
-                        modifier = Modifier.fillMaxWidth().padding(14.dp),
-                    )
-                }
-                shown.forEach { n ->
-                    val cur = chosen.firstOrNull { it.first == n }
-                    val on = cur != null
-                    val w = cur?.second ?: 0.8f
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            loraBare(n),
-                            style = TextStyle(fontSize = 14.sp, color = Nm.ink),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Checkbox(
-                            checked = on,
-                            onCheckedChange = { onToggle(n, it) },
-                            colors = CheckboxDefaults.colors(checkedColor = Nm.pri, uncheckedColor = Nm.fld),
-                        )
-                        Slider(
-                            value = w.coerceIn(lo, LORA_HI),
-                            onValueChange = { if (on) onWeight(n, loraSnap(it, lo)) },
-                            valueRange = lo..LORA_HI,
-                            enabled = on,
-                            modifier = Modifier.width(110.dp),
-                            colors = SliderDefaults.colors(
-                                thumbColor = Nm.pri,
-                                activeTrackColor = Nm.pri,
-                                inactiveTrackColor = Nm.fld,
-                                disabledThumbColor = Nm.fld,
-                                disabledActiveTrackColor = Nm.fld,
-                                disabledInactiveTrackColor = Nm.fld,
-                            ),
-                        )
-                        Text(
-                            if (on) loraTwo(w) else "—",
-                            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Nm.pri),
-                            textAlign = TextAlign.End,
-                            modifier = Modifier.width(38.dp),
-                        )
-                    }
-                }
-            }
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.End) {
-                // The HTML's `完成`: violet, white, 10dp radius, 800 weight.
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Nm.pri)
-                        .clickable { onDismiss() }
-                        .padding(horizontal = 20.dp, vertical = 9.dp),
-                ) {
-                    Text(
-                        stringResource(R.string.crop_done),
-                        style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = Color.White),
-                    )
-                }
-            }
-        }
-    }
 }
