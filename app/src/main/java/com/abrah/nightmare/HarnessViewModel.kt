@@ -120,7 +120,51 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     var showCanvas by mutableStateOf(true)
         private set
 
-    fun setCanvasVisible(on: Boolean) { showCanvas = on }
+    fun setCanvasVisible(on: Boolean) {
+        showCanvas = on
+        // ⭐ Leaving Settings returns to the WHOLE screen, never to the page the
+        // menu last picked (see [settingsPage]).
+        if (on) settingsPage = null
+    }
+
+    /**
+     * ⭐⭐ The Settings menu — the vertical list that grows UP out of the bar's
+     * Settings slot (the user, 2026-11-05). It is NOT the sheet: the sheet is
+     * what a row of it opens, one page at a time ([settingsPage]).
+     *
+     * ⚠ Its own flag rather than `!showCanvas`: the menu floats over the CANVAS
+     * (the bar's other slots stay live under it), so the canvas must keep
+     * drawing behind it.
+     */
+    var settingsMenuOpen by mutableStateOf(false)
+        private set
+
+    /** ⭐ Which page the Settings sheet draws, or null for the whole screen with its pills. */
+    var settingsPage by mutableStateOf<Int?>(null)
+        private set
+
+    /** ⭐ The bar's Settings slot: open the list, over the canvas. */
+    fun openSettingsMenu() {
+        closeLibrary()
+        showCanvas = true
+        settingsMenuOpen = true
+    }
+
+    fun closeSettingsMenu() { settingsMenuOpen = false }
+
+    /**
+     * ⭐ A row of the menu was tapped: the sheet opens on THAT page (the user's
+     * `悬浮方卡`), or — for null — on the whole screen with its pills.
+     *
+     * ⚠ The page index is Settings' FIXED page order (Appearance, Prompts,
+     * Models, Performance, Advanced), which is what `SettingsScreen`'s
+     * `onlyPage` reads; the MENU's own order is the user's and differs.
+     */
+    fun openSettingsPage(page: Int?) {
+        settingsMenuOpen = false
+        settingsPage = page
+        showCanvas = false
+    }
 
     // ---- app settings ----------------------------------------------------
 

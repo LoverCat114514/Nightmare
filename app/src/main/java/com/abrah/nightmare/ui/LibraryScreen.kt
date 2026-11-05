@@ -352,6 +352,12 @@ fun SwipeTabs(
     fillHeight: Boolean = false,
     /** ⚠ For a golden, which cannot swipe. */
     initialPage: Int = 0,
+    /**
+     * ⭐⭐ Draw the pill row? False for a ONE-PAGE caller — the Settings card the
+     * menu opens (the user, 2026-11-05): one pill under one page is a switcher with
+     * nothing to switch to.
+     */
+    showPills: Boolean = true,
     /** ⭐ The settled page, for a caller whose state follows the tab (History's filter). */
     onPage: (Int) -> Unit = {},
     /**
@@ -400,7 +406,7 @@ fun SwipeTabs(
         // on the Upscalers and Video tabs, and as text that does not fit.
         // ⇒ One line, one weight whether selected or not (colour carries the
         // selection), and room to scroll instead of room to squeeze.
-        androidx.compose.foundation.lazy.LazyRow(
+        if (showPills) androidx.compose.foundation.lazy.LazyRow(
             state = row,
             modifier = Modifier.fillMaxWidth(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = edge),

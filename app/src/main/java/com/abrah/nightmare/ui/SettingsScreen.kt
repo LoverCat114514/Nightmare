@@ -204,6 +204,16 @@ fun SettingsScreen(
     onClearTags: (Boolean) -> Unit = {},
     /** ⚠ For a golden, which cannot swipe. */
     initialPage: Int = 0,
+    /**
+     * ⭐⭐ One page only — the floating card the Settings MENU opens (the user,
+     * 2026-11-05). Null — the whole screen, pills and all, as the sheet has always drawn it.
+     *
+     * ⚠⚠ An INDEX into this screen's FIXED page order (`Appearance, Prompts,
+     * Models, Performance, Advanced`), not into [pages]: that list drops
+     * PERFORMANCE when it would be empty, so an index into IT would mean different
+     * things on different phones.
+     */
+    onlyPage: Int? = null,
     modifier: Modifier = Modifier,
 ) {
     var deletingEmbedding by remember { mutableStateOf<String?>(null) }
@@ -229,6 +239,12 @@ fun SettingsScreen(
         Page.PERFORMANCE.takeIf { lowRam != null || !batteryUnrestricted },
         Page.ADVANCED,
     )
+    // ⭐ The card's single page, out of the FIXED order (see [onlyPage]).
+    // ⚠⚠ A page this phone does not draw (PERFORMANCE with nothing to switch) falls
+    // back to the whole screen rather than to an empty card.
+    val fixed = listOf(Page.APPEARANCE, Page.PROMPTS, Page.MODELS, Page.PERFORMANCE, Page.ADVANCED)
+    val single = onlyPage?.let { i -> fixed.getOrNull(i) }?.takeIf { it in pages }
+    val shown = single?.let { listOf(it) } ?: pages
     Column(
         // ⚠⚠ Its OWN insets: Settings is not a [LibraryScreen] tab, so the
         // bottom one that screen applies does not reach here. Reported from
@@ -240,18 +256,25 @@ fun SettingsScreen(
     ) {
         // ⚠ No ✕: Settings is a pull-down sheet since 2026-09-26 ([PullDownSheet]).
         // ⭐ No ☰ of its own — the main bar's, in the sheet's gap, is the one (2026-10-10).
-        ScreenHeader(stringResource(R.string.settings), onClose = null, onMenu = null)
+        // ⭐ A ONE-PAGE card draws NO header and NO pills: its title is the menu row that
+        // opened it, and one page needs no switcher. The sheet keeps both, so nothing
+        // about the pull-down panel changes.
+        if (single == null) ScreenHeader(stringResource(R.string.settings), onClose = null, onMenu = null)
         SwipeTabs(
-            labels = pages.map { stringResource(it.label) },
-            modifier = Modifier.weight(1f).padding(top = 8.dp),
+            labels = shown.map { stringResource(it.label) },
+            // ⚠⚠ `fillMaxSize` rather than `weight(1f)`: a card has no header above the
+            // pager to reserve room for, and the page scrolls inside the card.
+            modifier = if (single != null) Modifier.fillMaxSize()
+            else Modifier.weight(1f).padding(top = 8.dp),
             fillHeight = true,
-            initialPage = initialPage,
+            initialPage = if (single != null) 0 else initialPage,
+            showPills = single == null,
         ) { index ->
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 6.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-        when (pages[index]) {
+        when (shown[index]) {
         // ⭐⭐ Five groups (the user's call, 2026-10-10): what it looks like, what goes into a
         // prompt, where models come from, what it costs the phone, and the rest.
         Page.APPEARANCE -> Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -702,7 +702,9 @@ fun HarnessScreen(
         vm.mainView == com.abrah.nightmare.MainView.MODELS -> com.abrah.nightmare.ui.BottomDest.MODELS
         vm.mainView == com.abrah.nightmare.MainView.FLOWS -> com.abrah.nightmare.ui.BottomDest.FLOWS
         vm.mainView == com.abrah.nightmare.MainView.RESULTS -> com.abrah.nightmare.ui.BottomDest.RESULTS
-        !vm.showCanvas -> com.abrah.nightmare.ui.BottomDest.SETTINGS
+        // ⭐ The menu IS the Settings destination (the user, 2026-11-05): the slot lights
+        // while its list is up, even though the canvas keeps drawing behind it.
+        vm.settingsMenuOpen || !vm.showCanvas -> com.abrah.nightmare.ui.BottomDest.SETTINGS
         else -> com.abrah.nightmare.ui.BottomDest.CANVAS
     }
     // ⭐⭐ THE SHELL NAVIGATION, now the bar alone (2026-11-04: "将侧边的抽屉栏删掉
@@ -719,14 +721,35 @@ fun HarnessScreen(
         // ⭐  The old shell navigation rules apply unchanged: every destination
         // closes the other sheet first (2026-10-10), and the open is deferred two
         // frames via openLater so the sheet's close animation is not seen late.
+        //
+        // ⭐⭐ The Settings menu's scrim and the menu itself are composed around the bar,
+        // so the bar draws OVER the dimmed canvas and stays live: a tap on another slot
+        // both closes this menu and does that slot's job.
+        com.abrah.nightmare.ui.SettingsMenuScrim(
+            open = vm.settingsMenuOpen,
+            onDismiss = vm::closeSettingsMenu,
+        )
         com.abrah.nightmare.ui.NightmareBottomBar(
             selected = dest,
-            onCanvas = { vm.closeLibrary(); vm.setCanvasVisible(true) },
-            onModels = { vm.setCanvasVisible(true); openLater { vm.setModelsVisible(true) } },
-            onFlows = { vm.setCanvasVisible(true); openLater { vm.setWorkflowsVisible(true) } },
-            onResults = { vm.setCanvasVisible(true); openLater { vm.setResultsVisible(true) } },
-            onSettings = { vm.closeLibrary(); openLater { vm.setCanvasVisible(false) } },
+            // ⚠⚠ Every slot closes the menu FIRST: a tap on another slot means
+            // "leave Settings", not "leave Settings open behind Models".
+            onCanvas = { vm.closeSettingsMenu(); vm.closeLibrary(); vm.setCanvasVisible(true) },
+            onModels = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); openLater { vm.setModelsVisible(true) } },
+            onFlows = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); openLater { vm.setWorkflowsVisible(true) } },
+            onResults = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); openLater { vm.setResultsVisible(true) } },
+            // ⭐⭐ The Settings slot opens the MENU, not the sheet (the user, 2026-11-05):
+            // a vertical list grows up out of the slot, and a row of it opens the sheet on
+            // one page. ⚠ Not `openLater`: nothing is closing, so there is no close
+            // animation to wait for — and the canvas stays behind the menu on purpose,
+            // which is what keeps the bar's other slots working under it.
+            onSettings = { vm.openSettingsMenu() },
             modelsBusy = vm.importing != null,
+        )
+        // ⭐⭐ The list itself, over the bar's Settings slot and clear of it.
+        com.abrah.nightmare.ui.SettingsMenu(
+            open = vm.settingsMenuOpen,
+            onPick = { page -> vm.openSettingsPage(page) },
+            onFull = { vm.openSettingsPage(null) },
         )
     }
     // ⭐⭐ Models / Flows / Results are SHEETS over the canvas again, like Settings (the user's call
@@ -981,6 +1004,17 @@ fun HarnessScreen(
         return
     }
 
+    // ⭐⭐⭐ ONE PAGE = the floating CARD; the whole screen = the pull-down sheet as it
+    // always was (the user, 2026-11-05). Both are their own window and both carry the
+    // bar as their overlay; only the shape, the exit and the chrome differ.
+    val settingsPage = vm.settingsPage
+    if (settingsPage != null) {
+        com.abrah.nightmare.ui.SettingsCardSheet(
+            onDismiss = { vm.setCanvasVisible(true) },
+            overlay = sidebar,
+        ) { SettingsSheetBody(vm = vm, onlyPage = settingsPage) }
+        return
+    }
     com.abrah.nightmare.ui.PullDownSheet(onDismiss = { vm.setCanvasVisible(true) }, overlay = sidebar) {
 
         // ⚠⚠ **Settings is one page now** — Community and Diagnostics (the op
@@ -999,6 +1033,24 @@ fun HarnessScreen(
         // tab's `embeddingPicker` for the same launcher and why it is declared
         // per-screen rather than shared (each screen owns its own launcher, the
         // existing pattern every picker in this file already follows).
+        SettingsSheetBody(vm = vm, onlyPage = null)
+    }
+}
+
+/**
+ * ⭐⭐⭐ The Settings sheet's BODY, extracted so the SAME body can be drawn two ways
+ * (the user, 2026-11-05): inside the pull-down [com.abrah.nightmare.ui.PullDownSheet]
+ * for the whole screen, and inside the floating [com.abrah.nightmare.ui.SettingsCardSheet]
+ * for one page the menu picked.
+ *
+ * ⚠⚠ **The pickers are declared HERE, not by the caller.** A sheet is its own
+ * window and its own composition; a launcher hoisted out of it would be
+ * re-registered on every open and its result could land after the sheet was gone.
+ * Declared inside, each open gets its own and the result returns to the composition
+ * that asked for it.
+ */
+@Composable
+private fun SettingsSheetBody(vm: HarnessViewModel, onlyPage: Int?) {
         val settingsEmbeddingPicker = rememberLauncherForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
         ) { uri -> if (uri != null) vm.importEmbedding(uri) }
@@ -1121,6 +1173,8 @@ fun HarnessScreen(
                 tagPicker.launch(arrayOf("text/csv", "text/comma-separated-values", "text/plain", "*/*"))
             },
             onClearTags = vm::clearTags,
+            // ⭐ The card's single page (null = the whole screen, pills and all).
+            onlyPage = onlyPage,
         )
         // ⭐ The system's All files access page, opened when a person picks
         // `Download/Nightmare` without it ([HarnessViewModel.chooseModelsPlace]).
@@ -1138,7 +1192,6 @@ fun HarnessScreen(
                 }
             }
         }
-    }
 }
 
 /**
