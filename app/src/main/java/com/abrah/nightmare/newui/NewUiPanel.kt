@@ -88,6 +88,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextOverflow
@@ -180,32 +181,41 @@ private object CoreHolder {
 
 /** The workbench's saved choices (the HTML page's localStorage, as Prefs-shaped app data). */
 private class WbState {
-    var modelId: String = ""
-    var scheduler: String = ""
+    // ⭐⭐ (2026-11-06) Every scalar is COMPOSE STATE now. This class used to be
+    // a plain bag of fields — writes recomposed nothing — and the whole file
+    // fought that with local mirrors + the modelVer counter. The stateless
+    // PostSlider (the Default UI's SliderRow shape) needs the wire to BE
+    // state: without it the thumb fought M3's internal drag state and the
+    // value froze until an unrelated recomposition (the user: sliders and
+    // buttons needed a refresh / several taps). Same architecture as
+    // CanvasState in the Default UI. [loras] stays a plain list: it mutates
+    // behind onLorasChanged -> modelVer++.
+    var modelId: String by mutableStateOf("")
+    var scheduler: String by mutableStateOf("")
     var loras: MutableList<Pair<String, Float>> = mutableListOf()
-    var w: Int = 832
-    var h: Int = 1216
-    var steps: Int = 29
-    var cfg: Float = 5.0f
-    var seed: Long = 0L
-    var fixedSeed: Boolean = false
-    var denoise: Float = 0.40f
-    var mossOn: Boolean = false
-    var mode: String = "txt2img"
+    var w: Int by mutableStateOf(832)
+    var h: Int by mutableStateOf(1216)
+    var steps: Int by mutableStateOf(29)
+    var cfg: Float by mutableStateOf(5.0f)
+    var seed: Long by mutableStateOf(0L)
+    var fixedSeed: Boolean by mutableStateOf(false)
+    var denoise: Float by mutableStateOf(0.40f)
+    var mossOn: Boolean by mutableStateOf(false)
+    var mode: String by mutableStateOf("txt2img")
     // The post-processing block, the HTML page's S.pUps/pFace/pColor/adj*.
-    var autosave: Boolean = true
-    var pUps: Boolean = false
-    var pUps2: Boolean = false // the More-options x2, per run
+    var autosave: Boolean by mutableStateOf(true)
+    var pUps: Boolean by mutableStateOf(false)
+    var pUps2: Boolean by mutableStateOf(false) // the More-options x2, per run
     // ⭐ (2026-11-05, eighth round) Wired for real: the flags ride the request as
     // fix_faces/fix_hands knobs — the engine re-draws each found part in-render.
-    var pFace: Boolean = false
-    var pColor: Boolean = false
-    var adjBr: Int = 0
-    var adjCo: Int = 0
-    var adjSa: Int = 0
-    var warm: Int = 0 // the warmth slider (±60), with the colour adjust
-    var adjOn: Boolean = false // the adjust-colour row's per-run switch
-    var pHands: Boolean = false
+    var pFace: Boolean by mutableStateOf(false)
+    var pColor: Boolean by mutableStateOf(false)
+    var adjBr: Int by mutableStateOf(0)
+    var adjCo: Int by mutableStateOf(0)
+    var adjSa: Int by mutableStateOf(0)
+    var warm: Int by mutableStateOf(0) // the warmth slider (±60), with the colour adjust
+    var adjOn: Boolean by mutableStateOf(false) // the adjust-colour row's per-run switch
+    var pHands: Boolean by mutableStateOf(false)
 }
 
 /** The single background thread [ApiCore.run] lives on (it blocks). */
@@ -457,9 +467,24 @@ fun NewUiScreen(
     var modelVer by remember { mutableIntStateOf(0) }
     // ⭐ (2026-11-05, sixth round) Persist on every parameter change: saveState used
     // to run only on Generate, so a pick followed by leaving the view lost it (the
-    // model reset itself across a process kill). onPicked() fires from the model
-    // card, the size fields and (now) both sampler dropdowns.
-    LaunchedEffect(modelVer) { saveState(ctx, s) }
+    // model reset itself across a process kill).
+    // ⭐⭐ (2026-11-06) DEBOUNCED, and keyed on the states themselves. It used to
+    // be LaunchedEffect(modelVer) with NO delay — and the width/height sliders
+    // bumped modelVer every frame, so a drag ran saveState (the whole prefs map
+    // plus a SharedPreferences apply) on the MAIN thread per frame: the thread
+    // saturated and taps landed late or never (the user: buttons needed several
+    // tries). Every scalar is compose state now, so this one effect keys on them
+    // all and saves 600 ms after the LAST change — one save per burst, off the
+    // drag's critical path. modelVer stays a key for the loras list (plain,
+    // non-state mutations behind onLorasChanged).
+    LaunchedEffect(
+        modelVer, s.modelId, s.scheduler, s.w, s.h, s.steps, s.cfg, s.seed,
+        s.fixedSeed, s.denoise, s.mossOn, s.mode, s.autosave, s.pUps, s.pUps2,
+        s.pFace, s.pColor, s.adjBr, s.adjCo, s.adjSa, s.warm, s.adjOn, s.pHands,
+    ) {
+        kotlinx.coroutines.delay(600)
+        saveState(ctx, s)
+    }
     // The Default UI's APPLY NOW: the tool re-renders the displayed shot from its
     // ORIGINAL file (no compounding), on [RUN_EX]; postVer redraws the frame.
     val postVer = remember { mutableIntStateOf(0) }
@@ -1147,12 +1172,12 @@ private fun ParamsCard(
                 stringResource(R.string.knob_width),
                 s.w.toFloat(), 256f..2048f,
                 fmt = { String.format("%.0f", it) },
-            ) { s.w = snap64(it.toInt()); onPicked() }
+            ) { s.w = snap64(it.toInt()) } // ⭐ state write only: onPicked() here ran modelVer++ EVERY FRAME, saturating the main thread (taps swallowed)
             PostSlider(
                 stringResource(R.string.knob_height),
                 s.h.toFloat(), 256f..2048f,
                 fmt = { String.format("%.0f", it) },
-            ) { s.h = snap64(it.toInt()); onPicked() }
+            ) { s.h = snap64(it.toInt()) }
             Text(
                 stringResource(R.string.newui_size_hint),
                 style = MaterialTheme.typography.bodySmall,
@@ -1468,15 +1493,22 @@ private fun PostSlider(
     fmt: (Float) -> String,
     onSet: (Float) -> Unit,
 ) {
-    var v by remember(value) { mutableStateOf(value) }
+    // ⭐⭐ (2026-11-06) STATELESS — the Default UI's SliderRow shape
+    // (NodeInspector.kt): the thumb IS the wire value. The old
+    // remember(value) re-seeded only when the value CHANGED, so a 64-snap
+    // that kept the wire the same (960 -> 1370 -> 960) left the thumb parked
+    // on the raw drag value: the label read 1370 while the field said 960
+    // (the user's screenshot). The snap is written every frame, so the wire,
+    // the thumb and the label agree by construction — a drag shows the
+    // snapped value directly, exactly like the Default UI's step knobs.
     Column {
         Row {
             Text(label, style = MaterialTheme.typography.labelMedium, color = Nm.sub, modifier = Modifier.weight(1f))
-            Text(fmt(v), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Nm.ink)
+            Text(fmt(value), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Nm.ink)
         }
         Slider(
-            value = v,
-            onValueChange = { v = it; onSet(it) },
+            value = value.coerceIn(range.start, range.endInclusive),
+            onValueChange = onSet,
             valueRange = range,
             colors = SliderDefaults.colors(
                 thumbColor = Nm.pri, activeTrackColor = Nm.pri, inactiveTrackColor = Nm.line,
@@ -1485,10 +1517,23 @@ private fun PostSlider(
     }
 }
 
-/** A number field (width/height): it keeps its own text, the value lands on commit. */
+/**
+ * A number field (width/height). ⭐⭐ (2026-11-06) The text FOLLOWS the wire
+ * value whenever the wire moved from OUTSIDE this field — the slider's drag,
+ * the MOSS canvas write-back — and on leaving the field the snap displays.
+ * While focused the typist owns the text (never interrupted mid-number); the
+ * old `remember { }` froze the digits forever, so the field read 960 while
+ * the slider and the canvas had agreed on 1344 (the user's screenshot).
+ * Every keystroke still commits (the snap writes as you type), so a Generate
+ * without ever leaving the field still uses what was typed.
+ */
 @Composable
 private fun NumField(label: String, value: Int, onCommit: (Int) -> Unit, modifier: Modifier = Modifier) {
     var txt by remember { mutableStateOf(value.toString()) }
+    var focused by remember { mutableStateOf(false) }
+    // Not focused -> mirror the wire (a drag or a canvas write-back shows up
+    // as you do it). Focused -> untouched.
+    if (!focused && txt != value.toString()) txt = value.toString()
     OutlinedTextField(
         value = txt,
         onValueChange = { t ->
@@ -1504,7 +1549,12 @@ private fun NumField(label: String, value: Int, onCommit: (Int) -> Unit, modifie
                 cursorColor = Nm.pri, focusedTextColor = Nm.ink, unfocusedTextColor = Nm.ink,
             ),
         shape = RoundedCornerShape(12.dp),
-        modifier = modifier,
+        modifier = modifier.onFocusChanged { f ->
+            focused = f.isFocused
+            // Leaving the field: display the WIRE (the snap of what was
+            // typed), so the digits and the slider can never disagree at rest.
+            if (!f.isFocused) txt = value.toString()
+        },
     )
 }
 
