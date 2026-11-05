@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -31,6 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
@@ -141,24 +142,16 @@ private fun MenuCapsule(
         },
         label = "settingsMenuCapsule$index",
     )
-    Surface(
-        shape = RoundedCornerShape(percent = 50),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 1.dp,
-        shadowElevation = 4.dp,
-        border = BorderStroke(
-            0.5.dp,
-            MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-        ),
-        modifier = Modifier
+    Box(
+        Modifier
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,
             )
-            .widthIn(min = 96.dp, max = 200.dp)
-            .heightIn(min = 40.dp)
-            .padding(horizontal = 18.dp, vertical = 10.dp)
+            // ⭐ Bigger hit area (the user, 2026-11-05).
+            .widthIn(min = 128.dp, max = 220.dp)
+            .heightIn(min = 56.dp)
             .graphicsLayer {
                 alpha = p
                 translationY = (1f - p) * 12.dp.toPx()
@@ -166,9 +159,20 @@ private fun MenuCapsule(
                 scaleX = 0.97f + 0.03f * p
                 transformOrigin = TransformOrigin(0.5f, 1f)
             },
+        contentAlignment = Alignment.Center,
     ) {
+        // ⭐⭐ Frosted glass: a translucent dark layer whose edges blur so the
+        // canvas shows through faintly (the user, 2026-11-05).
+        Box(
+            Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(percent = 50))
+                .background(Color.Black.copy(alpha = 0.30f))
+                .blur(14.dp, 14.dp),
+        )
         Text(
             label,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
@@ -283,7 +287,7 @@ internal fun SettingsCardSheet(
                         MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                     ),
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .fillMaxSize()
                         // ⚠ A SHARE of the screen: the canvas has to stay visible
                         // around the card for the growth to read as growth.
                         .fillMaxHeight(0.74f)

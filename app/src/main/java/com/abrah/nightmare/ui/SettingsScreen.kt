@@ -244,7 +244,9 @@ fun SettingsScreen(
     // back to the whole screen rather than to an empty card.
     val fixed = listOf(Page.APPEARANCE, Page.PROMPTS, Page.MODELS, Page.PERFORMANCE, Page.ADVANCED)
     val single = onlyPage?.let { i -> fixed.getOrNull(i) }?.takeIf { it in pages }
-    val shown = single?.let { listOf(it) } ?: pages
+    // ⭐⭐ The card's pill row shows EVERY page that exists, not just the one opened
+    // (the user, 2026-11-05: the pills above the card are the quick switch between all).
+    val shown = pages
     Column(
         // ⚠⚠ Its OWN insets: Settings is not a [LibraryScreen] tab, so the
         // bottom one that screen applies does not reach here. Reported from
@@ -269,7 +271,7 @@ fun SettingsScreen(
             modifier = if (single != null) Modifier.weight(1f)
             else Modifier.weight(1f).padding(top = 8.dp),
             fillHeight = true,
-            initialPage = if (single != null) 0 else initialPage,
+            initialPage = if (single != null) pages.indexOf(single) else initialPage,
             // ⭐ The card's quick switch — the pills above its page (the user's call).
             showPills = true,
         ) { index ->
