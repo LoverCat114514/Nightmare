@@ -1,6 +1,7 @@
 package com.abrah.nightmare.ui
 
 import androidx.compose.animation.core.CubicBezierEasing
+import kotlinx.coroutines.launch
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -262,9 +263,11 @@ internal fun SettingsMenuScrim(
  * (the user, 2026-11-05: *"点击对应的，然后按照箭头指着的方向展开那个页面，做一个
  * 悬浮的方卡"*).
  *
- * ⭐  Its own window, like every sheet over the canvas ([PullDownSheet]'s
- * reasoning): the bar rides inside it via [overlay], so the app's navigation stays
- * live while a page is open.
+ * ⭐  IN THE MAIN WINDOW (2026-11-06): no dialog any more — the caller composes
+ * the bar around this card, at the real window edge. Why: in a dialog window the
+ * insets never reach Compose AND the decor listener behind [bottomInset] never
+ * fired (measured: a bar drawn by the card's overlay sat 50 px lower than the
+ * main window's — the user's "下沉").
  *
  * ⚠⚠ **A card, not a sheet.** It is clear of the bar, grows LEFT out of the tapped
  * capsule (280 ms, `cubic-bezier(0.2, 0, 0, 1)`) and takes a SHARE of the screen
@@ -284,7 +287,6 @@ internal fun SettingsCardSheet(
      * card grows LEFT out of that point (the user, 2026-11-05 — from the capsule,
      * not from the bottom edge). */
     anchorY: Float = 0.8f,
-    overlay: @Composable () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     // ⭐ Unfolds and lifts at once: the 16 dp rise is the Secondary layer, the Y
@@ -293,78 +295,67 @@ internal fun SettingsCardSheet(
     LaunchedEffect(Unit) {
         p.animateTo(1f, tween(280, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)))
     }
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-    ) {
-        // ⚠⚠ The window, not the dialog: `decorFitsSystemWindows = false` alone
-        // left it fitted (the measurement that shaped [PullDownSheet], 1.6.084),
-        // and this card's scrim has to reach the screen's edges.
-        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
-        SideEffect {
-            window?.setDimAmount(0f)
-            window?.let {
-                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(it, false)
-                it.attributes = it.attributes.apply { fitInsetsTypes = 0 }
-                it.setLayout(
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                )
-            }
+    // ⭐⭐ In the main window now (2026-11-06): no dialog, no second window — the
+    // bar is composed by the caller around this card, at the real window edge,
+    // so it keeps its position and stays live.
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val closing = remember { androidx.compose.runtime.mutableStateOf(false) }
+    fun close() {
+        if (closing.value) return
+        closing.value = true
+        scope.launch {
+            p.animateTo(0f, tween(190, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)))
+            onDismiss()
         }
-        // ⚠⚠ Measured, never composed: the dialog's insets never reach Compose
-        // ([PullDownSheet]'s measurement) — a `navigationBarsPadding()` here
-        // padded ZERO and the bar sank under the nav bar (the user, 2026-11-05).
-        val bottomPad = bottomInset(window)
-        Box(Modifier.fillMaxSize()) {
-            // ⭐ A tap beside the card closes it — back to the canvas.
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.34f * p.value))
-                    .pointerInput(Unit) { detectTapGestures { onDismiss() } },
-            )
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .padding(start = 16.dp, end = 16.dp, bottom = bottomPad + BOTTOM_BAR_RESERVE + 8.dp),
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    tonalElevation = 3.dp,
-                    shadowElevation = 12.dp,
-                    border = BorderStroke(
-                        0.5.dp,
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                    ),
-                    modifier = Modifier
-                        // ⭐ BOTTOM-centre (the user, 2026-11-05: the card belongs at
-                        // the bottom, per their mock) — and it still unfolds LEFT out
-                        // of the tapped capsule: the origin rides the card's RIGHT
-                        // edge at the capsule's height projected into the card.
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.62f)
-                        .graphicsLayer {
-                            val v = p.value
-                            alpha = v
-                            // The capsule's height within THIS card: the card is the
-                            // bottom 62 % of the area the anchor is a fraction of.
-                            val oy = ((anchorY - 0.38f) / 0.62f).coerceIn(0.15f, 0.9f)
-                            // ⭐ The unfold: LEFT out of the capsule — X leads (24 dp),
-                            // Y follows lightly (10 dp).
-                            translationX = (1f - v) * 24.dp.toPx()
-                            translationY = (1f - v) * 10.dp.toPx()
-                            scaleX = 0.88f + 0.12f * v
-                            scaleY = 0.94f + 0.06f * v
-                            transformOrigin = TransformOrigin(1f, oy)
-                        },
-                ) { content() }
-            }
-            // ⭐ The bar rides INSIDE the card's window, padded by the SAME measured
-            // inset as [PullDownSheet]'s overlay — Compose's own insets read 0 here.
-            Column(Modifier.padding(bottom = bottomPad)) { overlay() }
+    }
+    androidx.activity.compose.BackHandler { close() }
+    Box(Modifier.fillMaxSize()) {
+        // ⭐ A tap beside the card closes it — back to the canvas.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.34f * p.value))
+                .pointerInput(Unit) { detectTapGestures { close() } },
+        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(start = 16.dp, end = 16.dp, bottom = BOTTOM_BAR_RESERVE + 8.dp),
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                tonalElevation = 3.dp,
+                shadowElevation = 12.dp,
+                border = BorderStroke(
+                    0.5.dp,
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                ),
+                modifier = Modifier
+                    // ⭐ BOTTOM-centre (the user, 2026-11-05: the card belongs at
+                    // the bottom, per their mock) — and it still unfolds LEFT out
+                    // of the tapped capsule: the origin rides the card's RIGHT
+                    // edge at the capsule's height projected into the card.
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.62f)
+                    // ⚠ Swallows taps so a tap on the BODY never reaches the scrim.
+                    .pointerInput(Unit) { detectTapGestures { } }
+                    .graphicsLayer {
+                        val v = p.value
+                        alpha = v
+                        // The capsule's height within THIS card: the card is the
+                        // bottom 62 % of the area the anchor is a fraction of.
+                        val oy = ((anchorY - 0.38f) / 0.62f).coerceIn(0.15f, 0.9f)
+                        // ⭐ The unfold: LEFT out of the capsule — X leads (24 dp),
+                        // Y follows lightly (10 dp).
+                        translationX = (1f - v) * 24.dp.toPx()
+                        translationY = (1f - v) * 10.dp.toPx()
+                        scaleX = 0.88f + 0.12f * v
+                        scaleY = 0.94f + 0.06f * v
+                        transformOrigin = TransformOrigin(1f, oy)
+                    },
+            ) { content() }
         }
     }
 }

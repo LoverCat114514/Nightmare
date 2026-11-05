@@ -734,15 +734,17 @@ fun HarnessScreen(
             // ⚠⚠ Every slot closes the menu FIRST: a tap on another slot means
             // "leave Settings", not "leave Settings open behind Models".
             onCanvas = { vm.closeSettingsMenu(); vm.closeLibrary(); vm.setCanvasVisible(true) },
-            onModels = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); openLater { vm.setModelsVisible(true) } },
-            onFlows = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); openLater { vm.setWorkflowsVisible(true) } },
-            onResults = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); openLater { vm.setResultsVisible(true) } },
+            onModels = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); vm.setModelsVisible(true) },
+            onFlows = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); vm.setWorkflowsVisible(true) },
+            onResults = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); vm.setResultsVisible(true) },
             // ⭐⭐ The Settings slot opens the MENU, not the sheet (the user, 2026-11-05):
             // a vertical list grows up out of the slot, and a row of it opens the sheet on
             // one page. ⚠ Not `openLater`: nothing is closing, so there is no close
             // animation to wait for — and the canvas stays behind the menu on purpose,
             // which is what keeps the bar's other slots working under it.
             onSettings = { vm.openSettingsMenu() },
+            // ⭐ The card unfolds out of the tapped slot (2026-11-06).
+            onAnchor = { vm.noteBarAnchor(it) },
             modelsBusy = vm.importing != null,
         )
         // ⭐⭐ The list itself, over the bar's Settings slot and clear of it.
@@ -757,7 +759,7 @@ fun HarnessScreen(
     // 2026-10-10, reversing Violet Studio's destinations-under-the-shell of 2026-10-08).
     // ⚠ The sheet handles Back itself (its Dialog's dismiss), so the gesture never leaves the app.
     if (vm.libraryOpen) {
-        com.abrah.nightmare.ui.PullDownSheet(onDismiss = vm::closeLibrary, overlay = sidebar) {
+        com.abrah.nightmare.ui.DestCardSheet(onDismiss = vm::closeLibrary, anchorY = vm.barAnchorY) {
             // ⭐⭐ Asked AT the first Download, not at launch: that is the
             // moment the answer means something. Android 13+ drops every
             // notification silently without it, and the shade is where a
@@ -993,15 +995,14 @@ fun HarnessScreen(
                 }
             }
         }
-        return
     }
 
+    // ⭐ The bar, composed ONCE, in the main window (2026-11-06): every
+    // destination is a card in THIS window — the bar keeps its real position
+    // (no sheet window, no sunken insets) and stays live over the dim.
+    sidebar()
+
     if (vm.showCanvas) {
-        // ⭐⭐⭐ The sidebar lambda now draws BOTH layers -- the drawer (closed =
-        // nothing) and, after it, the floating pill bottom bar. Last child of
-        // this Box = drawn last = on top of the canvas, over the Run bar's old
-        // corner (which now pads itself out of the way). One call, one bar.
-        sidebar()
         return
     }
 
@@ -1014,11 +1015,10 @@ fun HarnessScreen(
             onDismiss = { vm.setCanvasVisible(true) },
             // ⭐ The card grows LEFT out of the capsule that was tapped.
             anchorY = vm.settingsAnchor,
-            overlay = sidebar,
         ) { SettingsSheetBody(vm = vm, onlyPage = settingsPage) }
         return
     }
-    com.abrah.nightmare.ui.PullDownSheet(onDismiss = { vm.setCanvasVisible(true) }, overlay = sidebar) {
+    com.abrah.nightmare.ui.DestCardSheet(onDismiss = { vm.setCanvasVisible(true) }, anchorY = vm.barAnchorY) {
 
         // ⚠⚠ **Settings is one page now** — Community and Diagnostics (the op
         // harness) were removed 2026-09-19, at the user's ask: a pack still loads
@@ -1031,7 +1031,6 @@ fun HarnessScreen(
         // M-bM-^ZM-  Since the bottom bar (2026-11-04): Back, and the bar's own
         // already-selected Canvas tap, BOTH return to the canvas -- the sheet keeps
         // its own pull-down dismiss either way.
-        BackHandler { vm.setCanvasVisible(true) }
         // ⭐ Settings' own copy of the embeddings import picker — see the Models
         // tab's `embeddingPicker` for the same launcher and why it is declared
         // per-screen rather than shared (each screen owns its own launcher, the

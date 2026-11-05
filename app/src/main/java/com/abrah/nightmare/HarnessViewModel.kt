@@ -149,6 +149,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     /** ⭐ Written by the menu the moment a capsule is tapped (before the page
      * flag flips): the card's transform origin rides it. */
     fun noteSettingsAnchor(y: Float) { settingsAnchor = y }
+    /** ⭐ The tapped bar slot's centre, as a fraction of the screen height — the
+     * point a destination CARD (models / flows / results / full settings) unfolds
+     * out of (2026-11-06: the destinations became cards, the bar stopped sinking). */
+    var barAnchorY by mutableStateOf(0.9f)
+        private set
+    fun noteBarAnchor(y: Float) { barAnchorY = y }
 
     /** ⭐ The bar's Settings slot: open the list, over the canvas. */
     fun openSettingsMenu() {

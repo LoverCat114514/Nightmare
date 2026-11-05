@@ -29,10 +29,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.findRootCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -116,6 +121,9 @@ fun NightmareBottomBar(
     onFlows: () -> Unit,
     onResults: () -> Unit,
     onSettings: () -> Unit,
+    /** ⭐ Where a slot was tapped: its centre as a fraction of the screen height —
+     * a destination card unfolds out of this point (2026-11-06). */
+    onAnchor: (Float) -> Unit = {},
     modelsBusy: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -179,16 +187,28 @@ fun NightmareBottomBar(
                 Row(Modifier.fillMaxSize()) {
                     slots.forEach { (dest, icon, label) ->
                         val isSel = dest == selected
+                        val slotCoords = remember { mutableStateOf<LayoutCoordinates?>(null) }
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
+                                .onGloballyPositioned { slotCoords.value = it }
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
                                 ) {
+                                    // ⭐ Where the tap landed: the slot's centre as a fraction
+                                    // of the screen height — the destination card unfolds
+                                    // out of this point (2026-11-06).
+                                    slotCoords.value?.let { c ->
+                                        val root = c.findRootCoordinates()
+                                        onAnchor(
+                                            ((c.positionInRoot().y + c.size.height / 2f) /
+                                                root.size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
+                                        )
+                                    }
                                     // ⭐ Tapping the slot you are already on is "go home":
                                     // from a sheet that means back to the canvas; on the
                                     // canvas it re-asserts the canvas. The Canvas slot is
