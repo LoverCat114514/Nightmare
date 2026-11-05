@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.widthIn
@@ -25,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,6 +34,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -69,6 +74,9 @@ internal fun SettingsMenu(
     onPick: (Int) -> Unit,
     /** The last row — the whole Settings screen, pills and all. */
     onFull: () -> Unit,
+    /** ⭐ A capsule was tapped: its center as a fraction of the screen height —
+     * the anchor the card grows LEFT out of (the user, 2026-11-05). */
+    onAnchor: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // ⚠ Resolved HERE, in composition: a lambda calling `stringResource` is a
@@ -81,13 +89,27 @@ internal fun SettingsMenu(
         1 to stringResource(R.string.settings_prompts),
     )
     val fullLabel = stringResource(R.string.settings)
+    // ⭐ The menu Box's height, for turning a capsule's position into a screen
+    // fraction. A state, not a val: the geometry callback writes it after this
+    // composition, on rotation too.
+    val rootH = remember { mutableStateOf(1f) }
+    // ⭐⭐ The tapped capsule's center, in screen fractions — reported BEFORE the
+    // pick, so the card's anchor is already in place when the page flag flips.
+    val onGeometry: (LayoutCoordinates) -> Unit = { coords ->
+        val h = rootH.value
+        if (h > 0f) {
+            val center = coords.positionInRoot().y + coords.size.height / 2f
+            onAnchor((center / h).coerceIn(0f, 1f))
+        }
+    }
     Box(
         modifier
             .fillMaxSize()
             .navigationBarsPadding()
             // ⭐ Right-aligned and clear of the bar: the bar is 64 dp tall with a
             // 12 dp hover gap, which is what [BOTTOM_BAR_RESERVE] reserves.
-            .padding(end = 16.dp, bottom = BOTTOM_BAR_RESERVE + 8.dp),
+            .padding(end = 16.dp, bottom = BOTTOM_BAR_RESERVE + 8.dp)
+            .onGloballyPositioned { rootH.value = it.size.height.toFloat() },
         contentAlignment = Alignment.BottomEnd,
     ) {
         Column(
@@ -99,14 +121,20 @@ internal fun SettingsMenu(
                     label = row.second,
                     open = open,
                     index = i,
-                    onClick = { onPick(row.first) },
+                    onTap = { c ->
+                        onGeometry(c)
+                        onPick(row.first)
+                    },
                 )
             }
             MenuCapsule(
                 label = fullLabel,
                 open = open,
                 index = rows.size,
-                onClick = onFull,
+                onTap = { c ->
+                    onGeometry(c)
+                    onFull()
+                },
             )
         }
     }
@@ -123,7 +151,8 @@ private fun MenuCapsule(
     label: String,
     open: Boolean,
     index: Int,
-    onClick: () -> Unit,
+    /** ⭐ The tap: report this capsule's geometry, then pick. */
+    onTap: (LayoutCoordinates) -> Unit,
 ) {
     val p by animateFloatAsState(
         targetValue = if (open) 1f else 0f,
@@ -143,6 +172,8 @@ private fun MenuCapsule(
     // ⭐⭐⭐ The SURFACE, sized to the label — the bar's own glass (a translucent
     // `surfaceContainer` pill with a faint outline), not a big hand-rolled block.
     // This is the reference the user pointed at (2026-11-05): slim floating capsules.
+    // ⭐ This capsule's layout, read AT TAP TIME for the card's anchor.
+    val coords = remember { mutableStateOf<LayoutCoordinates?>(null) }
     Surface(
         shape = RoundedCornerShape(percent = 50),
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -153,10 +184,11 @@ private fun MenuCapsule(
             MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
         ),
         modifier = Modifier
+            .onGloballyPositioned { coords.value = it }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onClick,
+                onClick = { coords.value?.let(onTap) },
             )
             .graphicsLayer {
                 alpha = p
@@ -227,8 +259,8 @@ internal fun SettingsMenuScrim(
  * reasoning): the bar rides inside it via [overlay], so the app's navigation stays
  * live while a page is open.
  *
- * ⚠⚠ **A card, not a sheet.** It is clear of the bar, grows UP from its bottom-right
- * corner (260 ms, `cubic-bezier(0.2, 0, 0, 1)`) and takes a SHARE of the screen
+ * ⚠⚠ **A card, not a sheet.** It is clear of the bar, grows LEFT out of the tapped
+ * capsule (280 ms, `cubic-bezier(0.2, 0, 0, 1)`) and takes a SHARE of the screen
  * rather than the whole pull-down panel — the canvas stays visible around it,
  * which is what makes the growth read as growth. The content scrolls inside and
  * the card itself never resizes (the reason `SwipeTabs` takes `fillHeight`).
@@ -241,6 +273,10 @@ internal fun SettingsMenuScrim(
 @Composable
 internal fun SettingsCardSheet(
     onDismiss: () -> Unit,
+    /** ⭐ The tapped capsule's center, as a fraction of the screen height: the
+     * card grows LEFT out of that point (the user, 2026-11-05 — from the capsule,
+     * not from the bottom edge). */
+    anchorY: Float = 0.8f,
     overlay: @Composable () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
@@ -248,7 +284,7 @@ internal fun SettingsCardSheet(
     // scale the Primary one.
     val p = remember { androidx.compose.animation.core.Animatable(0f) }
     LaunchedEffect(Unit) {
-        p.animateTo(1f, tween(260, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)))
+        p.animateTo(1f, tween(280, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)))
     }
     Dialog(
         onDismissRequest = onDismiss,
@@ -277,12 +313,13 @@ internal fun SettingsCardSheet(
                     .background(Color.Black.copy(alpha = 0.34f * p.value))
                     .pointerInput(Unit) { detectTapGestures { onDismiss() } },
             )
+            // ⚠ No contentAlignment: the card TOP-aligns (`align` on the Surface),
+            // so its top edge is stable and the anchor's Y lands INSIDE it.
             Box(
                 Modifier
                     .fillMaxSize()
                     .navigationBarsPadding()
                     .padding(start = 16.dp, end = 16.dp, bottom = BOTTOM_BAR_RESERVE + 8.dp),
-                contentAlignment = Alignment.BottomStart,
             ) {
                 Surface(
                     shape = RoundedCornerShape(20.dp),
@@ -294,15 +331,24 @@ internal fun SettingsCardSheet(
                         MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                     ),
                     modifier = Modifier
-                        .fillMaxSize()
-                        // ⚠ A SHARE of the screen: the canvas has to stay visible
-                        // around the card for the growth to read as growth.
-                        .fillMaxHeight(0.74f)
+                        // ⭐ Top-end: the card hangs at the capsule row's height and
+                        // grows LEFT out of the tapped capsule.
+                        .align(Alignment.TopEnd)
+                        .fillMaxWidth()
+                        // ⚠ A smaller share than before (the user, 2026-11-05: the
+                        // card was too big) — the canvas stays visible around it.
+                        .fillMaxHeight(0.62f)
                         .graphicsLayer {
-                            alpha = p.value
-                            translationY = (1f - p.value) * 16.dp.toPx()
-                            scaleY = 0.92f + 0.08f * p.value
-                            transformOrigin = TransformOrigin(1f, 1f)
+                            val v = p.value
+                            alpha = v
+                            // ⭐ The unfold: LEFT out of the tapped capsule — X leads
+                            // (24 dp), Y follows lightly (10 dp); the origin rides the
+                            // capsule's height on the card's RIGHT edge.
+                            translationX = (1f - v) * 24.dp.toPx()
+                            translationY = (1f - v) * 10.dp.toPx()
+                            scaleX = 0.88f + 0.12f * v
+                            scaleY = 0.94f + 0.06f * v
+                            transformOrigin = TransformOrigin(1f, anchorY.coerceIn(0f, 1f))
                         },
                 ) { content() }
             }

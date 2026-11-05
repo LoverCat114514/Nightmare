@@ -142,6 +142,13 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     /** ⭐ Which page the Settings sheet draws, or null for the whole screen with its pills. */
     var settingsPage by mutableStateOf<Int?>(null)
         private set
+    /** ⭐ The tapped menu capsule's center, as a fraction of the screen height —
+     * the point the Settings CARD grows LEFT out of (the user, 2026-11-05). */
+    var settingsAnchor by mutableStateOf(0.8f)
+        private set
+    /** ⭐ Written by the menu the moment a capsule is tapped (before the page
+     * flag flips): the card's transform origin rides it. */
+    fun noteSettingsAnchor(y: Float) { settingsAnchor = y }
 
     /** ⭐ The bar's Settings slot: open the list, over the canvas. */
     fun openSettingsMenu() {

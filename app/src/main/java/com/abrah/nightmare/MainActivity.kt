@@ -750,6 +750,7 @@ fun HarnessScreen(
             open = vm.settingsMenuOpen,
             onPick = { page -> vm.openSettingsPage(page) },
             onFull = { vm.openSettingsPage(null) },
+            onAnchor = { vm.noteSettingsAnchor(it) },
         )
     }
     // ⭐⭐ Models / Flows / Results are SHEETS over the canvas again, like Settings (the user's call
@@ -1011,6 +1012,8 @@ fun HarnessScreen(
     if (settingsPage != null) {
         com.abrah.nightmare.ui.SettingsCardSheet(
             onDismiss = { vm.setCanvasVisible(true) },
+            // ⭐ The card grows LEFT out of the capsule that was tapped.
+            anchorY = vm.settingsAnchor,
             overlay = sidebar,
         ) { SettingsSheetBody(vm = vm, onlyPage = settingsPage) }
         return
