@@ -273,7 +273,7 @@ function draftHasBoxes(t){try{return loadDraft(t).items.length>0}catch(e){return
 
 /* ================= 画布编辑 ================= */
 function syncFromUI(){S.w=parseInt($("W").value)||1024;S.h=parseInt($("H").value)||1024;S.canvas=$("canvasChips").querySelector(".on").dataset.v}
-function sizeChanged(){syncFromUI();clampAll();draw();renderItems();compileOnly();save()}
+function sizeChanged(){syncFromUI();clampAll();draw();renderItems();compileOnly();save();if(window.Nightmare&&window.Nightmare.setSize)window.Nightmare.setSize(S.w,S.h)}
 function swapWH(){const w=$("W").value;$("W").value=$("H").value;$("H").value=w;sizeChanged()}
 function clampAll(){
   const fix=b=>{b[0]=Math.max(0,Math.min(b[0],S.w-8));b[2]=Math.max(b[0]+8,Math.min(b[2],S.w));b[1]=Math.max(0,Math.min(b[1],S.h-8));b[3]=Math.max(b[1]+8,Math.min(b[3],S.h))};

@@ -29,6 +29,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -282,40 +283,34 @@ internal fun SettingsMenuScrim(
  */
 @Composable
 internal fun SettingsCardSheet(
+    visible: Boolean,
     onDismiss: () -> Unit,
-    /** ⭐ The tapped capsule's center, as a fraction of the screen height: the
-     * card grows LEFT out of that point (the user, 2026-11-05 — from the capsule,
-     * not from the bottom edge). */
-    anchorY: Float = 0.8f,
     content: @Composable () -> Unit,
 ) {
-    // ⭐ Unfolds and lifts at once: the 16 dp rise is the Secondary layer, the Y
-    // scale the Primary one.
+    // ⭐⭐ Same life as [DestCardSheet] (2026-11-06): the card watches `visible`,
+    // plays its exit BEFORE it stops composing, and rises from the BOTTOM.
+    // Height stays 62 % (the user sized this one by the mock, not by the report).
+    var shown by remember { mutableStateOf(visible) }
     val p = remember { androidx.compose.animation.core.Animatable(0f) }
-    LaunchedEffect(Unit) {
-        p.animateTo(1f, tween(280, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)))
-    }
-    // ⭐⭐ In the main window now (2026-11-06): no dialog, no second window — the
-    // bar is composed by the caller around this card, at the real window edge,
-    // so it keeps its position and stays live.
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val closing = remember { androidx.compose.runtime.mutableStateOf(false) }
-    fun close() {
-        if (closing.value) return
-        closing.value = true
-        scope.launch {
-            p.animateTo(0f, tween(190, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)))
-            onDismiss()
+    LaunchedEffect(visible) {
+        if (visible) {
+            shown = true
+            p.animateTo(1f, tween(320, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)))
+        } else if (shown) {
+            p.animateTo(0f, tween(220, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)))
+            shown = false
         }
     }
-    androidx.activity.compose.BackHandler { close() }
+    if (!shown) return
+    androidx.activity.compose.BackHandler { onDismiss() }
     Box(Modifier.fillMaxSize()) {
         // ⭐ A tap beside the card closes it — back to the canvas.
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.34f * p.value))
-                .pointerInput(Unit) { detectTapGestures { close() } },
+                .graphicsLayer { alpha = p.value }
+                .background(Color.Black.copy(alpha = 0.34f))
+                .pointerInput(Unit) { detectTapGestures { onDismiss() } },
         )
         Box(
             Modifier
@@ -332,10 +327,6 @@ internal fun SettingsCardSheet(
                     MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                 ),
                 modifier = Modifier
-                    // ⭐ BOTTOM-centre (the user, 2026-11-05: the card belongs at
-                    // the bottom, per their mock) — and it still unfolds LEFT out
-                    // of the tapped capsule: the origin rides the card's RIGHT
-                    // edge at the capsule's height projected into the card.
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .fillMaxHeight(0.62f)
@@ -344,16 +335,12 @@ internal fun SettingsCardSheet(
                     .graphicsLayer {
                         val v = p.value
                         alpha = v
-                        // The capsule's height within THIS card: the card is the
-                        // bottom 62 % of the area the anchor is a fraction of.
-                        val oy = ((anchorY - 0.38f) / 0.62f).coerceIn(0.15f, 0.9f)
-                        // ⭐ The unfold: LEFT out of the capsule — X leads (24 dp),
-                        // Y follows lightly (10 dp).
-                        translationX = (1f - v) * 24.dp.toPx()
-                        translationY = (1f - v) * 10.dp.toPx()
-                        scaleX = 0.88f + 0.12f * v
-                        scaleY = 0.94f + 0.06f * v
-                        transformOrigin = TransformOrigin(1f, oy)
+                        // ⭐ The rise, out of the bottom edge — same language as
+                        // the destination cards.
+                        translationY = (1f - v) * 64.dp.toPx()
+                        scaleX = 0.96f + 0.04f * v
+                        scaleY = 0.96f + 0.04f * v
+                        transformOrigin = TransformOrigin(0.5f, 1f)
                     },
             ) { content() }
         }

@@ -758,8 +758,7 @@ fun HarnessScreen(
     // ⭐⭐ Models / Flows / Results are SHEETS over the canvas again, like Settings (the user's call
     // 2026-10-10, reversing Violet Studio's destinations-under-the-shell of 2026-10-08).
     // ⚠ The sheet handles Back itself (its Dialog's dismiss), so the gesture never leaves the app.
-    if (vm.libraryOpen) {
-        com.abrah.nightmare.ui.DestCardSheet(onDismiss = vm::closeLibrary, anchorY = vm.barAnchorY) {
+    com.abrah.nightmare.ui.DestCardSheet(visible = vm.libraryOpen, onDismiss = vm::closeLibrary) {
             // ⭐⭐ Asked AT the first Download, not at launch: that is the
             // moment the answer means something. Android 13+ drops every
             // notification silently without it, and the shade is where a
@@ -995,47 +994,23 @@ fun HarnessScreen(
                 }
             }
         }
-    }
 
     // ⭐ The bar, composed ONCE, in the main window (2026-11-06): every
     // destination is a card in THIS window — the bar keeps its real position
     // (no sheet window, no sunken insets) and stays live over the dim.
     sidebar()
 
+    val settingsPage = vm.settingsPage
+    com.abrah.nightmare.ui.SettingsCardSheet(
+        visible = settingsPage != null,
+        onDismiss = { vm.setCanvasVisible(true) },
+    ) { if (settingsPage != null) SettingsSheetBody(vm = vm, onlyPage = settingsPage) }
+    com.abrah.nightmare.ui.DestCardSheet(
+        visible = !vm.showCanvas && settingsPage == null && !vm.libraryOpen,
+        onDismiss = { vm.setCanvasVisible(true) },
+    ) { SettingsSheetBody(vm = vm, onlyPage = null) }
     if (vm.showCanvas) {
         return
-    }
-
-    // ⭐⭐⭐ ONE PAGE = the floating CARD; the whole screen = the pull-down sheet as it
-    // always was (the user, 2026-11-05). Both are their own window and both carry the
-    // bar as their overlay; only the shape, the exit and the chrome differ.
-    val settingsPage = vm.settingsPage
-    if (settingsPage != null) {
-        com.abrah.nightmare.ui.SettingsCardSheet(
-            onDismiss = { vm.setCanvasVisible(true) },
-            // ⭐ The card grows LEFT out of the capsule that was tapped.
-            anchorY = vm.settingsAnchor,
-        ) { SettingsSheetBody(vm = vm, onlyPage = settingsPage) }
-        return
-    }
-    com.abrah.nightmare.ui.DestCardSheet(onDismiss = { vm.setCanvasVisible(true) }, anchorY = vm.barAnchorY) {
-
-        // ⚠⚠ **Settings is one page now** — Community and Diagnostics (the op
-        // harness) were removed 2026-09-19, at the user's ask: a pack still loads
-        // from `<externalFiles>/plugins/` with no UI, and the harness is a
-        // developer surface (`OpService` over adb) that never needed one either.
-        // `ui/SettingsScreen.kt` has the reasoning.
-        //
-        // M-bM-^ZM-  Back returns to the canvas rather than quitting -- the same hole the
-        // fullscreen viewer had, and the reason every over-canvas screen handles it.
-        // M-bM-^ZM-  Since the bottom bar (2026-11-04): Back, and the bar's own
-        // already-selected Canvas tap, BOTH return to the canvas -- the sheet keeps
-        // its own pull-down dismiss either way.
-        // ⭐ Settings' own copy of the embeddings import picker — see the Models
-        // tab's `embeddingPicker` for the same launcher and why it is declared
-        // per-screen rather than shared (each screen owns its own launcher, the
-        // existing pattern every picker in this file already follows).
-        SettingsSheetBody(vm = vm, onlyPage = null)
     }
 }
 

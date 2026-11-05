@@ -39,6 +39,10 @@ class MossCanvasActivity : ComponentActivity() {
     }
 
     private lateinit var web: WebView
+    // Typed size reported live by the page (Nightmare.setSize). -1 = no report
+    // yet; saveDraft then falls back to the size the page passes with the draft.
+    private var sizeW = -1
+    private var sizeH = -1
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -91,12 +95,20 @@ class MossCanvasActivity : ComponentActivity() {
      */
     private inner class Bridge {
         @JavascriptInterface
+        fun setSize(w: Int, h: Int) = runOnUiThread { sizeW = w; sizeH = h }
+
+        @JavascriptInterface
         fun saveDraft(compiled: String, width: Int, height: Int) {
             runOnUiThread {
+                // Prefer the live-typed size (kept current by setSize) over the
+                // value captured when the draft was compiled, so edits made
+                // after compiling still land back on the sampler widgets.
+                val w = if (sizeW > 0) sizeW else width
+                val h = if (sizeH > 0) sizeH else height
                 val data = Intent()
                     .putExtra(EXTRA_DRAFT, compiled)
-                    .putExtra(EXTRA_WIDTH, width)
-                    .putExtra(EXTRA_HEIGHT, height)
+                    .putExtra(EXTRA_WIDTH, w)
+                    .putExtra(EXTRA_HEIGHT, h)
                 setResult(RESULT_OK, data)
                 finish()
             }

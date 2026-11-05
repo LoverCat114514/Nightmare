@@ -17,9 +17,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -27,55 +28,54 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 
 /**
  * ⭐⭐⭐ A destination card (Models / Flows / Results / full Settings) INSIDE the
- * main window — not a [PullDownSheet] (the user, 2026-11-06: *"这个下沉问题不如换个
- * 方式解决…点击底导航栏模型、流程、结果的时候往上弹窗卡片，这样让底导航栏不用下沉
- * 也可以打开这三个"*).
+ * main window, driven by a `visible` flag — v2 (2026-11-06, the user's report):
  *
- * Why not a sheet: a sheet is its own window, and in those windows the insets
- * never reach Compose AND the decor listener behind [bottomInset] never fired
- * (measured on the phone: the sheet's bar sat 50 px lower than the main
- * window's — the user's "下沉"). Here there is NO second window: the bar stays
- * where the activity put it, so it cannot sink, and it stays LIVE — another
- * slot switches the card in place.
+ * ⭐ **82 % of the height** (was 62 %): most of the screen, but the top edge
+ * stays — "至少要将上半边也占居但不要顶头".
  *
- * Same shape as [SettingsCardSheet]: bottom-centred, 62 % of the height, clear
- * of the bar ([BOTTOM_BAR_RESERVE]), unfolding out of the tapped bar slot
- * (280 ms, `cubic-bezier(0.2, 0, 0, 1)`; exit 190 ms ≈ 68 % — the skill's
- * exit-is-65–75 %-of-entrance rule).
+ * ⭐ **It rises from the BOTTOM edge** (translateY 64 dp → 0, origin at the
+ * card's bottom centre) — "不应该是从底部弹出吗", not out of the side.
+ *
+ * ⭐ **It animates OUT.** The card watches `visible` itself: when the flag
+ * drops (any closer — scrim, Back, the bar's Canvas slot) it plays the exit
+ * FIRST and only then stops composing, so a card can never vanish mid-air
+ * ("关闭时凭空消失"). The caller keeps it composed unconditionally; `shown`
+ * here is the only thing that gates the layout. Re-opening while the exit is
+ * still running re-enters cleanly (the effect just animates back up).
+ *
+ * Exit 220 ms ≈ 69 % of the 320 ms entrance — the skill's 65–75 % rule.
  */
 @Composable
 internal fun DestCardSheet(
+    visible: Boolean,
     onDismiss: () -> Unit,
-    /** ⭐ The tapped bar slot's centre, as a fraction of the screen height. */
-    anchorY: Float = 0.9f,
     content: @Composable () -> Unit,
 ) {
+    var shown by remember { mutableStateOf(visible) }
     val p = remember { Animatable(0f) }
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) {
-        p.animateTo(1f, tween(280, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)))
-    }
-    val closing = remember { mutableStateOf(false) }
-    fun close() {
-        if (closing.value) return
-        closing.value = true
-        scope.launch {
-            p.animateTo(0f, tween(190, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)))
-            onDismiss()
+    LaunchedEffect(visible) {
+        if (visible) {
+            shown = true
+            p.animateTo(1f, tween(320, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)))
+        } else if (shown) {
+            p.animateTo(0f, tween(220, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)))
+            shown = false
         }
     }
-    BackHandler { close() }
+    if (!shown) return
+    BackHandler { onDismiss() }
     Box(Modifier.fillMaxSize()) {
-        // Ambient: the dim deepens as the card grows, lightens as it leaves.
+        // Ambient: the dim rides the same progress, so it deepens with the
+        // rise and lifts with the exit.
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.34f * p.value))
-                .pointerInput(Unit) { detectTapGestures { close() } },
+                .graphicsLayer { alpha = p.value }
+                .background(Color.Black.copy(alpha = 0.34f))
+                .pointerInput(Unit) { detectTapGestures { onDismiss() } },
         )
         Box(
             Modifier
@@ -91,22 +91,19 @@ internal fun DestCardSheet(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .fillMaxHeight(0.62f)
+                    .fillMaxHeight(0.82f)
                     // ⚠ Swallows taps so a tap on the BODY never reaches the scrim.
                     .pointerInput(Unit) { detectTapGestures { } }
                     .graphicsLayer {
                         val v = p.value
                         alpha = v
-                        // The slot's height within THIS card (the card is the bottom
-                        // 62 % of the area the anchor is a fraction of).
-                        val oy = ((anchorY - 0.38f) / 0.62f).coerceIn(0.15f, 0.9f)
-                        // ⭐ The unfold: LEFT out of the slot — X leads (24 dp), Y
-                        // follows lightly (10 dp); the scale does the growth.
-                        translationX = (1f - v) * 24.dp.toPx()
-                        translationY = (1f - v) * 10.dp.toPx()
-                        scaleX = 0.88f + 0.12f * v
-                        scaleY = 0.94f + 0.06f * v
-                        transformOrigin = TransformOrigin(1f, oy)
+                        // ⭐ The rise: out of the BOTTOM edge — Y leads (64 dp),
+                        // the scale does the growth, the origin is the card's own
+                        // bottom centre. No side origin any more (2026-11-06).
+                        translationY = (1f - v) * 64.dp.toPx()
+                        scaleX = 0.96f + 0.04f * v
+                        scaleY = 0.96f + 0.04f * v
+                        transformOrigin = TransformOrigin(0.5f, 1f)
                     },
             ) { content() }
         }
