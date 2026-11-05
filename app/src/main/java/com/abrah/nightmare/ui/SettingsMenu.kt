@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -156,7 +159,12 @@ private fun MenuCapsule(
                 indication = null,
                 onClick = onClick,
             )
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            // ⭐ A comfortable size, one lap bigger than the slim pill (the user,
+            // 2026-11-05): a 120×48 hit area that is easy to press, never a full
+            // block. Space is tight on the right, so this is the floor, not the cap.
+            .widthIn(min = 120.dp)
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 20.dp, vertical = 12.dp)
             .graphicsLayer {
                 alpha = p
                 translationY = (1f - p) * 12.dp.toPx()
@@ -167,6 +175,7 @@ private fun MenuCapsule(
     ) {
         Text(
             label,
+            modifier = Modifier.fillMaxWidth(),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
