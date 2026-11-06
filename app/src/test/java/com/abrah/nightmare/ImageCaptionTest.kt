@@ -14,7 +14,7 @@ class ImageCaptionTest {
 
     /** BART's first ids are `<s> <pad> </s> <unk>`; `Ġ` stands for a space. */
     private val vocab = ByteLevel.vocab(
-        """{"<s>":0,"<pad>":1,"</s>":2,"<unk>":3,"A":4,"Ġgreen":5,"Ġcar":6,".":7,"Ġcaf":8,"Ã©":9,"<mask>":10}""",
+        """{"<s>":0,"<pad>":1,"</s>":2,"<unk>":3,"A":4,"Ġgreen":5,"Ġcar":6,".":7,"Ġcaf":8,"é":9,"<mask>":10}""",
     )
 
     @Test
@@ -25,7 +25,7 @@ class ImageCaptionTest {
 
     @Test
     fun multiByteUtf8SurvivesAcrossTheStandIns() {
-        // `é` is two bytes, spelled `Ã©` in the vocab.
+        // `é` is two bytes, spelled `é` in the vocab.
         assertEquals("café", ByteLevel.decode(longArrayOf(0, 8, 9, 2), vocab))
     }
 

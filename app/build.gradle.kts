@@ -8,20 +8,20 @@ plugins {
 }
 
 /**
- * â­â­ Release signing, read from OUTSIDE the repository.
+ * ⭐⭐ Release signing, read from OUTSIDE the repository.
  *
- * âš âš  `../.secrets/nightmare-keystore/` is a sibling of the repo, not a
+ * ⚠⚠ `../.secrets/nightmare-keystore/` is a sibling of the repo, not a
  * gitignored path inside it. Gitignore is one `git add -f` away from
  * committing a private key; a file that is not in the tree at all cannot be
  * committed by accident.
  *
- * âš âš  A MISSING keystore is not an error. The release build still runs and
+ * ⚠⚠ A MISSING keystore is not an error. The release build still runs and
  * produces an unsigned APK, so a fresh clone on another machine can build
  * and test the release variant without holding the key. Failing here would
  * make the project unbuildable for everyone except one laptop, which is a
  * strange thing for a public repository to do.
  *
- * âš  Android identifies an app by its signature: lose this key and no future
+ * ⚠ Android identifies an app by its signature: lose this key and no future
  * build can update an installed copy. `facefusion-mobile` lost one already.
  * The README beside the keystore says what to do about it.
  */
@@ -41,23 +41,23 @@ android {
         // there is no reason to support anything the NPU path cannot run on.
         minSdk = 31
         targetSdk = 35
-        // âš  Bump on EVERY push. The harness prints versionName, and two builds
+        // ⚠ Bump on EVERY push. The harness prints versionName, and two builds
         // sharing a version makes a failure report unattributable -- DreamUI lost
         // five releases to this exact mistake.
         //
-        // âš âš  THREE-part versionName, and an ordinary push increments the
-        // PATCH: 1.2.0 -> 1.2.1 -> 1.2.2. âš âš  Getting the FORMAT right is not
+        // ⚠⚠ THREE-part versionName, and an ordinary push increments the
+        // PATCH: 1.2.0 -> 1.2.1 -> 1.2.2. ⚠⚠ Getting the FORMAT right is not
         // getting the GRANULARITY right -- this went 1.0.12 -> 1.1.0 -> 1.2.0,
         // a minor bump per push, which is what the rule exists to stop. The
-        // minor moves only when a release is called a release. âš  versionCode
+        // minor moves only when a release is called a release. ⚠ versionCode
         // stays a plain incrementing integer; Android requires that.
-        versionCode = 599
-        versionName = "1.6.292"
+        versionCode = 600
+        versionName = "1.6.293"
         // ⭐ fix31 (friend's audit P1-1): the touch/frame probe is a diagnostic
         // tool, not a product feature — release builds must not write to
         // external storage from every touch. dev keeps it (this push build is
         // what the phone runs; the probe is how every stall report got made).
-        buildConfigField("boolean", "PROBE", "true")
+        buildConfigField("boolean", "PROBE", "false")
         ndk { abiFilters += "arm64-v8a" }
 
         // The plugin runtime and the NPU runner, both built from source.
@@ -92,12 +92,12 @@ android {
                 storePassword = keystoreProps.getProperty("storePassword")
                 keyAlias = keystoreProps.getProperty("keyAlias")
                 keyPassword = keystoreProps.getProperty("keyPassword")
-                // âš  AGP leaves v3 OFF by default, and v3 is the scheme that
+                // ⚠ AGP leaves v3 OFF by default, and v3 is the scheme that
                 // makes KEY ROTATION possible later. It cannot be added
                 // retroactively to an APK people have already installed, so it
                 // goes on before the first release rather than after.
                 //
-                // âš âš  MEASURED 2026-09-11: with v3 on, AGP emits a v3 block
+                // ⚠⚠ MEASURED 2026-09-11: with v3 on, AGP emits a v3 block
                 // INSTEAD of v2, not alongside it -- `apksigner verify` reports
                 // v2 false, v3 true however `enableV2Signing` is set. That is
                 // fine here and only here: v3 needs API 28 and minSdk is 31, so
@@ -114,13 +114,13 @@ android {
     }
 
     buildTypes {
-        // Ã¢Å¡Â  Not minified, unlike DreamUI's debug build -- and that is only
+        // ⚠ Not minified, unlike DreamUI's debug build -- and that is only
         // tenable because the dex is small. MEASURED 2026-09-07: with
         // material-icons-extended on the classpath the unminified APK was
         // 55.6 MB, of which 55.0 MB was dex (44.4 + 10.6). Dropping that one
         // unused dependency took it to the size below. DreamUI hit the identical
         // wall at 43.8 MB and solved it by minifying debug instead.
-        // Ã¢â€¡â€™ Revisit the moment the dex grows again; unminified is a convenience,
+        // ⇒ Revisit the moment the dex grows again; unminified is a convenience,
         // not a principle, and stack traces are what it buys.
         debug {
             isMinifyEnabled = false
@@ -210,7 +210,7 @@ android {
 }
 
 dependencies {
-    // Ã¢Å¡Â  Compose BOM 2024.10.01 gives material3 1.3.1, which is NOT Material 3
+    // ⚠ Compose BOM 2024.10.01 gives material3 1.3.1, which is NOT Material 3
     // Expressive (needs 1.4+). Pinned here anyway because this exact set is
     // already in the Gradle cache, so the first build proves the scaffold rather
     // than dependency resolution. The Expressive bump is a separate, isolated
@@ -226,13 +226,13 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    // Ã¢Å¡Â  material-icons-extended is deliberately ABSENT. It is thousands of
+    // ⚠ material-icons-extended is deliberately ABSENT. It is thousands of
     // generated vector classes and costs ~55 MB of dex on its own (measured
     // above) whether or not a single icon is referenced. Add individual icons,
     // or the base `material-icons-core`, if one is actually needed.
 
-    // â­ Tap to select (`docs/SEGMENTER.md`): SAM 2.1 on ORT's CPU build, as
-    // DreamUI. NOT onnxruntime-android-qnn â€” QNN cannot create an HTP device on
+    // ⭐ Tap to select (`docs/SEGMENTER.md`): SAM 2.1 on ORT's CPU build, as
+    // DreamUI. NOT onnxruntime-android-qnn — QNN cannot create an HTP device on
     // this SoC through ORT, and the split graph costs 28 ms a tap on the CPU.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.29.0")
 
@@ -241,7 +241,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.activity:activity-compose:1.9.3")
 
-    // Ã¢Â­Â The inner loop of docs/UI.md: previews are the agent's cheap eyes, so
+    // ⭐ The inner loop of docs/UI.md: previews are the agent's cheap eyes, so
     // the tooling that renders them is a first-class dependency, not an extra.
     debugImplementation("androidx.compose.ui:ui-tooling")
 
