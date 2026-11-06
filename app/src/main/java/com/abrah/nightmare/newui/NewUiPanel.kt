@@ -156,8 +156,6 @@ private val RUN_LOG = java.util.concurrent.atomic.AtomicReference<String?>(null)
 object NewUiRun {
     /** Shared busy flag — the same instance the screen's run loop flips. */
     val busy: androidx.compose.runtime.MutableState<Boolean> = androidx.compose.runtime.mutableStateOf(false)
-    /** The screen's generate/cancel tap; null before the first NEWUI composition. */
-    var onTap: (() -> Unit)? = null
 }
 
 /** The [ApiCore] for the NEWUI view. Built once; holder "newui" so RunLock scopes it. */
@@ -356,6 +354,10 @@ private fun buildRequest(
     if (s.cfg > 0f) knobs["cfg"] = s.cfg.toString()
     if (img2img) knobs["denoise"] = s.denoise.toString()
     if (s.fixedSeed && s.seed > 0L) knobs["seed"] = s.seed.toString()
+    // ⭐ fix30 (audit note): fixedSeed with an EMPTY seed field (0) falls through
+    // to a random seed by design — the field starts blank and the user may not
+    // have typed yet. Documented here rather than blocked: blocking would make
+    // "lock the seed" refuse the very first tap.
     // ⭐ (2026-11-05, eighth round) Fix faces / hands ride the SAME knobs channel as
     // steps/cfg: every family with a masked render declares the fix widgets on its
     // sampler (Fused.detailWidgets) and re-draws each found part in the render
@@ -366,7 +368,17 @@ private fun buildRequest(
         if (s.pHands) knobs[com.abrah.nightmare.detail.Detailer.FIX_HANDS] = "true"
     }
     if (s.loras.isNotEmpty()) {
-        knobs["loras"] = s.loras.joinToString(", ") { (n, w) -> "$n.safetensors@$w" }
+        // ⭐ fix30 (audit): the picker's names ALREADY carry `.safetensors` (they
+        // come straight from `lorasDir.listFiles`), and [LoraSpec.parse] keeps the
+        // extension — appending another one produced `x.safetensors.safetensors@w`,
+        // which [Fused.parseLoras] refuses as "not installed" and the run died with
+        // "LoRA … is not in loras". The documented format is `name.safetensors@w`
+        // where name is the FULL file name; the guard only keeps old bare-name
+        // states running.
+        knobs["loras"] = s.loras.joinToString(", ") { (n, w) ->
+            val fn = if (n.endsWith(".safetensors", ignoreCase = true)) n else "$n.safetensors"
+            "$fn@$w"
+        }
     }
     val params = if (s.mossOn && model.family == com.abrah.nightmare.Family.MOSS) {
         mapOf("generate" to mapOf(SdSampler.MOSS_LAYOUT to "true"))
@@ -465,22 +477,12 @@ fun NewUiScreen(
     val msLine = remember { mutableStateOf("—") }
     var srcDataUrl by remember { mutableStateOf<String?>(null) }
     var srcName by remember { mutableStateOf("") }
-    var modelId by remember { mutableStateOf(s.modelId) }
-    // ⭐ (2026-11-05, eighth round) The mode is STATE here, not a plain read of
-    // [s.mode]: WbState has no recompose signal, so the ResultCard froze on the
-    // composition-time value (the user's report: img2img picked, no Load button).
-    // Same shape as [modelId] above; the ModeCard writes BOTH, and buildRequest
-    // keeps reading [s.mode].
-    var modeState by remember { mutableStateOf(s.mode) }
-    // ⭐ (2026-11-05, ninth round, revised) Publish the run action to the bridge
-    // on every recomposition — the prompt/source states captured here are the
-    // fresh ones; leaving the view unpublishes so a stale tap can't fire.
-    androidx.compose.runtime.SideEffect {
-        NewUiRun.onTap = { onTapGenerate(ctx, s, positive, negative, srcDataUrl, busy, progTxt, progFrac, statusLine, msLine) }
-    }
-    androidx.compose.runtime.DisposableEffect(Unit) {
-        onDispose { NewUiRun.onTap = null }
-    }
+    // ⭐ fix30 (audit): no more local mirrors of WbState scalars. Every scalar IS
+    // compose state now (the WbState header note), so reading [s.modelId]/[s.mode]
+    // here subscribes the screen directly — the old `remember { mutableStateOf(s.X)
+    // }` copies froze on the composition-time value whenever anything wrote the
+    // wire from outside (onTapGenerate's model/scheduler corrections, a state
+    // reset), and only the card's own writes kept the two in step.
     // The global follows the workbench's restored pick (symmetric with the
     // picker's double write), so the engine and the Default UI agree.
     LaunchedEffect(Unit) {
@@ -488,7 +490,6 @@ fun NewUiScreen(
             try { SelectedModel.set(ctx, s.modelId) } catch (_: Exception) {}
         }
     }
-    var tick by remember { mutableIntStateOf(0) }
     var modelVer by remember { mutableIntStateOf(0) }
     // ⭐ (2026-11-05, sixth round) Persist on every parameter change: saveState used
     // to run only on Generate, so a pick followed by leaving the view lost it (the
@@ -598,7 +599,7 @@ fun NewUiScreen(
         // now (the brand's old spot); the card keeps status + save icon.
         ResultCard(
             ctx, busy.value, progTxt.value, progFrac.value, srcName, postVer.intValue,
-            mode = modeState,
+            mode = s.mode,
             statusTxt = statusLine.value.ifBlank { stringResource(R.string.newui_ready) },
             onPickSrc = { uri, name ->
                 srcDataUrl = uri?.let { uriToDataUrl(ctx, it) }
@@ -617,8 +618,8 @@ fun NewUiScreen(
         // ── Card 2: the mode ──────────────────────────────────────────────
         ModeCard(
             s,
-            family = ModelCatalog.byId(modelId)?.family ?: SelectedModel.spec.family,
-            onMode = { modeState = it },
+            family = ModelCatalog.byId(s.modelId)?.family ?: SelectedModel.spec.family,
+            onMode = { s.mode = it },
             onDraft = { positive = it },
             onDraftSize = { w, h -> s.w = w; s.h = h; modelVer++ },
         )
@@ -644,10 +645,10 @@ fun NewUiScreen(
         // ── Card 4: the model ─────────────────────────────────────────────
         ModelCard(
             ctx, s,
-            modelId = modelId,
-            family = ModelCatalog.byId(modelId)?.family ?: SelectedModel.spec.family,
+            modelId = s.modelId,
+            family = ModelCatalog.byId(s.modelId)?.family ?: SelectedModel.spec.family,
             loraEpoch = loraEpoch,
-            onPicked = { id -> modelId = id; s.modelId = id; modelVer++ },
+            onPicked = { id -> s.modelId = id; modelVer++ },
             onLorasChanged = { modelVer++ },
             onImportLora = { loraImport.launch(arrayOf("application/octet-stream", "*/*")) },
             onBrowseLoras = onBrowseLoras,
@@ -657,7 +658,7 @@ fun NewUiScreen(
         // ── Card 5: the parameters ────────────────────────────────────────
         ParamsCard(
             ctx, s,
-            family = ModelCatalog.byId(modelId)?.family ?: SelectedModel.spec.family,
+            family = ModelCatalog.byId(s.modelId)?.family ?: SelectedModel.spec.family,
             onPicked = { modelVer++ },
             onApply = { applyPost(it) },
         )
@@ -675,7 +676,6 @@ fun NewUiScreen(
                 progFrac.value = p.toFloat() / t
             }
             RUN_LOG.get()?.let { statusLine.value = it }
-            tick++ // the history strip redraws when a shot lands
             kotlinx.coroutines.delay(100)
         }
     }
@@ -984,24 +984,24 @@ private fun ModeCard(
 ) {
     Card(Modifier.fillMaxWidth().border(1.dp, Nm.line, RoundedCornerShape(16.dp)), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Nm.card), elevation = CardDefaults.cardElevation(0.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            var mode by remember { mutableStateOf(s.mode) }
-            // ⭐ (2026-11-05, seventh round) The HTML .seg: one pill, two halves.
+            // ⭐ fix30 (audit): [s.mode] is compose state — read it directly. The old
+            // `remember { mutableStateOf(s.mode) }` mirror froze on the
+            // composition-time value (the exact bug the eighth-round note
+            // describes, kept alive by the mirror itself).
             SegmentedRow(
-                selLeft = mode != "img2img",
+                selLeft = s.mode != "img2img",
                 left = "✦ " + stringResource(R.string.newui_txt2img),
                 right = "🖼 " + stringResource(R.string.newui_img2img),
-                onLeft = { mode = "txt2img"; s.mode = "txt2img"; onMode("txt2img") },
-                onRight = { mode = "img2img"; s.mode = "img2img"; onMode("img2img") },
+                onLeft = { s.mode = "txt2img"; onMode("txt2img") },
+                onRight = { s.mode = "img2img"; onMode("img2img") },
             )
-            if (mode == "img2img") {
+            if (s.mode == "img2img") {
                 PostSlider(
                     stringResource(R.string.newui_denoise),
                     s.denoise, 0.05f..0.95f, fmt = { String.format("%.2f", it) },
                 ) { s.denoise = it }
             }
-            var mossOn by remember { mutableStateOf(s.mossOn) }
-            // ⭐ (2026-11-05, seventh round) The MOSS draft is a MOSS-only feature:
-            // the block only exists when the picked model is Family.MOSS (the user).
+            // ⭐ fix30 (audit): [s.mossOn] is compose state — read it directly, no mirror.
             if (family == com.abrah.nightmare.Family.MOSS) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -1012,9 +1012,9 @@ private fun ModeCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Switch(checked = mossOn, onCheckedChange = { mossOn = it; s.mossOn = it })
+                Switch(checked = s.mossOn, onCheckedChange = { s.mossOn = it })
             }
-            if (mossOn) {
+            if (s.mossOn) {
                 val ctx = LocalContext.current
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
                     val draft = r.data?.getStringExtra(MossCanvasActivity.EXTRA_DRAFT)
@@ -1246,17 +1246,19 @@ private fun ParamsCard(
             var schedVer by remember { mutableIntStateOf(0) }
             // ⭐ (2026-11-05, second round) The Default UI's split: SAMPLER and SCHEDULE
             // are two pickers over ONE wire value ([splitScheduler]/[joinScheduler]) —
-            // the user's image 1. State mirrors for recomposition (a plain write into
-            // WbState recomposes nothing); every pick re-splits through schedVer.
-            var wire by remember { mutableStateOf(s.scheduler) }
+            // the user's image 1. ⭐ fix30 (audit): the wire IS [s.scheduler] (compose
+            // state) — the old `remember { mutableStateOf(s.scheduler) }` mirror
+            // drifted from anything that wrote the wire outside this card
+            // (onTapGenerate's blank-scheduler correction). The split re-runs on
+            // schedVer; every pick writes the wire once and bumps schedVer.
+            val wire = s.scheduler
             val (base, sched) = remember(schedVer) {
                 ModelCatalog.splitScheduler(if (wire.isBlank()) ModelCatalog.DEFAULT_SCHEDULER else wire)
             }
             LaunchedEffect(family, schedVer) {
                 val choices = ModelCatalog.schedulersFor(family)
                 if (wire.isBlank() || wire !in choices) {
-                    wire = choices.firstOrNull().orEmpty()
-                    s.scheduler = wire
+                    s.scheduler = choices.firstOrNull().orEmpty()
                     schedVer++
                 }
             }
@@ -1267,8 +1269,7 @@ private fun ParamsCard(
             LaunchedEffect(family) {
                 val choices = ModelCatalog.schedulersFor(family)
                 if (wire !in choices) {
-                    wire = choices.firstOrNull().orEmpty()
-                    s.scheduler = wire
+                    s.scheduler = choices.firstOrNull().orEmpty()
                     schedVer++
                 }
             }
@@ -1279,7 +1280,7 @@ private fun ParamsCard(
                     ModelCatalog.schedulersFor(family).map { ModelCatalog.splitScheduler(it).first }.distinct()
                 },
                 textOf = { ModelCatalog.schedulerLabel(it) },
-                onPick = { b -> wire = ModelCatalog.joinScheduler(b, sched); s.scheduler = wire; schedVer++; onPicked() },
+                onPick = { b -> s.scheduler = ModelCatalog.joinScheduler(b, sched); schedVer++; onPicked() },
             )
             // The schedule row: only where the family's sampler actually takes one
             // (Anima's flow-match has none; LCM keeps its own).
@@ -1307,7 +1308,7 @@ private fun ParamsCard(
                     current = sched,
                     choices = schedules,
                     textOf = { schedNames[it] ?: it },
-                    onPick = { sfx -> wire = ModelCatalog.joinScheduler(base, sfx); s.scheduler = wire; schedVer++; onPicked() },
+                    onPick = { sfx -> s.scheduler = ModelCatalog.joinScheduler(base, sfx); schedVer++; onPicked() },
                 )
             }
             PostSlider(
@@ -1322,21 +1323,28 @@ private fun ParamsCard(
             ) { s.cfg = it }
 
             // The seed segment: random / fixed, the field only when fixed.
-            var fixedSeed by remember { mutableStateOf(s.fixedSeed) }
+            // ⭐ fix30 (audit): [s.fixedSeed] is compose state — no mirror.
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
-                    selected = !fixedSeed,
-                    onClick = { fixedSeed = false; s.fixedSeed = false },
+                    selected = !s.fixedSeed,
+                    onClick = { s.fixedSeed = false },
                     label = { Text("✓ " + stringResource(R.string.newui_rand_seed)) },
                 )
                 FilterChip(
-                    selected = fixedSeed,
-                    onClick = { fixedSeed = true; s.fixedSeed = true },
+                    selected = s.fixedSeed,
+                    onClick = { s.fixedSeed = true },
                     label = { Text("🔒 " + stringResource(R.string.newui_fixed_seed)) },
                 )
             }
-            if (fixedSeed) {
+            if (s.fixedSeed) {
+                // ⭐ fix30 (audit): the NumField shape — the text follows the wire
+                // ([s.seed]) whenever it moved from OUTSIDE this field, but never
+                // while the user is typing (a mid-edit sync would eat the cursor).
                 var seedTxt by remember { mutableStateOf(if (s.seed > 0) s.seed.toString() else "") }
+                var focused by remember { mutableStateOf(false) }
+                LaunchedEffect(s.seed, focused) {
+                    if (!focused) seedTxt = if (s.seed > 0) s.seed.toString() else ""
+                }
                 OutlinedTextField(
                     value = seedTxt,
                     onValueChange = { t ->
@@ -1352,12 +1360,12 @@ private fun ParamsCard(
                 cursorColor = Nm.pri, focusedTextColor = Nm.ink, unfocusedTextColor = Nm.ink,
             ),
                     shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { f -> focused = f.isFocused },
                 )
             }
 
             // Auto save: the run's shot stays in the history strip.
-            var autosave by remember { mutableStateOf(s.autosave) }
+            // ⭐ fix30 (audit): [s.autosave] is compose state — no mirror.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(stringResource(R.string.newui_autosave), style = MaterialTheme.typography.titleSmall)
@@ -1367,7 +1375,7 @@ private fun ParamsCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Switch(checked = autosave, onCheckedChange = { autosave = it; s.autosave = it })
+                Switch(checked = s.autosave, onCheckedChange = { s.autosave = it })
             }
 
             // ── Post-processing: the Default UI's three tools, each with its per-run
@@ -1490,7 +1498,7 @@ private fun ParamsCard(
                         s.pUps = false; s.pUps2 = false; s.pColor = false; s.adjOn = false
                         s.pFace = false; s.pHands = false
                         ModelCatalog.schedulersFor(family).firstOrNull()?.let {
-                            wire = it; s.scheduler = it; schedVer++
+                            s.scheduler = it; schedVer++
                         }
                         onPicked()
                     }) {

@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -119,8 +121,12 @@ internal fun NewUiLoraPicker(
         onSet(com.abrah.nightmare.LoraSpec.format(next))
     }
     val ctx = LocalContext.current
-    var overrides by remember { mutableStateOf(com.abrah.nightmare.LoraLibrary.baseOverrides(ctx)) }
-    var folders by remember { mutableStateOf(com.abrah.nightmare.LoraLibrary.folders(ctx)) }
+    // ⭐ fix30 (audit): all four derived snapshots re-key on [library] — the file
+    // list changes behind the sheet (import/delete bump the caller's loraEpoch),
+    // and an unkeyed remember kept the OLD grouping/folders/favourites/uses
+    // until the sheet was fully torn down and re-composed.
+    var overrides by remember(library) { mutableStateOf(com.abrah.nightmare.LoraLibrary.baseOverrides(ctx)) }
+    var folders by remember(library) { mutableStateOf(com.abrah.nightmare.LoraLibrary.folders(ctx)) }
     var openFolders by remember { mutableStateOf(emptySet<String>()) }
     val items = (library ?: installed.map {
         com.abrah.nightmare.LoraLibrary.Item(
@@ -208,8 +214,8 @@ internal fun NewUiLoraPicker(
     var sort by remember { mutableStateOf(com.abrah.nightmare.LoraLibrary.Sort.NAME) }
     var base by remember { mutableStateOf<com.abrah.nightmare.LoraLibrary.Base?>(null) }
     var query by remember { mutableStateOf("") }
-    var favourites by remember { mutableStateOf(com.abrah.nightmare.LoraLibrary.favourites(ctx)) }
-    val uses = remember { com.abrah.nightmare.LoraLibrary.uses(ctx) }
+    var favourites by remember(library) { mutableStateOf(com.abrah.nightmare.LoraLibrary.favourites(ctx)) }
+    val uses = remember(library) { com.abrah.nightmare.LoraLibrary.uses(ctx) }
     val bases = items.map { it.base }.distinct().sortedBy { if (it == nodeBase) -1 else it.ordinal }
     val arranged = com.abrah.nightmare.LoraLibrary.arrange(items, sort, base, query, favourites, uses)
     val installedNames = items.map { it.name }.toSet()
@@ -360,22 +366,29 @@ internal fun NewUiLoraPicker(
             }
             // ── The list. ⚠ heightIn(max) so the sheet stops growing at the
             // phone's height and scrolls instead.
-            Column(
+            // ⭐ fix30 (audit): LazyColumn — the old Column.verticalScroll composed
+            // EVERY row on first show and on every folder flip, so a big library
+            // paid for all of it up front. Keys keep each row identified across
+            // reorders (chosen-first reshuffles on every toggle).
+            LazyColumn(
                 Modifier.fillMaxWidth().padding(top = 10.dp)
-                    .heightIn(max = 380.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .heightIn(max = 380.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (experimental) {
-                    com.abrah.nightmare.canvas.ExperimentalLoraNote(Modifier.fillMaxWidth())
+                    item(key = "note") {
+                        com.abrah.nightmare.canvas.ExperimentalLoraNote(Modifier.fillMaxWidth())
+                    }
                 }
                 if (rows.isEmpty()) {
-                    Text(
-                        stringResource(R.string.newui_lora_empty),
-                        style = TextStyle(fontSize = 13.sp, color = Nm.sub),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
-                    )
+                    item(key = "empty") {
+                        Text(
+                            stringResource(R.string.newui_lora_empty),
+                            style = TextStyle(fontSize = 13.sp, color = Nm.sub),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
+                        )
+                    }
                 }
                 // ⭐⭐ The chosen ones first, then the folders, then the rest.
                 // ⚠ Flat while filtering: a match inside a closed folder must show.
@@ -415,34 +428,36 @@ internal fun NewUiLoraPicker(
                         } else null,
                     )
                 }
-                for (name in chosenRows) draw(name)
+                items(chosenRows, key = { "lora:$it" }) { name -> draw(name) }
                 for ((folder, names) in groups) {
                     val isOpen = folder in openFolders
-                    Row(
-                        Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                openFolders = if (isOpen) openFolders - folder else openFolders + folder
-                            }
-                            .padding(vertical = 4.dp, horizontal = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            if (isOpen) Icons.Filled.KeyboardArrowDown
-                            else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = stringResource(R.string.lora_cd_folder, folder),
-                            tint = Nm.sub,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Text(
-                            stringResource(R.string.lora_folder_count, folder, names.size),
-                            style = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Nm.ink),
-                            modifier = Modifier.padding(start = 4.dp),
-                        )
+                    item(key = "hdr:$folder") {
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    openFolders = if (isOpen) openFolders - folder else openFolders + folder
+                                }
+                                .padding(vertical = 4.dp, horizontal = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                if (isOpen) Icons.Filled.KeyboardArrowDown
+                                else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = stringResource(R.string.lora_cd_folder, folder),
+                                tint = Nm.sub,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                stringResource(R.string.lora_folder_count, folder, names.size),
+                                style = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Nm.ink),
+                                modifier = Modifier.padding(start = 4.dp),
+                            )
+                        }
                     }
-                    if (isOpen) for (name in names) draw(name)
+                    if (isOpen) items(names, key = { "lora:$it" }) { name -> draw(name) }
                 }
-                for (name in loose) draw(name)
+                items(loose, key = { "lora:$it" }) { name -> draw(name) }
             }
             // ── ⭐ 底部: the two ways to get a LoRA in are LIGHT (secondary),
             // `完成` is the one filled button (primary).
