@@ -34,6 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
+import com.abrah.nightmare.newui.TouchProbe
 import java.util.Locale
 
 /** What the harness knows about the backend process. */
@@ -9734,6 +9735,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             return runError
         }
         busy = true
+        TouchProbe.setBusy(true)
         // ⚠ Both ends, for the same reason [applyNodeModel] does it: the
         // readout must stop saying "idle" the moment Run is pressed, not up to
         // two seconds later.
@@ -9785,6 +9787,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 RunLock.release("canvas")
                 settleRunLog()
                 busy = false
+        TouchProbe.setBusy(false)
                 runJob = null
                 refreshLoad()
             }

@@ -55,6 +55,21 @@ object TouchProbe {
     private val lastFrameNs = AtomicLong(0L)
     private var lastScrollLog = 0L
 
+    /**
+     * ⭐ probe v5: the GPU-busy latch. Written by HarnessViewModel when a
+     * generation starts/stops. Every STALL logs this so a freeze can be
+     * correlated with "the engine is rendering" — the GPU-contention hypothesis
+     * the 15:36 video forensics points at.
+     */
+    @Volatile
+    var busyLatch: Boolean = false
+        private set
+
+    /** Called from HarnessViewModel when `busy` changes; never blocks. */
+    fun setBusy(b: Boolean) {
+        busyLatch = b
+    }
+
     /** The current workbench scroll value, for correlating a freeze report. */
     @Volatile
     var scrollValue: Float = Float.NaN
@@ -220,20 +235,29 @@ object TouchProbe {
     private var lastScrollMax = -1
 
     /**
-     * Layer 2, installed from MainActivity.onCreate: re-posts itself every
-     * frame and logs only gaps > 700 ms — an idle screen produces no frames
-     * at all, so silence here is normal and a gap is always a real stall.
-     */
-    val frameProbe: Choreographer.FrameCallback = object : Choreographer.FrameCallback {
-        override fun doFrame(frameNs: Long) {
-            val prev = lastFrameNs.getAndSet(frameNs)
-            if (prev > 0L) {
-                val gapMs = (frameNs - prev) / 1_000_000L
-                if (gapMs > 700L) log("STALL gap=${gapMs}ms th=${Thread.currentThread().name}")
+ * Layer 2, installed from MainActivity.onCreate: re-posts itself every
+ * frame and logs gaps > 150 ms — an idle screen produces no frames at all, so silence here is normal and a gap is always a real stall.
+ *
+ * ⭐ probe v5 (video forensics, 2026-11-06): the 15:36 video showed scroll
+ * values changing (2093→2566→2270→2446→2301) WHILE the picture froze for
+ * 0.79 s with ZERO dispatch anomalies — so the 700 ms threshold was blind
+ * to the 0.2–0.6 s "state changes, picture doesn't" freezes the user actually
+ * felt. 150 ms catches them; every STALL now records the GPU-busy latch and
+ * the raw frame-gap in ms.
+ */
+val frameProbe: Choreographer.FrameCallback = object : Choreographer.FrameCallback {
+    override fun doFrame(frameNs: Long) {
+        val prev = lastFrameNs.getAndSet(frameNs)
+        if (prev > 0L) {
+            val gapMs = (frameNs - prev) / 1_000_000L
+            if (gapMs > 150L) {
+                val busy = busyLatch
+                log("STALL gap=${gapMs}ms th=${Thread.currentThread().name} busy=$busy")
             }
-            Choreographer.getInstance().postFrameCallback(this)
         }
+        Choreographer.getInstance().postFrameCallback(this)
     }
+}
 
     /**
      * ⭐ fix28 (external review): the callback re-posts itself forever, so a
