@@ -60,6 +60,7 @@ object TouchProbe {
     fun install(ctx: Context) {
         synchronized(lock) {
             if (writer != null) return
+            hostActivity = ctx as? android.app.Activity
             val pub: File? = try {
                 File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "NightmareProbe")
             } catch (t: Throwable) {
@@ -125,13 +126,34 @@ object TouchProbe {
      */
     fun dispatch(ev: MotionEvent, tookUs: Long) {
         when (ev.actionMasked) {
-            MotionEvent.ACTION_DOWN ->
-                log("DISPATCH a=DOWN took=${tookUs}us y=${(ev.y * 10).toInt() / 10f}")
+            MotionEvent.ACTION_DOWN -> {
+                // Window height on DOWN: the IME eats 30-40% of it when it
+                // rises — a height drop between two DOWNs is the keyboard
+                // transition that swallows gestures in flight.
+                val h = try {
+                    windowMetricsHeight()
+                } catch (t: Throwable) {
+                    -1
+                }
+                log("DISPATCH a=DOWN took=${tookUs}us x=${(ev.x * 10).toInt() / 10f} y=${(ev.y * 10).toInt() / 10f} winH=$h")
+            }
             MotionEvent.ACTION_UP ->
                 log("DISPATCH a=UP took=${tookUs}us dur=${ev.eventTime - ev.downTime}ms")
             MotionEvent.ACTION_CANCEL ->
                 log("DISPATCH a=CANCEL took=${tookUs}us dur=${ev.eventTime - ev.downTime}ms")
+            MotionEvent.ACTION_POINTER_DOWN ->
+                log("DISPATCH a=PTR_DOWN n=${ev.pointerCount} idx=${ev.actionIndex}")
+            MotionEvent.ACTION_POINTER_UP ->
+                log("DISPATCH a=PTR_UP n=${ev.pointerCount} idx=${ev.actionIndex}")
         }
+    }
+
+    /** The dispatch-time window height; needs the activity, set on install. */
+    private var hostActivity: android.app.Activity? = null
+
+    private fun windowMetricsHeight(): Int {
+        val act = hostActivity ?: return -1
+        return act.windowManager.currentWindowMetrics.bounds.height()
     }
 
     /** Layer 3, from the workbench scroll state (throttled to ~7 lines/s). */
