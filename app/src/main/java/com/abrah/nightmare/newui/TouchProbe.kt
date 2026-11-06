@@ -191,6 +191,32 @@ object TouchProbe {
         log("SCROLLRANGE max=$max")
     }
 
+    // ── Layer 5 (probe v4): widget-level observability ────────────────────
+    // Both external review reports named the same gap: the log cannot tell
+    // "the tap never hit the widget" from "the callback ran but the state did
+    // not change". These helpers close that. Main-thread cost is one string
+    // build; the write rides the probe thread like every other layer.
+
+    /** A discrete widget toggle, logged AFTER the write: old -> new. */
+    fun uiToggle(component: String, from: Boolean, to: Boolean) {
+        log("UI_TOGGLE $component $from->$to")
+    }
+
+    /** A LoRA selection write, with the resulting selection size. */
+    fun loraChange(name: String, adding: Boolean, total: Int) {
+        log("LORA_CHANGE $name add=$adding n=$total")
+    }
+
+    /** A measured px height of a tracked component; logged only on CHANGE. */
+    fun sizeChange(component: String, h: Int) {
+        val last = lastSizes[component] ?: -1
+        if (last == h) return
+        lastSizes[component] = h
+        log("SIZE $component h=$h")
+    }
+
+    private val lastSizes = HashMap<String, Int>()
+
     private var lastScrollMax = -1
 
     /**
@@ -203,7 +229,7 @@ object TouchProbe {
             val prev = lastFrameNs.getAndSet(frameNs)
             if (prev > 0L) {
                 val gapMs = (frameNs - prev) / 1_000_000L
-                if (gapMs > 700L) log("STALL gap=${gapMs}ms")
+                if (gapMs > 700L) log("STALL gap=${gapMs}ms th=${Thread.currentThread().name}")
             }
             Choreographer.getInstance().postFrameCallback(this)
         }

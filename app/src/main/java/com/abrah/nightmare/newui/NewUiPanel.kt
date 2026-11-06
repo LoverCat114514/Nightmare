@@ -83,6 +83,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
@@ -570,6 +571,10 @@ fun NewUiScreen(
             // the drag; all-unconsumed here with a frozen SCROLL means the
             // scrollable itself refused (measurement collapse — see SCROLLRANGE).
             .pointerInput(Unit) { passObserver("wb") }
+            // ⭐ probe v4 (review report 1 §3): the workbench's measured height,
+            // logged on change — correlates a SCROLLRANGE jump with WHICH block
+            // grew (the report asked for exactly this pairing).
+            .onSizeChanged { TouchProbe.sizeChange("wb", it.height) }
             // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar is gone:
             // the host leaves the very top to this page, so the page keeps one
             // module gap (12dp) at its head — the spacing every card keeps.
@@ -1353,7 +1358,14 @@ private fun ParamsCard(
             // ── Post-processing: the Default UI's three tools, each with its per-run
             // switch and an APPLY NOW (the user's image 2) — folded like the app's own.
             var postOpen by remember { mutableStateOf(true) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                    // ⭐ probe v4 (review reports §P1): the whole title row toggles,
+                    // not just the ▸ button — a wider target for the "更多选项
+                    // 点击无反应" reports; every flip is logged.
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        TouchProbe.uiToggle("post_toggle", postOpen, !postOpen)
+                        postOpen = !postOpen
+                    }) {
                 Text(
                     stringResource(R.string.post_processing),
                     style = MaterialTheme.typography.titleSmall,
@@ -1366,7 +1378,12 @@ private fun ParamsCard(
                 }
             }
             AnimatedVisibility(postOpen) {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                // ⭐ probe v4: the fold's measured height — pairs with SIZE wb
+                // to attribute a scroll-range jump to this block.
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.onSizeChanged { TouchProbe.sizeChange("post_block", it.height) },
+                ) {
                     PostTool(
                         stringResource(R.string.post_upscale_title),
                         stringResource(R.string.newui_p_ups_hint),
@@ -1409,7 +1426,12 @@ private fun ParamsCard(
             // ── More options: the ×2 upscale, the face/hand fixes, the reset — the
             // Default UI's fold, folded shut by default (the user's image 3).
             var moreOpen by remember { mutableStateOf(false) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                    // ⭐ probe v4: same whole-row toggle as post_processing above.
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        TouchProbe.uiToggle("more_toggle", moreOpen, !moreOpen)
+                        moreOpen = !moreOpen
+                    }) {
                 Text(
                     stringResource(R.string.more_options),
                     style = MaterialTheme.typography.titleSmall,

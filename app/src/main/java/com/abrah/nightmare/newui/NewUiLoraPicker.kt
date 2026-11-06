@@ -105,6 +105,11 @@ internal fun NewUiLoraPicker(
     // what the node actually carries rather than a copy that drifted.
     var chosen by remember(spec) { mutableStateOf(com.abrah.nightmare.LoraSpec.parse(spec)) }
     fun commit(next: List<com.abrah.nightmare.LoraSpec.Entry>) {
+        // ⭐ probe v4 (review report 1 §6): log every selection write with its
+        // outcome — distinguishes "callback ran, list unchanged" (the dead-tap
+        // signature) from a real flip, and shows the count the UI should draw.
+        val added = next.size > chosen.size
+        TouchProbe.loraChange(next.lastOrNull()?.name ?: "?", added, next.size)
         chosen = next
         onSet(com.abrah.nightmare.LoraSpec.format(next))
     }
@@ -508,18 +513,27 @@ private fun NmChip(label: String, on: Boolean, onClick: () -> Unit) {
 /** ⭐ The switch: a 42×24 pill, a white knob, the violet when it is on. */
 @Composable
 private fun NmSwitch(on: Boolean, onToggle: (Boolean) -> Unit) {
+    // ⭐ probe v4 (review report 2 §4): the tappable area used to be exactly
+    // the 42×24 pill — a thumb landing a couple of px outside it silently did
+    // nothing ("LoRA 选择偶尔点击无反应"). A 48×48 tap box (the Material 3
+    // minimum) wraps the pill; the pill's drawing is unchanged.
     Box(
-        Modifier.size(width = 42.dp, height = 24.dp)
-            .clip(RoundedCornerShape(999.dp))
-            .background(if (on) Nm.pri else Nm.fld)
-            .clickable { onToggle(!on) },
-        contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
+        Modifier.size(48.dp)
+            .clickable { TouchProbe.uiToggle("lora_switch", on, !on); onToggle(!on) },
+        contentAlignment = Alignment.Center,
     ) {
         Box(
-            Modifier.padding(horizontal = 3.dp).size(18.dp)
-                .clip(CircleShape)
-                .background(Color.White),
-        )
+            Modifier.size(width = 42.dp, height = 24.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(if (on) Nm.pri else Nm.fld),
+            contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
+        ) {
+            Box(
+                Modifier.padding(horizontal = 3.dp).size(18.dp)
+                    .clip(CircleShape)
+                    .background(Color.White),
+            )
+        }
     }
 }
 
