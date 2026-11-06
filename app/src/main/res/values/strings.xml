@@ -1465,6 +1465,7 @@
     <string name="newui_src_empty">none loaded</string>
     <string name="newui_choose">Choose</string>
     <string name="newui_loras_hint">Adapters stacked on this checkpoint</string>
+    <string name="newui_loras_loading">Reading LoRAs…</string>
     <string name="newui_lora_pick_hint">Appended to the prompt as &lt;lora:name:strength&gt;; strength 0.2-1.5. The list is the same one Models → LoRA shows.</string>
     <string name="newui_lora_filter">Filter…</string>
     <string name="newui_lora_sheet_title">Choose LoRA</string>

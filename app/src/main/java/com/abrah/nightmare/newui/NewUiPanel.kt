@@ -87,6 +87,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -317,6 +318,29 @@ private fun saveState(ctx: Context, s: WbState) {
 
 /** One finished picture of this session: the decoded bitmap plus the meta the strip shows. */
 private class Shot(val bitmap: ImageBitmap, val ms: Long, val seed: Long, val file: File)
+
+/**
+ * ⭐ fix33: a downscaled copy for the 84 dp history strip.
+ *
+ * The strip drew the FULL render (`out.asImageBitmap()`, 1024 px and up) into
+ * an 84 dp square. Compose uploads the whole bitmap as a texture whatever size
+ * it is drawn at, so every scroll frame paid for a full-size upload and sample
+ * per thumbnail. 84 dp at 3× is ≈252 px, so 256 is the right ceiling.
+ *
+ * ⚠ The source is never mutated: `asImageBitmap()` wraps an immutable
+ * Bitmap, and this returns a NEW one. Remembered at the call site, so a
+ * scroll does not rescale it every frame.
+ */
+private fun ImageBitmap.thumb(maxPx: Int): ImageBitmap {
+    val src = this.asAndroidBitmap()
+    val long = maxOf(src.width, src.height)
+    if (long <= maxPx) return this
+    val scale = maxPx.toFloat() / long
+    val w = (src.width * scale).toInt().coerceAtLeast(1)
+    val h = (src.height * scale).toInt().coerceAtLeast(1)
+    val scaled = android.graphics.Bitmap.createScaledBitmap(src, w, h, true)
+    return scaled.asImageBitmap()
+}
 
 /** The one shot the strip currently shows (a @Volatile ref the polling loop reads). */
 private val LAST_SHOT = java.util.concurrent.atomic.AtomicReference<Shot?>(null)
@@ -941,9 +965,17 @@ private fun ResultCard(
             val hist = remember(SESSION_VERSION.get()) { SESSION.toList() }
             if (hist.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(hist) { sh ->
+                    // ⭐ fix33: keys + downsampled thumbnails.
+                    // ⚠ These were the FULL-RESOLUTION shot bitmaps
+                    // (`out.asImageBitmap()` of a 1024+ px render) drawn into an
+                    // 84 dp square: every frame of a scroll uploaded and sampled
+                    // the full texture for a thumbnail. On a throttled device
+                    // (7 % battery, thermal on) that alone reads as "can't
+                    // scroll". 84 dp at 3x ≈ 252 px, so a 256 px copy is enough.
+                    items(hist, key = { sh -> sh.file.absolutePath + "@" + sh.ms }) { sh ->
                         Image(
-                            bitmap = sh.bitmap, contentDescription = null,
+                            bitmap = remember(sh.bitmap) { sh.bitmap.thumb(256) },
+                            contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.size(84.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Nm.pri, RoundedCornerShape(12.dp)),
                         )
@@ -1147,6 +1179,38 @@ private fun ModelCard(
                 var savedNotes by remember(loraEpoch) { mutableStateOf<Map<String, String>?>(null) }
                 // ⚠ Nothing until both land: a picker drawn on an EMPTY list marks
                 // every chosen LoRA missing (the inspector's own rule).
+                // ⭐ fix33 (user 2026-11-06 item 1: "点好几次打不开要过一会才行"):
+                // the gate stays (an empty list would mark every pick missing), but
+                // the wait now SHOWS. Before, tapping 选择 composed nothing at all
+                // until both disk scans landed — no feedback, so the tap read as
+                // dead and the user tapped again. A Dialog with a spinner is the
+                // feedback; the picker replaces it in the same frame the scans do.
+                if (installed == null || notesRead == null) {
+                    androidx.compose.ui.window.Dialog(onDismissRequest = { picking = false }) {
+                        androidx.compose.material3.Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Nm.card,
+                            tonalElevation = 3.dp,
+                        ) {
+                            Column(
+                                Modifier.padding(horizontal = 28.dp, vertical = 22.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.size(28.dp),
+                                    color = Nm.pri,
+                                    strokeWidth = 2.5.dp,
+                                )
+                                Text(
+                                    stringResource(R.string.newui_loras_loading),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Nm.sub,
+                                )
+                            }
+                        }
+                    }
+                }
                 if (installed != null && notesRead != null) {
                     val loraNotes = savedNotes ?: notesRead
                     // ⭐⭐⭐ (2026-11-05, thirteenth round) The workbench's OWN
@@ -1405,6 +1469,10 @@ private fun ParamsCard(
             // ── Post-processing: the Default UI's three tools, each with its per-run
             // switch and an APPLY NOW (the user's image 2) — folded like the app's own.
             var postOpen by remember { mutableStateOf(true) }
+            // ⭐ fix33: same double-handler bug as More options below — the ▸
+            // TextButton inside a `.clickable` Row fired BOTH handlers on one
+            // tap and flipped the flag twice (net zero). The row is now the
+            // only gesture target; the arrow is a plain Text.
             Row(verticalAlignment = Alignment.CenterVertically,
                     // ⭐ probe v4 (review reports §P1): the whole title row toggles,
                     // not just the ▸ button — a wider target for the "更多选项
@@ -1420,9 +1488,7 @@ private fun ParamsCard(
                     color = Nm.ink,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = { postOpen = !postOpen }) {
-                    Text(if (postOpen) "▾" else "▸", style = MaterialTheme.typography.titleMedium)
-                }
+                Text(if (postOpen) "▾" else "▸", style = MaterialTheme.typography.titleMedium)
             }
             AnimatedVisibility(postOpen, enter = fadeIn(), exit = fadeOut()) {
                 // ⭐ probe v4: the fold's measured height — pairs with SIZE wb
@@ -1473,8 +1539,13 @@ private fun ParamsCard(
             // ── More options: the ×2 upscale, the face/hand fixes, the reset — the
             // Default UI's fold, folded shut by default (the user's image 3).
             var moreOpen by remember { mutableStateOf(false) }
+            // ⭐ fix33: the ▸ button is GONE. It was a TextButton INSIDE a
+            // Row that is itself `.clickable` — a tap on the arrow ran BOTH
+            // handlers, flipping the flag twice (net zero), so the row read
+            // "buttons don't open" (user report 2026-11-06, item 2). One
+            // gesture target per row: the whole row toggles, the arrow is a
+            // plain Text (still a visual affordance, no click handler).
             Row(verticalAlignment = Alignment.CenterVertically,
-                    // ⭐ probe v4: same whole-row toggle as post_processing above.
                     modifier = Modifier.fillMaxWidth().clickable {
                         TouchProbe.uiToggle("more_toggle", moreOpen, !moreOpen)
                         moreOpen = !moreOpen
@@ -1486,9 +1557,7 @@ private fun ParamsCard(
                     color = Nm.ink,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = { moreOpen = !moreOpen }) {
-                    Text(if (moreOpen) "▾" else "▸", style = MaterialTheme.typography.titleMedium)
-                }
+                Text(if (moreOpen) "▾" else "▸", style = MaterialTheme.typography.titleMedium)
             }
             AnimatedVisibility(moreOpen, enter = fadeIn(), exit = fadeOut()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
