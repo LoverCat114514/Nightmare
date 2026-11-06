@@ -93,6 +93,7 @@ import kotlinx.coroutines.withContext
 fun NewUiScreen(
     onBrowseLoras: ((LoraSources.Target) -> Unit)? = null,
     onDeleteLora: ((String) -> Unit)? = null,
+    onSaveWorkflow: (() -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
 
@@ -252,7 +253,8 @@ fun NewUiScreen(
                             out, out.width * 2, out.height * 2, true,
                         )
                     }
-                    val made = Shot(out.asImageBitmap(), System.currentTimeMillis(), s.seed, f)
+                    val metaJson = buildMetaJson(s, positive, negative, s.seed)
+                    val made = Shot(out.asImageBitmap(), System.currentTimeMillis(), s.seed, f, meta = metaJson)
                     shot = made
                     if (s.autosave) {
                         // ⭐ A NEW list, capped at 12 like the app's own result
@@ -290,9 +292,60 @@ fun NewUiScreen(
                             src, src.width * 2, src.height * 2, true,
                         )
                     }
-                    shot = Shot(out.asImageBitmap(), cur.ms, cur.seed, cur.file)
+                    shot = Shot(out.asImageBitmap(), cur.ms, cur.seed, cur.file, meta = cur.meta)
                 }
             }
+        }
+    }
+
+    val onImportImageParamsCallback = remember(ctx) {
+        { uri: android.net.Uri ->
+            runCatching {
+                ctx.contentResolver.openInputStream(uri)?.use { stream ->
+                    val meta = com.abrah.nightmare.newui.core.PngMetadata.extractMetadata(stream)
+                    if (!meta.isNullOrBlank()) {
+                        val obj = org.json.JSONObject(meta)
+                        if (obj.has("modelId")) s.modelId = obj.getString("modelId")
+                        if (obj.has("scheduler")) s.scheduler = obj.getString("scheduler")
+                        if (obj.has("positive")) positive = obj.getString("positive")
+                        if (obj.has("negative")) negative = obj.getString("negative")
+                        if (obj.has("steps")) s.steps = obj.getInt("steps")
+                        if (obj.has("cfg")) s.cfg = obj.getDouble("cfg").toFloat()
+                        if (obj.has("seed")) {
+                            s.seed = obj.getLong("seed")
+                            s.fixedSeed = true
+                        }
+                        if (obj.has("width")) s.w = obj.getInt("width")
+                        if (obj.has("height")) s.h = obj.getInt("height")
+                        if (obj.has("denoise")) s.denoise = obj.getDouble("denoise").toFloat()
+                        if (obj.has("mode")) s.mode = obj.getString("mode")
+                        if (obj.has("loras")) {
+                            val loraStr = obj.getString("loras")
+                            if (loraStr.isNotBlank()) {
+                                s.loras = com.abrah.nightmare.LoraSpec.parse(
+                                    loraStr.split(",").joinToString(" ") { "<lora:$it>" }
+                                ).map { com.abrah.nightmare.newui.core.LoraPick(it.name, it.strength.toFloat()) }
+                            }
+                        }
+                        if (obj.has("pUps")) s.pUps = obj.getBoolean("pUps")
+                        if (obj.has("pUps2")) s.pUps2 = obj.getBoolean("pUps2")
+                        if (obj.has("pFace")) s.pFace = obj.getBoolean("pFace")
+                        if (obj.has("pHands")) s.pHands = obj.getBoolean("pHands")
+                        if (obj.has("pColor")) s.pColor = obj.getBoolean("pColor")
+                        if (obj.has("adjOn")) s.adjOn = obj.getBoolean("adjOn")
+                        if (obj.has("adjBr")) s.adjBr = obj.getInt("adjBr")
+                        if (obj.has("adjCo")) s.adjCo = obj.getInt("adjCo")
+                        if (obj.has("adjSa")) s.adjSa = obj.getInt("adjSa")
+                        if (obj.has("warm")) s.warm = obj.getInt("warm")
+                        android.widget.Toast.makeText(ctx, "已成功从图片中解析并恢复全部参数！", android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        android.widget.Toast.makeText(ctx, "未在该图片中检测到 Nightmare 参数元数据", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }.onFailure {
+                android.widget.Toast.makeText(ctx, "解析图片参数失败: ${it.message}", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            Unit
         }
     }
 
@@ -353,12 +406,16 @@ fun NewUiScreen(
                 mode = s.mode,
                 statusText = when {
                     phase.error != null -> phase.error!!
+                    phase.running && phase.total > 0 -> "生成中 ${phase.step}/${phase.total} (${(phase.fraction!! * 100).toInt()}%)"
+                    phase.running -> phase.message.ifBlank { "正在生成…" }
                     phase.message.isNotBlank() -> phase.message
                     else -> stringResource(R.string.newui_ready)
                 },
                 modelLabel = modelLabel(s.modelId),
                 onPickSrc = onPickSrcCallback,
                 onSave = onSaveCallback,
+                onSaveWorkflow = onSaveWorkflow,
+                onImportImageParams = onImportImageParamsCallback,
                 onRun = onGenerate,
                 onCancel = onCancelCallback,
             )
@@ -565,4 +622,37 @@ internal fun applyAdjust(src: android.graphics.Bitmap, s: WbParams): android.gra
         android.graphics.Paint().apply { colorFilter = android.graphics.ColorMatrixColorFilter(m) },
     )
     return out
+}
+/**
+ * ⭐ Builds JSON metadata of all current generation parameters to embed into PNG tEXt chunks.
+ * ComfyUI-style parameter embedding.
+ */
+private fun buildMetaJson(s: WbParams, positive: String, negative: String, seed: Long): String {
+    val obj = org.json.JSONObject().apply {
+        put("app", "Nightmare")
+        put("version", 1)
+        put("modelId", s.modelId)
+        put("scheduler", s.scheduler)
+        put("positive", positive)
+        put("negative", negative)
+        put("steps", s.steps)
+        put("cfg", s.cfg.toDouble())
+        put("seed", seed)
+        put("width", s.w)
+        put("height", s.h)
+        put("denoise", s.denoise.toDouble())
+        put("mode", s.mode)
+        put("loras", s.loras.joinToString(",") { "${it.name}:${it.weight}" })
+        put("pUps", s.pUps)
+        put("pUps2", s.pUps2)
+        put("pFace", s.pFace)
+        put("pHands", s.pHands)
+        put("pColor", s.pColor)
+        put("adjOn", s.adjOn)
+        put("adjBr", s.adjBr)
+        put("adjCo", s.adjCo)
+        put("adjSa", s.adjSa)
+        put("warm", s.warm)
+    }
+    return obj.toString()
 }

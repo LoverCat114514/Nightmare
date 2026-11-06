@@ -263,7 +263,99 @@ fun uriToDataUrl(ctx: Context, uri: Uri): String? = try {
     null
 }
 
-/** Finished PNG → Pictures/Nightmare via MediaStore; the app's own saver's destination. */
+/**
+ * ⭐ Utilities to embed and extract Nightmare parameters into/from PNG tEXt chunks.
+ * Mimics ComfyUI / Stable Diffusion image metadata embedding.
+ */
+object PngMetadata {
+    private const val KEYWORD = "nightmare"
+
+    fun injectMetadata(srcFile: File, metaJson: String, outStream: java.io.OutputStream) {
+        val bytes = srcFile.readBytes()
+        if (bytes.size >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte()
+            && bytes[2] == 'N'.code.toByte() && bytes[3] == 'G'.code.toByte()) {
+            val kwBytes = KEYWORD.toByteArray(Charsets.ISO_8859_1)
+            val textBytes = metaJson.toByteArray(Charsets.UTF_8)
+            val chunkData = ByteArray(kwBytes.size + 1 + textBytes.size)
+            System.arraycopy(kwBytes, 0, chunkData, 0, kwBytes.size)
+            chunkData[kwBytes.size] = 0 // null separator
+            System.arraycopy(textBytes, 0, chunkData, kwBytes.size + 1, textBytes.size)
+
+            val typeBytes = "tEXt".toByteArray(Charsets.US_ASCII)
+            val crc = java.util.zip.CRC32()
+            crc.update(typeBytes)
+            crc.update(chunkData)
+            val crcVal = crc.value.toInt()
+
+            val len = chunkData.size
+            val chunkBytes = java.nio.ByteBuffer.allocate(12 + len)
+                .putInt(len)
+                .put(typeBytes)
+                .put(chunkData)
+                .putInt(crcVal)
+                .array()
+
+            // Insert chunk right before IEND
+            val iendBytes = "IEND".toByteArray(Charsets.US_ASCII)
+            var iendPos = -1
+            for (i in bytes.size - 12 downTo 8) {
+                if (bytes[i] == iendBytes[0] && bytes[i + 1] == iendBytes[1] &&
+                    bytes[i + 2] == iendBytes[2] && bytes[i + 3] == iendBytes[3]) {
+                    iendPos = i
+                    break
+                }
+            }
+            if (iendPos >= 4) {
+                val insertPos = iendPos - 4
+                outStream.write(bytes, 0, insertPos)
+                outStream.write(chunkBytes)
+                outStream.write(bytes, insertPos, bytes.size - insertPos)
+                return
+            }
+        }
+        // Fallback: copy bytes directly
+        outStream.write(bytes)
+    }
+
+    fun extractMetadata(inStream: java.io.InputStream): String? {
+        val bytes = inStream.readBytes()
+        if (bytes.size < 8 || bytes[0] != 0x89.toByte() || bytes[1] != 'P'.code.toByte()
+            || bytes[2] != 'N'.code.toByte() || bytes[3] != 'G'.code.toByte()) {
+            return null
+        }
+        var idx = 8
+        val buf = java.nio.ByteBuffer.wrap(bytes)
+        while (idx + 8 <= bytes.size) {
+            val len = buf.getInt(idx)
+            val type = String(bytes, idx + 4, 4, Charsets.US_ASCII)
+            val dataStart = idx + 8
+            if (dataStart + len > bytes.size) break
+            if (type == "tEXt" || type == "iTXt") {
+                var nullIdx = -1
+                for (i in 0 until len) {
+                    if (bytes[dataStart + i] == 0.toByte()) {
+                        nullIdx = i
+                        break
+                    }
+                }
+                if (nullIdx > 0) {
+                    val kw = String(bytes, dataStart, nullIdx, Charsets.ISO_8859_1)
+                    if (kw == KEYWORD || kw == "parameters" || kw == "workflow") {
+                        val textStart = dataStart + nullIdx + 1
+                        val textLen = len - (nullIdx + 1)
+                        if (textLen > 0) {
+                            return String(bytes, textStart, textLen, Charsets.UTF_8)
+                        }
+                    }
+                }
+            }
+            idx += 8 + len + 4
+        }
+        return null
+    }
+}
+
+/** Finished PNG → Pictures/Nightmare via MediaStore; with embedded ComfyUI-like parameter metadata. */
 fun saveShot(ctx: Context, shot: Shot) {
     try {
         val name = "nm-" + System.currentTimeMillis() + ".png"
@@ -275,7 +367,11 @@ fun saveShot(ctx: Context, shot: Shot) {
         val uri = ctx.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
             ?: throw IllegalStateException("MediaStore insert failed")
         ctx.contentResolver.openOutputStream(uri)?.use { out ->
-            java.io.FileInputStream(shot.file).use { it.copyTo(out) }
+            if (shot.meta != null) {
+                PngMetadata.injectMetadata(shot.file, shot.meta, out)
+            } else {
+                java.io.FileInputStream(shot.file).use { it.copyTo(out) }
+            }
         }
         Toast.makeText(
             ctx,

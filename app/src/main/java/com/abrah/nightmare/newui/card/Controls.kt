@@ -1,17 +1,24 @@
 package com.abrah.nightmare.newui.card
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -59,28 +66,13 @@ import com.abrah.nightmare.newui.theme.Nm
  * ## The rule every control here follows
  *
  * **Stateless.** A control takes a value and an `onSet` callback; it holds no
- * copy of the value. The old tree had a specific, documented bug from breaking
- * this: `PostSlider` used `remember(value)` to seed a local, so a value
- * written from outside (a reset, a preset) left the thumb parked on its own
- * local copy until an unrelated recomposition. `PostTool`'s switch had the same
- * shape and the same bug. No local state means no drift — the wire IS the
- * thumb.
- *
- * ⚠ The one exception is a TEXT FIELD mid-edit: it must hold the raw string
- * while the person types, because parsing per keystroke would eat the cursor.
- * [NumField] and the seed field carry that state explicitly and sync from the
- * wire only while UNFOCUSED. That is the documented, bounded exception.
+ * copy of the value.
  */
 
 // ── The card shell ─────────────────────────────────────────────────────────
 
 /**
  * ⭐ The workbench's card: white, 16 dp radius, a 1 dp hairline, NO elevation.
- *
- * ⚠ `elevation = 0` on purpose. On Android, `Card`'s elevation draws a real
- * shadow, and a shadow on a white card over a lavender page reads as a
- * Material app rather than as the HTML's flat design. The HTML used a hairline
- * stroke and no shadow, and that is what this reproduces.
  */
 @Composable
 fun NmCard(
@@ -118,8 +110,8 @@ fun CardTitle(text: String) {
 // ── The segmented pill (the HTML's .seg) ────────────────────────────────────
 
 /**
- * ⭐ Two halves in one pill; the selected half in the soft violet.
- * Smooth color transition between active and inactive states.
+ * ⭐ Two halves in one pill; with a smooth sliding indicator pill (translation animation
+ * matching the bottom status bar).
  */
 @Composable
 fun SegmentedRow(
@@ -129,57 +121,86 @@ fun SegmentedRow(
     onLeft: () -> Unit,
     onRight: () -> Unit,
 ) {
-    Row(
-        Modifier.fillMaxWidth()
+    BoxWithConstraints(
+        Modifier
+            .fillMaxWidth()
+            .height(46.dp)
             .background(Nm.card, RoundedCornerShape(999.dp))
             .border(1.dp, Nm.fld, RoundedCornerShape(999.dp))
             .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        SegmentHalf(left, selected = selLeft, onClick = onLeft, modifier = Modifier.weight(1f))
-        SegmentHalf(right, selected = !selLeft, onClick = onRight, modifier = Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun SegmentHalf(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val bgColor by animateColorAsState(
-        targetValue = if (selected) Nm.priSoft else Color.Transparent,
-        animationSpec = tween(150),
-        label = "segBg",
-    )
-    val borderColor by animateColorAsState(
-        targetValue = if (selected) Nm.priLine else Color.Transparent,
-        animationSpec = tween(150),
-        label = "segBorder",
-    )
-    val textColor by animateColorAsState(
-        targetValue = if (selected) Nm.pri else Nm.sub,
-        animationSpec = tween(150),
-        label = "segText",
-    )
-
-    Box(
-        modifier
-            .background(bgColor, RoundedCornerShape(999.dp))
-            .border(1.dp, borderColor, RoundedCornerShape(999.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            color = textColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        val halfW = (maxWidth - 4.dp) / 2
+        val pillX by animateDpAsState(
+            targetValue = if (selLeft) 0.dp else halfW + 4.dp,
+            animationSpec = spring(
+                dampingRatio = 0.85f,
+                stiffness = 500f,
+            ),
+            label = "segmentPillX",
         )
+
+        // ⭐ The sliding indicator pill (smooth gliding translation matching BottomBar)
+        Box(
+            modifier = Modifier
+                .offset(x = pillX)
+                .width(halfW)
+                .fillMaxHeight()
+                .background(Nm.priSoft, RoundedCornerShape(999.dp))
+                .border(1.dp, Nm.priLine, RoundedCornerShape(999.dp)),
+        )
+
+        Row(
+            Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val leftTextColor by animateColorAsState(
+                targetValue = if (selLeft) Nm.pri else Nm.sub,
+                animationSpec = tween(150),
+                label = "leftTextCol",
+            )
+            val rightTextColor by animateColorAsState(
+                targetValue = if (!selLeft) Nm.pri else Nm.sub,
+                animationSpec = tween(150),
+                label = "rightTextCol",
+            )
+
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(999.dp))
+                    .clickable(onClick = onLeft),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    left,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (selLeft) FontWeight.Bold else FontWeight.Medium,
+                    color = leftTextColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(999.dp))
+                    .clickable(onClick = onRight),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    right,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (!selLeft) FontWeight.Bold else FontWeight.Medium,
+                    color = rightTextColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 
@@ -187,17 +208,6 @@ private fun SegmentHalf(
 
 /**
  * ⭐ A labelled slider whose thumb IS the wire value.
- *
- * ⚠ **Stateless, deliberately.** The old version seeded a local with
- * `remember(value)`, which re-seeded only when the value CHANGED — so a
- * 64-snap that returned the wire to its previous number (960 → 1370 → 960)
- * left the thumb parked on the raw drag value: the label read 1370 while the
- * field said 960. With no local state the snap is written every frame and the
- * wire, the thumb and the label agree by construction.
- *
- * **Frequency tier: continuous drag** → no animation on the value. A slider
- * that animated toward the finger would feel laggy by definition; the drag IS
- * the animation.
  */
 @Composable
 fun PostSlider(
@@ -239,15 +249,6 @@ fun PostSlider(
 
 /**
  * ⭐ A numeric entry field that commits on blur or Enter.
- *
- * ⚠ Holds its own text WHILE FOCUSED — the bounded exception to the
- * stateless rule. Parsing per keystroke would fight the cursor, and syncing
- * from the wire mid-edit would overwrite what the person is typing.
- *
- * ⚠ The sync is keyed on `(value, focused)` and guarded by `!focused`, so a
- * write from outside lands the moment the field loses focus — never during
- * typing. This is the shape the old `NumField` had and it was correct; it is
- * kept verbatim because it is the one place local state is right.
  */
 @Composable
 fun NumField(
@@ -259,7 +260,6 @@ fun NumField(
     var text by remember { mutableStateOf(value.toString()) }
     var focused by remember { mutableStateOf(false) }
 
-    // Sync from the wire, but never while the person is typing.
     LaunchedEffect(value, focused) {
         if (!focused) text = value.toString()
     }
@@ -267,8 +267,6 @@ fun NumField(
     OutlinedTextField(
         value = text,
         onValueChange = { t ->
-            // Digits only, bounded — an invalid keystroke is dropped, not shown
-            // and then rejected.
             val digits = t.filter { it.isDigit() }.take(6)
             text = digits
         },
@@ -288,7 +286,6 @@ fun NumField(
         modifier = modifier.onFocusChanged { f ->
             val wasFocused = focused
             focused = f.isFocused
-            // Commit on blur, once: the person typed a number and moved on.
             if (wasFocused && !f.isFocused) {
                 text.toIntOrNull()?.let(onCommit)
             }
@@ -300,11 +297,6 @@ fun NumField(
 
 /**
  * ⭐ A read-only field that opens a list — the app's own picker shape.
- *
- * ⚠ `MenuAnchorType.PrimaryNotEditable` on the text field: without it the
- * anchor does not open the menu on a click, and the row reads as dead. This
- * was the exact shape the checkpoint picker needed and the reason the two
- * pickers here look the same.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -353,9 +345,6 @@ fun DropdownWire(
 
 /**
  * ⭐ A titled row with a switch at its end.
- *
- * ⚠ The switch is bound to the WIRE, not to a local copy. No local state, no stale copy.
- * ⚠ **One gesture target:** the switch owns the tap, the title does not.
  */
 @Composable
 fun SwitchRow(

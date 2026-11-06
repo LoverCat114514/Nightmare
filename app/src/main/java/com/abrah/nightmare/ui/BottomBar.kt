@@ -2,7 +2,9 @@ package com.abrah.nightmare.ui
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -156,13 +158,13 @@ fun NightmareBottomBar(
         ) {
         Surface(
             shape = RoundedCornerShape(percent = 50),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            tonalElevation = 3.dp,
-            shadowElevation = 6.dp,
+            color = Color.White.copy(alpha = 0.48f),
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+            border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.75f)),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(64.dp)
-                .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(percent = 50)),
+                .height(64.dp),
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 // ⭐ The sliding pill: one highlight BEHIND the slots, offset to the

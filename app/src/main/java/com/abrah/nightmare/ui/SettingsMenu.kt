@@ -14,8 +14,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -214,10 +217,12 @@ private fun MenuCapsule(
             )
             .graphicsLayer {
                 alpha = p
-                translationY = (1f - p) * 12.dp.toPx()
-                scaleY = 0.85f + 0.15f * p
-                scaleX = 0.97f + 0.03f * p
-                transformOrigin = TransformOrigin(0.5f, 1f)
+                // ⭐ Cascade retraction: capsules gracefully waterfall down-right into the bottom bar
+                translationX = (1f - p) * (20.dp.toPx() + (index) * 6.dp.toPx())
+                translationY = (1f - p) * (24.dp.toPx() + (index) * 12.dp.toPx())
+                scaleY = 0.75f + 0.25f * p
+                scaleX = 0.85f + 0.15f * p
+                transformOrigin = TransformOrigin(1f, 1f)
             },
     ) {
         // ⭐⭐ The size lives INSIDE, on the content box: the capsule WRAPS its
@@ -302,18 +307,17 @@ internal fun SettingsMenuScrim(
 @Composable
 internal fun SettingsCardSheet(
     visible: Boolean,
+    anchorY: Float = 0.8f,
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    // ⭐⭐ Same life as [DestCardSheet] (2026-11-06): the card watches `visible`,
-    // plays its exit BEFORE it stops composing, and rises from the BOTTOM.
-    // Height stays 62 % (the user sized this one by the mock, not by the report).
     var shown by remember { mutableStateOf(visible) }
     val p = remember { androidx.compose.animation.core.Animatable(0f) }
     LaunchedEffect(visible) {
         if (visible) {
             shown = true
-            p.animateTo(1f, tween(320, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)))
+            // ⭐ Fluid water-droplet split curve: initial surface tension burst, settling softly to the left
+            p.animateTo(1f, tween(360, easing = CubicBezierEasing(0.08f, 0.92f, 0.18f, 1f)))
         } else if (shown) {
             p.animateTo(0f, tween(220, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)))
             shown = false
@@ -321,62 +325,87 @@ internal fun SettingsCardSheet(
     }
     if (!shown) return
     androidx.activity.compose.BackHandler { onDismiss() }
-    // ⭐ fix32: same invisible-scrim gate as [DestCardSheet] — `graphicsLayer
-    // { alpha }` draws, it does not gate hit-testing; without this the scrim
-    // and the card ate every tap during the entrance/exit alpha≈0 window.
-    // ⭐ fix32b: `p` is an Animatable — bridge through snapshotFlow so the
-    // gate actually recomposes (a composition-time read computes once).
+
     var interactive by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         snapshotFlow { p.value > 0.02f }.collect { interactive = it }
     }
     Box(Modifier.fillMaxSize()) {
-        // ⭐ A tap beside the card closes it — back to the canvas.
+        // Dimmed backdrop
         Box(
             Modifier
                 .fillMaxSize()
                 .graphicsLayer { alpha = p.value }
-                .background(Color.Black.copy(alpha = 0.34f))
+                .background(Color.Black.copy(alpha = 0.38f))
                 .then(
                     if (interactive) Modifier.pointerInput(Unit) { detectTapGestures { onDismiss() } }
                     else Modifier,
                 ),
         )
-        Box(
-            Modifier
-                .fillMaxSize()
-                .padding(start = 16.dp, end = 16.dp, bottom = BOTTOM_BAR_RESERVE + 8.dp),
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            Modifier.fillMaxSize(),
         ) {
+            val totalW = maxWidth
+            val totalH = maxHeight
+            val v = p.value
+
+            // Capsule is on the right side: left end is at totalW - 136.dp
+            val capsuleLeftX = totalW - 136.dp
+            val capsuleCenterY = totalH * anchorY.coerceIn(0.2f, 0.9f)
+
+            // Target card bounds: 16dp margins, bottom reserve
+            val targetLeft = 16.dp
+            val targetRight = totalW - 16.dp
+            val targetBottom = totalH - BOTTOM_BAR_RESERVE - 8.dp
+            val targetHeight = totalH * 0.62f
+            val targetTop = targetBottom - targetHeight
+
+            // ⭐ Water-droplet split to the left:
+            // At v = 0: a compact round droplet sitting at (capsuleLeftX - 24.dp, capsuleCenterY - 18.dp)
+            // As v -> 1: expands leftward across the screen to targetLeft (16.dp), blooming into the card!
+            val currentLeft = androidx.compose.ui.unit.lerp(capsuleLeftX - 24.dp, targetLeft, v)
+            val currentRight = androidx.compose.ui.unit.lerp(capsuleLeftX + 16.dp, targetRight, v)
+            val currentTop = androidx.compose.ui.unit.lerp(capsuleCenterY - 18.dp, targetTop, v)
+            val currentBottom = androidx.compose.ui.unit.lerp(capsuleCenterY + 18.dp, targetBottom, v)
+
+            val currentWidth = (currentRight - currentLeft).coerceAtLeast(36.dp)
+            val currentHeight = (currentBottom - currentTop).coerceAtLeast(36.dp)
+
+            // Corner radius morphs from a droplet circle (28dp) to the floating card (20dp)
+            val cornerRadius = androidx.compose.ui.unit.lerp(28.dp, 20.dp, v)
+
             Surface(
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(cornerRadius),
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 3.dp,
+                tonalElevation = 2.dp,
                 shadowElevation = 12.dp,
                 border = BorderStroke(
                     0.5.dp,
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
                 ),
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.62f)
-                    // ⚠ Swallows taps so a tap on the BODY never reaches the scrim.
-                    // ⭐ fix32: only while actually visible — same gate as the scrim.
+                    .offset(x = currentLeft, y = currentTop)
+                    .width(currentWidth)
+                    .height(currentHeight)
                     .then(
                         if (interactive) Modifier.pointerInput(Unit) { detectTapGestures { } }
                         else Modifier,
                     )
                     .graphicsLayer {
-                        val v = p.value
-                        alpha = v
-                        // ⭐ The rise, out of the bottom edge — same language as
-                        // the destination cards.
-                        translationY = (1f - v) * 64.dp.toPx()
-                        scaleX = 0.96f + 0.04f * v
-                        scaleY = 0.96f + 0.04f * v
-                        transformOrigin = TransformOrigin(0.5f, 1f)
+                        alpha = v.coerceIn(0f, 1f)
                     },
-            ) { content() }
+            ) {
+                // Content smoothly blooms in as the droplet card reaches full size
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            alpha = ((v - 0.45f) / 0.55f).coerceIn(0f, 1f)
+                        },
+                ) {
+                    content()
+                }
+            }
         }
     }
 }

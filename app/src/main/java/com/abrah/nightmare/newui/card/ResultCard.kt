@@ -6,9 +6,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +27,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -91,16 +94,41 @@ fun ResultCard(
     modelLabel: String,
     onPickSrc: (Uri?, String) -> Unit,
     onSave: () -> Unit,
+    onSaveWorkflow: (() -> Unit)? = null,
+    onImportImageParams: ((Uri) -> Unit)? = null,
     onRun: () -> Unit,
     onCancel: () -> Unit,
 ) {
     NmCard {
         // ── The status line ────────────────────────────────────────────────
-        Text(
-            statusText,
-            style = MaterialTheme.typography.labelSmall,
-            color = Nm.sub,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (phase.running) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(13.dp),
+                    strokeWidth = 2.dp,
+                    color = Nm.pri,
+                )
+                val progressText = when {
+                    phase.total > 0 -> "生成中 ${phase.step}/${phase.total} (${(phase.fraction!! * 100).toInt()}%)"
+                    else -> phase.message.ifBlank { "正在生成…" }
+                }
+                Text(
+                    progressText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Nm.pri,
+                    fontWeight = FontWeight.Bold,
+                )
+            } else {
+                Text(
+                    statusText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Nm.sub,
+                )
+            }
+        }
 
         // ── The square frame ───────────────────────────────────────────────
         // Fixed 1:1 ratio box with smooth crossfade on new render arrival.
@@ -159,11 +187,17 @@ fun ResultCard(
             )
         }
 
-        // ── Load source (img2img only) + save ─────────────────────────────
+        // ── Load source (img2img only) & Save rendered image ───────────────
         val pickSrc = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) onPickSrc(uri, queryDisplayName(ctx, uri) ?: "image")
+            if (uri != null) {
+                onPickSrc(uri, queryDisplayName(ctx, uri) ?: "image")
+                onImportImageParams?.invoke(uri)
+            }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val pickParamImage = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) onImportImageParams?.invoke(uri)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (mode == WbParams.MODE_IMG2IMG) {
                 OutlinedButton(onClick = { pickSrc.launch(arrayOf("image/*")) }) {
                     Text(stringResource(R.string.newui_load))
@@ -176,6 +210,65 @@ fun ResultCard(
                     contentDescription = stringResource(R.string.save),
                     tint = if (shot != null) Nm.sub else Nm.sub.copy(alpha = 0.4f),
                 )
+            }
+        }
+
+        // ── ⭐ Dedicated Independent Action Buttons: 保存工作流 & 导入图参 ──────────
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (onSaveWorkflow != null) {
+                OutlinedButton(
+                    onClick = onSaveWorkflow,
+                    modifier = Modifier.weight(1f).height(44.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Nm.priLine),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = Nm.priSoft.copy(alpha = 0.45f),
+                        contentColor = Nm.pri,
+                    ),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(SaveIcon, contentDescription = null, modifier = Modifier.size(16.dp), tint = Nm.pri)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            stringResource(R.string.save_workflow),
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+            if (onImportImageParams != null) {
+                OutlinedButton(
+                    onClick = { pickParamImage.launch(arrayOf("image/*")) },
+                    modifier = Modifier.weight(1f).height(44.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Nm.fld),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = Nm.card,
+                        contentColor = Nm.ink,
+                    ),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(com.abrah.nightmare.ui.FlowsIcon, contentDescription = null, modifier = Modifier.size(16.dp), tint = Nm.ink)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "导入图参",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
         }
 

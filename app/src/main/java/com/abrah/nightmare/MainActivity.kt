@@ -613,6 +613,7 @@ fun HarnessScreen(
                     // the very actions the Default UI's inspector binds (lines above).
                     onBrowseLoras = vm::openLoraBrowser,
                     onDeleteLora = vm::deleteLora,
+                    onSaveWorkflow = { saveRequest++ },
                 )
             },
             // [LOCAL-NEWUI 2026-11-05, ninth round] the workbench's flows entry.
@@ -1032,6 +1033,7 @@ fun HarnessScreen(
     val settingsPage = vm.settingsPage
     com.abrah.nightmare.ui.SettingsCardSheet(
         visible = settingsPage != null,
+        anchorY = vm.settingsAnchor,
         onDismiss = { vm.setCanvasVisible(true) },
     ) { if (settingsPage != null) SettingsSheetBody(vm = vm, onlyPage = settingsPage) }
     com.abrah.nightmare.ui.DestCardSheet(

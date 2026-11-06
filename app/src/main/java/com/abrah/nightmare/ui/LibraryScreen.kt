@@ -1,5 +1,22 @@
 package com.abrah.nightmare.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.Alignment
+
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.foundation.layout.height
@@ -95,29 +112,41 @@ fun LibraryScreen(
             // from Models and vice versa, both cards on top and we can toggle"); each list's "+" after them.
             if (tab != LibraryTab.RESULTS) Row(
                 Modifier.fillMaxWidth(),
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(Space.s),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Space.s),
             ) {
-                LibraryToggleCard(ModelsIcon, stringResource(R.string.nav_models), tab == LibraryTab.MODELS, Modifier.weight(1f)) {
-                    onTab(LibraryTab.MODELS)
-                }
-                LibraryToggleCard(FlowsIcon, stringResource(R.string.nav_flows), tab == LibraryTab.FLOWS, Modifier.weight(1f)) {
-                    onTab(LibraryTab.FLOWS)
-                }
+                LibraryTabsSwitcher(
+                    selectedTab = tab,
+                    onTab = onTab,
+                    modifier = Modifier.weight(1f),
+                )
                 if (tab == LibraryTab.MODELS) modelsAction?.invoke() else flowsAction?.invoke()
             } else ScreenHeader(
                 stringResource(R.string.nav_results),
                 onClose = null,
-                // ⭐ No ☰ of its own: the main bar's, in the gap above the sheet, is the one
-                // ([PullDownSheet]'s `onMenu`, the user's mock 2026-10-10).
                 onMenu = null,
             )
-            // ⚠ The list scrolls only the list — the sheet is pulled by its bar ([keepScrollInside]).
-            Column(Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp).keepScrollInside()) {
-                when (tab) {
-                    LibraryTab.MODELS -> models()
-                    LibraryTab.FLOWS -> flows()
-                    LibraryTab.RESULTS -> results()
+            // ⚠ AnimatedContent with horizontal slide translation (matching BottomBar motion)
+            AnimatedContent(
+                targetState = tab,
+                transitionSpec = {
+                    if (targetState == LibraryTab.FLOWS) {
+                        (slideInHorizontally(tween(240)) { it / 3 } + fadeIn(tween(200)))
+                            .togetherWith(slideOutHorizontally(tween(200)) { -it / 3 } + fadeOut(tween(180)))
+                    } else {
+                        (slideInHorizontally(tween(240)) { -it / 3 } + fadeIn(tween(200)))
+                            .togetherWith(slideOutHorizontally(tween(200)) { it / 3 } + fadeOut(tween(180)))
+                    }
+                },
+                label = "libraryTabTransition",
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp),
+            ) { curTab ->
+                Column(Modifier.fillMaxSize().keepScrollInside()) {
+                    when (curTab) {
+                        LibraryTab.MODELS -> models()
+                        LibraryTab.FLOWS -> flows()
+                        LibraryTab.RESULTS -> results()
+                    }
                 }
             }
         }
@@ -207,27 +236,104 @@ fun LibraryScreen(
     }
 }
 
-/** ⭐ One of the Models / Flows cards at the top of the library sheet: [StudioCard], selected when it is open. */
+/** ⭐ Unified switcher with sliding pill indicator (BottomBar translation animation). */
 @Composable
-private fun LibraryToggleCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    selected: Boolean,
-    modifier: Modifier,
-    onClick: () -> Unit,
+private fun LibraryTabsSwitcher(
+    selectedTab: LibraryTab,
+    onTab: (LibraryTab) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    StudioCard(modifier, selected = selected, onClick = if (selected) null else onClick) {
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            androidx.compose.material3.Icon(
-                icon, contentDescription = null, modifier = Modifier.size(22.dp),
-                tint = if (selected) MaterialTheme.studio.accentText else MaterialTheme.colorScheme.onSurfaceVariant,
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+        modifier = modifier.height(52.dp),
+    ) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(4.dp)) {
+            val halfW = (maxWidth - 4.dp) / 2
+            val isModels = selectedTab == LibraryTab.MODELS
+            val pillX by animateDpAsState(
+                targetValue = if (isModels) 0.dp else halfW + 4.dp,
+                animationSpec = spring(dampingRatio = 0.85f, stiffness = 500f),
+                label = "libraryPillX",
             )
-            androidx.compose.foundation.layout.Spacer(Modifier.width(Space.s))
-            Text(
-                label, style = MaterialTheme.typography.titleMedium, maxLines = 1,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+
+            // ⭐ The sliding indicator pill (BottomBar translation animation)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier
+                    .width(halfW)
+                    .fillMaxHeight()
+                    .offset(x = pillX),
+            ) {}
+
+            Row(
+                Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val modelsTextCol by animateColorAsState(
+                    targetValue = if (isModels) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    animationSpec = tween(150),
+                    label = "modelsCol",
+                )
+                val flowsTextCol by animateColorAsState(
+                    targetValue = if (!isModels) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    animationSpec = tween(150),
+                    label = "flowsCol",
+                )
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onTab(LibraryTab.MODELS) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Icon(
+                            ModelsIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = modelsTextCol,
+                        )
+                        Spacer(Modifier.width(Space.s))
+                        Text(
+                            stringResource(R.string.nav_models),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = if (isModels) FontWeight.SemiBold else FontWeight.Medium,
+                            color = modelsTextCol,
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onTab(LibraryTab.FLOWS) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Icon(
+                            FlowsIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = flowsTextCol,
+                        )
+                        Spacer(Modifier.width(Space.s))
+                        Text(
+                            stringResource(R.string.nav_flows),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = if (!isModels) FontWeight.SemiBold else FontWeight.Medium,
+                            color = flowsTextCol,
+                        )
+                    }
+                }
+            }
         }
     }
 }

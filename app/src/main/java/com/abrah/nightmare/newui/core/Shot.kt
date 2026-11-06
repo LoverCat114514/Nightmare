@@ -22,12 +22,16 @@ import java.io.File
  * is unique per render (the engine writes a fresh file each run), so its path
  * is the natural key — and it is stable across recompositions, unlike
  * `hashCode()` of the bitmap.
+ *
+ * [meta] holds the serialized JSON parameters of this generation so it can be
+ * injected into the PNG tEXt metadata when saving and extracted upon import.
  */
 class Shot(
     val bitmap: ImageBitmap,
     val ms: Long,
     val seed: Long,
     val file: File,
+    val meta: String? = null,
 ) {
     val key: String get() = file.absolutePath
 
@@ -40,16 +44,6 @@ class Shot(
 
 /**
  * ⭐ fix33/fix34: a downscaled copy for the 84 dp history strip.
- *
- * The strip used to draw the FULL render (`out.asImageBitmap()`, 1024 px and
- * up) into an 84 dp square. Compose uploads the whole bitmap as a texture
- * whatever size it is drawn at, so every scroll frame paid for a full-size
- * upload and sample per thumbnail. 84 dp at 3× is ≈252 px, so 256 is the right
- * ceiling.
- *
- * ⚠ The source is never mutated: `asImageBitmap()` wraps an immutable Bitmap,
- * and this returns a NEW one. Remember it at the call site — a `remember` keyed
- * on the source bitmap — so a scroll does not rescale it every frame.
  */
 fun ImageBitmap.thumb(maxPx: Int): ImageBitmap {
     val src = asAndroidBitmap()
