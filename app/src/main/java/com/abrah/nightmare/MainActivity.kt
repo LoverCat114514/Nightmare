@@ -149,10 +149,26 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    // ⭐ TouchProbe layer 1 (2026-11-06): the whole dispatch cost per event, in
+    // the activity itself — a large `took=` while the screen refuses to scroll
+    // means the main thread was saturated inside event dispatch.
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        val t0 = android.os.SystemClock.elapsedRealtimeNanos()
+        val out = super.dispatchTouchEvent(ev)
+        com.abrah.nightmare.newui.TouchProbe.dispatch(ev, (android.os.SystemClock.elapsedRealtimeNanos() - t0) / 1000)
+        return out
+    }
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // ⭐ First: a Java crash's stack for the next launch's report ([CrashReport.installHandler]).
         CrashReport.installHandler(this)
+        // ⭐ TouchProbe (2026-11-06): the problem-4 black box — dispatch costs,
+        // frame stalls, workbench scroll. Writes Download/NightmareProbe/touch.log
+        // from one background thread; never blocks, never crashes the app.
+        com.abrah.nightmare.newui.TouchProbe.install(this)
+        android.view.Choreographer.getInstance().postFrameCallback(com.abrah.nightmare.newui.TouchProbe.frameProbe)
         enableEdgeToEdge()
         // ⚠ Before anything composes or any op runs: NODE_TYPES reads
         // SelectedModel for its `model` default, and the backend launches

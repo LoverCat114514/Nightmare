@@ -74,6 +74,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -528,8 +529,15 @@ fun NewUiScreen(
         }
     }
 
+    val workbenchScroll = rememberScrollState()
+    // ⭐ TouchProbe layer 3 (2026-11-06): observe the scroll OFF the recomposition
+    // path (snapshotFlow emits on the applier thread) — a frozen SCROLL stream
+    // while DISPATCH lines keep flowing is the ownership-conflict signature.
+    LaunchedEffect(Unit) {
+        snapshotFlow { workbenchScroll.value }.collect { TouchProbe.markScroll(it.toFloat()) }
+    }
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+        Modifier.fillMaxSize().verticalScroll(workbenchScroll)
             // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar is gone:
             // the host leaves the very top to this page, so the page keeps one
             // module gap (12dp) at its head — the spacing every card keeps.
