@@ -6,14 +6,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -26,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -44,47 +46,6 @@ import com.abrah.nightmare.newui.theme.Nm
  * The size grid + sliders, the sampler dropdown and its schedule row, Steps and
  * CFG, the seed segment, auto-save, the post-processing fold, and the More
  * options fold.
- *
- * ## What changed under it, and what did not
- *
- * **Nothing visual changed.** Same field order, same labels, same chips, same
- * three post-processing tools, same two folds — one open by default, one shut.
- *
- * ### The folds: corrected reasoning, same outcome
- *
- * ⚠ **A note on the diagnosis.** The old folds used
- * `AnimatedVisibility(open, enter = fadeIn(), exit = fadeOut())`. That is an
- * **alpha** animation, not a height animation — passing `enter` explicitly
- * replaces `AnimatedVisibility`'s default `fadeIn() + expandIn()`, so the old
- * code was NOT re-measuring the list per frame. The earlier root-cause note
- * that blamed `expandVertically` here was wrong, and this file says so rather
- * than quietly keeping a false justification.
- *
- * What the old folds DID cost is the part that survives scrutiny: `fadeIn()`
- * still keeps the body composed and animates alpha for 300 ms on every open,
- * and both folds live inside a `LazyColumn` item whose height changes the
- * moment the body appears — a re-measure at the start and end of the fade,
- * plus 300 ms of alpha work, for a disclosure that a person opens dozens of
- * times a day. So the outcome is unchanged (**instant**), but now for the
- * correct reason: at this frequency the motion tier says no animation, and the
- * content appearing IS the feedback. [FoldBody] is `if (open) content()`.
- *
- * ### The gesture bug that this file must not reintroduce
- *
- * ⭐ fix33 (user report 2026-11-06, item 2 — "更多选项里的功能按钮都打不开"):
- * both fold headers used to be `Row(Modifier.clickable { … })` containing a
- * `TextButton(onClick = { … = !… })`. One tap ran BOTH handlers, flipping the
- * flag twice — net zero — so the row read as dead. [FoldHeader] owns the tap;
- * the arrow is a glyph with no handler. Same for the post-processing header.
- *
- * ### The slider that saturated the main thread
- *
- * ⚠ The width/height sliders used to call `onPicked()` on every drag frame,
- * which ran `modelVer++` — and the screen's save effect was keyed on `modelVer`
- * with NO debounce, so a single drag ran the whole prefs transaction per frame
- * on the main thread. The thread saturated and taps landed late or never.
- * Here the sliders write state only; [WbParams.save] is debounced by the screen
- * and never runs per frame.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -113,9 +74,6 @@ fun ParamsCard(
                 modifier = Modifier.weight(1f),
             )
         }
-        // ⭐ State write only. The old call also ran `onPicked()` here — a
-        // `modelVer++` EVERY FRAME, which (with an undebounced save effect)
-        // saturated the main thread and swallowed taps.
         PostSlider(
             label = stringResource(R.string.knob_width),
             value = s.w.toFloat(),
@@ -137,21 +95,11 @@ fun ParamsCard(
         )
 
         // ── The sampler, and its schedule ──────────────────────────────────
-        //
-        // ⭐ The wire value IS sampler+schedule (`dpm3_sde_karras`); the two
-        // pickers are two views of one value ([ModelCatalog.splitScheduler] /
-        // [joinScheduler]). `wire` is read from state, so anything that writes
-        // the scheduler outside this card (the reset button, the family change)
-        // is seen here with no mirror to drift.
         val wire = s.scheduler
         val (base, sched) = ModelCatalog.splitScheduler(
             if (wire.isBlank()) ModelCatalog.DEFAULT_SCHEDULER else wire,
         )
 
-        // ⭐ Follow the model's family: a MOSS pick restores the full
-        // sampler+schedule wire, a turbo pick drops to its bare sampler. Without
-        // this the old family's value survived a model switch until a manual tap
-        // (a real user report).
         LaunchedEffect(family) {
             val choices = ModelCatalog.schedulersFor(family)
             if (s.scheduler.isBlank() || s.scheduler !in choices) {
@@ -169,8 +117,6 @@ fun ParamsCard(
             onPick = { b -> s.scheduler = ModelCatalog.joinScheduler(b, sched); onPicked() },
         )
 
-        // The schedule row: only where the family's sampler actually takes one
-        // (Anima's flow-match has none; LCM keeps its own).
         val schedules = remember(family, base) {
             ModelCatalog.schedulersFor(family)
                 .map { ModelCatalog.splitScheduler(it) }
@@ -179,8 +125,6 @@ fun ParamsCard(
                 .distinct()
         }
         if (schedules.size > 1 && ModelCatalog.schedulesSupported(base)) {
-            // ⚠ stringResource is @Composable: build the names in composition,
-            // not inside a remember calculation.
             val normalStr = stringResource(R.string.schedule_normal)
             val karrasStr = stringResource(R.string.schedule_karras)
             val expStr = stringResource(R.string.schedule_exponential)
@@ -233,18 +177,22 @@ fun ParamsCard(
                 selected = !s.fixedSeed,
                 onClick = { s.fixedSeed = false },
                 label = { Text("✓ " + stringResource(R.string.newui_rand_seed)) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Nm.priSoft,
+                    selectedLabelColor = Nm.pri,
+                ),
             )
             FilterChip(
                 selected = s.fixedSeed,
                 onClick = { s.fixedSeed = true },
                 label = { Text("🔒 " + stringResource(R.string.newui_fixed_seed)) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Nm.priSoft,
+                    selectedLabelColor = Nm.pri,
+                ),
             )
         }
         if (s.fixedSeed) {
-            // ⭐ The NumField shape: the text follows the wire whenever it moved
-            // from OUTSIDE this field, but never while the person is typing (a
-            // mid-edit sync would eat the cursor). This is the one place local
-            // state is correct.
             var seedTxt by remember { mutableStateOf(if (s.seed > 0) s.seed.toString() else "") }
             var focused by remember { mutableStateOf(false) }
             LaunchedEffect(s.seed, focused) {
@@ -286,17 +234,20 @@ fun ParamsCard(
                     color = Nm.sub,
                 )
             }
-            // ⚠ The switch is the row's only handler, and it binds the WIRE.
-            Switch(checked = s.autosave, onCheckedChange = { s.autosave = it })
+            Switch(
+                checked = s.autosave,
+                onCheckedChange = { s.autosave = it },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = Nm.pri,
+                    uncheckedThumbColor = Color.White,
+                    uncheckedTrackColor = Nm.line,
+                    uncheckedBorderColor = Color.Transparent,
+                ),
+            )
         }
 
         // ── Post-processing: the three tools, folded open by default ────────
-        // ⚠⚠ fix34c: `rememberSaveable`, not `remember`. These flags live
-        // INSIDE a LazyColumn item: when the card scrolls off and back, a plain
-        // `remember` is discarded and the fold snaps back to its default. The
-        // person opens "更多选项", scrolls up to check the prompt, comes back —
-        // and the switches they just set are folded away again, which reads as
-        // "the buttons don't work". `rememberSaveable` survives recycling.
         var postOpen by rememberSaveable { mutableStateOf(true) }
         FoldHeader(open = postOpen, onToggle = { postOpen = !postOpen }) {
             Text(
@@ -333,9 +284,6 @@ fun ParamsCard(
                     actionLabel = stringResource(R.string.post_adjust_now),
                     onAction = { onApply(2) },
                 )
-                // The four colour sliders appear with the adjust switch. Also
-                // instant: it is inside a lazy-list item, and the sliders cannot
-                // be dragged until they exist anyway.
                 if (s.adjOn) {
                     Column(
                         Modifier.padding(start = 8.dp),
@@ -367,12 +315,6 @@ fun ParamsCard(
         }
 
         // ── More options: the ×2 upscale, the fixes, the reset ──────────────
-        //
-        // ⭐ This is the fold the user's report was about ("更多选项里的功能按钮
-        // 都打不开"). The ▸ used to be a TextButton INSIDE a `.clickable` Row, so
-        // one tap ran both handlers and flipped the flag twice — net zero. The
-        // arrow is now a glyph, the row is the only target, and the body is
-        // instant.
         var moreOpen by rememberSaveable { mutableStateOf(false) }
         FoldHeader(open = moreOpen, onToggle = { moreOpen = !moreOpen }) {
             Text(
@@ -385,8 +327,6 @@ fun ParamsCard(
         }
         FoldBody(moreOpen) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                // ⭐ A per-run switch, like the face/hand fixes — not a one-shot
-                // button (the user's request).
                 SwitchRow(
                     title = stringResource(R.string.knob_enlarge),
                     hint = stringResource(R.string.newui_m_ups_hint),
@@ -405,10 +345,6 @@ fun ParamsCard(
                     checked = s.pHands,
                     onCheckedChange = { s.pHands = it },
                 )
-                // ⭐ The reset writes every field back to its default and lets
-                // state do the rest — no `modelVer++`, because there is no
-                // version counter. The old code needed the bump here; a missed
-                // one meant the reset did not redraw.
                 TextButton(
                     onClick = {
                         s.steps = 29

@@ -19,6 +19,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -62,17 +63,10 @@ import kotlinx.coroutines.withContext
  *
  * - **`loras` is real state.** [WbParams.loras] is a `mutableStateOf` holding an
  *   immutable `List<LoraPick>`, so writing it is the ONLY thing needed to make
- *   the UI agree. The old `WbState.loras` was a plain `MutableList` that callers
- *   mutated in place and then hand-bumped `modelVer` in six separate places to
- *   force a recomposition — and every missed bump left the sheet showing stale
- *   selections. `ver++` is gone from this file entirely; there is nothing to
- *   bump.
- * - **[LoraPick], not `Pair<String, Float>`.** The old list was positional
- *   knowledge held at every call site ("index 0 is the name"). A real type
- *   makes a transposition a compile error instead of a silently broken spec.
- * - **The loading gate keeps its feedback.** fix33 added the `Dialog` + spinner
- *   because the old code composed NOTHING between the tap and the second disk
- *   scan, which read as a dead button. That dialog is preserved verbatim.
+ *   the UI agree.
+ * - **`installed` models loaded off the main thread**: [ModelCatalog.installed]
+ *   is no longer evaluated synchronously during LazyColumn scrolling, avoiding
+ *   hundreds of File.exists() calls that caused frame drops mid-scroll.
  *
  * ⚠ **One gesture target per row.** The LoRA "choose" `TextButton` is the only
  * handler on its row — the title column carries none. This is the same rule
@@ -90,15 +84,12 @@ fun ModelCard(
     onBrowseLoras: ((LoraSources.Target) -> Unit)? = null,
     onDeleteLora: ((String) -> Unit)? = null,
 ) {
-    val installed = remember { ModelCatalog.installed(ctx) }
-
     NmCard {
         val picked = ModelCatalog.byId(modelId)
         CheckpointPicker(
-            ctx,
-            installed,
-            picked?.label ?: SelectedModel.spec.label,
-            picked?.family?.label ?: "",
+            ctx = ctx,
+            label = picked?.label ?: SelectedModel.spec.label,
+            familyLabel = picked?.family?.label ?: "",
             onPicked = onPicked,
         )
 
@@ -222,12 +213,23 @@ fun ModelCard(
 @Composable
 private fun CheckpointPicker(
     ctx: Context,
-    installed: List<ModelSpec>,
     label: String,
     familyLabel: String,
     onPicked: (String) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
+    var installed by remember { mutableStateOf<List<ModelSpec>>(emptyList()) }
+
+    // ⭐ Load installed models asynchronously off the main thread when dropdown is opened.
+    // Never run ModelCatalog.installed(ctx) synchronously during LazyColumn scrolling!
+    LaunchedEffect(open) {
+        if (open) {
+            installed = withContext(Dispatchers.IO) {
+                ModelCatalog.installed(ctx)
+            }
+        }
+    }
+
     ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
         OutlinedTextField(
             value = label,

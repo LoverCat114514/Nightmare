@@ -53,7 +53,9 @@ import com.abrah.nightmare.newui.core.uriToDataUrl
 import com.abrah.nightmare.newui.theme.Nm
 import com.abrah.nightmare.ui.BOTTOM_BAR_RESERVE
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
  * ⭐⭐ fix34 (2026-11-06) — the workbench, rebuilt.
@@ -148,9 +150,13 @@ fun NewUiScreen(
 
     // The global follows the workbench's restored pick (symmetric with the
     // picker's double write), so the engine and the Default UI agree.
+    // Also warm up installed catalog cache in the background IO thread.
     LaunchedEffect(Unit) {
         if (SelectedModel.spec.id != s.modelId) {
             runCatching { SelectedModel.set(ctx, s.modelId) }
+        }
+        withContext(Dispatchers.IO) {
+            runCatching { ModelCatalog.refreshInstalled(ctx) }
         }
     }
 

@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -76,25 +78,6 @@ val GeneratePlayIcon: ImageVector by lazy {
  * The square frame (the finished shot or the empty hint), the progress bar and
  * cancel while the engine runs, the load/save row, the img2img source line, and
  * this session's history strip.
- *
- * ## What changed under it, and what did not
- *
- * **Nothing visual changed.** The frame is still a 1:1 box with a 14 dp radius,
- * the same lavender page colour inside, the same 84 dp thumbnails at a 12 dp
- * radius with the violet border, the same full-width Generate at 56 dp. This is
- * a machinery rewrite; the look is a contract.
- *
- * What changed is where the values come from:
- * - **`busy` / progress / status** now arrive as ONE [RunController.Phase]
- *   instead of five separate `MutableState`s that the screen had to keep in
- *   step. A single immutable value cannot disagree with itself.
- * - **The shot** is a parameter, not a read of a file-level `AtomicReference`
- *   with a version counter beside it.
- * - **The history strip** draws pre-cached 256 px thumbnails directly from [Shot.thumbnail].
- *
- * ⚠ **The one gesture-target rule holds here.** The Generate button, the save
- * icon, the load button and the clear-source "✕" are each their own control on
- * their own row — never nested inside a clickable container.
  */
 @Composable
 fun ResultCard(
@@ -120,6 +103,8 @@ fun ResultCard(
         )
 
         // ── The square frame ───────────────────────────────────────────────
+        // Fixed 1:1 ratio box with smooth crossfade on new render arrival.
+        // Causes zero layout re-measurement because container dimensions are strictly invariant.
         Box(
             Modifier.fillMaxWidth()
                 .aspectRatio(1f)
@@ -128,26 +113,30 @@ fun ResultCard(
                 .border(1.dp, Nm.line, RoundedCornerShape(14.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            if (shot != null) {
-                Image(
-                    bitmap = shot.bitmap,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Text(
-                    stringResource(R.string.newui_results),
-                    color = Nm.sub,
-                )
+            Crossfade(
+                targetState = shot,
+                animationSpec = tween(240),
+                label = "resultCrossfade",
+            ) { curShot ->
+                if (curShot != null) {
+                    Image(
+                        bitmap = curShot.bitmap,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            stringResource(R.string.newui_results),
+                            color = Nm.sub,
+                        )
+                    }
+                }
             }
         }
 
         // ── Progress + cancel, only while a run is on ──────────────────────
-        //
-        // ⚠ `if (phase.running)` — the bar leaves the composition entirely when
-        // idle, instead of sitting there at zero. A zero-progress bar that is
-        // always present reads as "the app is stuck".
         if (phase.running) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -175,8 +164,6 @@ fun ResultCard(
             if (uri != null) onPickSrc(uri, queryDisplayName(ctx, uri) ?: "image")
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // ⭐ The source picker exists only for img2img — txt2img has no use
-            // for one. This is a design rule, not a bug guard.
             if (mode == WbParams.MODE_IMG2IMG) {
                 OutlinedButton(onClick = { pickSrc.launch(arrayOf("image/*")) }) {
                     Text(stringResource(R.string.newui_load))
@@ -252,9 +239,6 @@ fun ResultCard(
         }
 
         // ── Generate / Cancel ──────────────────────────────────────────────
-        //
-        // ⚠ One button, one handler. `phase.running` swaps the label and the
-        // action, so there is no second button to disagree with the first.
         Button(
             onClick = if (phase.running) onCancel else onRun,
             modifier = Modifier.fillMaxWidth().height(56.dp),

@@ -1,5 +1,6 @@
 package com.abrah.nightmare.newui.motion
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.Spring
@@ -21,7 +22,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -83,17 +83,10 @@ import com.abrah.nightmare.newui.theme.Nm
  * **Draw-time only.** In Compose that means what `graphicsLayer` can do:
  * `scale`, `alpha`, `translation`. Anything that triggers measurement —
  * `size`, `height`, `padding`, `Arrangement` — is layout-time and banned here.
- * Compose makes this subtler than React Native: `animateContentSize` and
- * `AnimatedVisibility(expandVertically)` look convenient and are pure layout
- * animations, banned for the same reason RN bans animating `height`.
  */
 object Motion {
 
     // ── Curves ────────────────────────────────────────────────────────────
-    //
-    // ⚠ Never `EaseIn` on a UI element. It starts slow, which delays exactly the
-    // moment the person is watching. These are the numbers the animation skill
-    // ships.
 
     /** Entering or exiting: fast at the start, settles slowly. The default. */
     val EaseOut: Easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
@@ -105,9 +98,6 @@ object Motion {
     val EaseSheet: Easing = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
 
     // ── Durations ─────────────────────────────────────────────────────────
-    //
-    // Mobile motion stays under 300 ms. A sheet is the slowest thing here and
-    // it is still 260.
 
     /** Press feedback. Under 150 ms, or it reads as lag rather than response. */
     const val PRESS_MS = 120
@@ -143,13 +133,8 @@ object Motion {
 /**
  * ⭐ Press feedback on a pressable, with exactly one gesture target.
  *
- * **Frequency tier: tens of times a day** → near-imperceptible: 120 ms, scale
- * only. Not a colour flash, not a shadow, not a ripple: `scale` takes the label
- * and the icon with it, which is what makes a press read as physical.
- *
- * ⚠ Optimized: uses `graphicsLayer { scaleX = ...; scaleY = ... }` instead of
- * `Modifier.scale()`, keeping the animation entirely in the GPU Draw phase
- * without invalidating layout measurement.
+ * Uses `graphicsLayer { scaleX = ...; scaleY = ... }` instead of `Modifier.scale()`,
+ * keeping the animation entirely in the GPU Draw phase without invalidating layout measurement.
  */
 fun Modifier.pressScale(
     enabled: Boolean = true,
@@ -203,7 +188,7 @@ val FoldChevronIcon: ImageVector by lazy {
  * disclosure arrow, as ONE gesture target.
  *
  * Polished with a modern rounded chevron icon inside a subtle badge, smoothly
- * rotating between 0° and 90° via `graphicsLayer`.
+ * animating rotation and theme accent color via draw-time states.
  */
 @Composable
 fun FoldHeader(
@@ -217,6 +202,17 @@ fun FoldHeader(
         animationSpec = Motion.timed(Motion.TOGGLE_MS, Motion.EaseOut),
         label = "foldArrowRotation",
     )
+    val badgeBg by animateColorAsState(
+        targetValue = if (open) Nm.priSoft else Nm.fld.copy(alpha = 0.5f),
+        animationSpec = Motion.timed(Motion.TOGGLE_MS, Motion.EaseOut),
+        label = "foldBadgeBg",
+    )
+    val chevronTint by animateColorAsState(
+        targetValue = if (open) Nm.pri else Nm.sub,
+        animationSpec = Motion.timed(Motion.TOGGLE_MS, Motion.EaseOut),
+        label = "foldChevronTint",
+    )
+
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -230,13 +226,13 @@ fun FoldHeader(
             modifier = Modifier
                 .size(26.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(if (open) Nm.priSoft else Nm.fld.copy(alpha = 0.5f)),
+                .background(badgeBg),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = FoldChevronIcon,
                 contentDescription = null,
-                tint = if (open) Nm.pri else Nm.sub,
+                tint = chevronTint,
                 modifier = Modifier
                     .size(14.dp)
                     .graphicsLayer { rotationZ = arrowRotation },
@@ -268,17 +264,7 @@ fun FoldBody(
 }
 
 /**
- * ⭐ A scrim that fades — and **leaves the composition** when it has nothing to
- * do.
- *
- * ⚠ This answers the second real bug. A `Box(Modifier.fillMaxSize()
- * .pointerInput { detectTapGestures { onDismiss() } })` with `alpha = 0` still
- * participates in hit testing: invisible, full-screen, and it eats every tap.
- * The old tree had exactly this shape in two places, and it is why buttons
- * "didn't work" while a sheet was mid-animation.
- *
- * The rule: **a scrim is only in the tree while it is at least 1% opaque.**
- * `alpha 0` means not composed, not "composed but transparent".
+ * ⭐ A scrim that fades — and **leaves the composition** when it has nothing to do.
  */
 @Composable
 fun Scrim(
@@ -309,17 +295,6 @@ fun Scrim(
 
 /**
  * ⭐ A sheet's entrance: `alpha` + a small `translationY`, both draw-time.
- *
- * **Frequency tier: occasional** → standard animation; purpose is
- * **preventing a jarring change** — a panel that materialises from nothing
- * reads as a glitch. 260 ms, ease-out, 12 dp of travel: enough to say "this
- * came from the bottom", not enough to make anyone wait for it.
- *
- * ⚠ The travel is `translationY` on a `graphicsLayer` — NOT a height change and
- * NOT a padding change. Nothing re-measures.
- *
- * ⚠ No `scale(0)` entrance anywhere: 0.96 + alpha 0 is the floor, because
- * nothing in the real world appears from nothing.
  */
 @Composable
 fun sheetEnter(visible: Boolean): SheetMotion {
@@ -334,6 +309,5 @@ fun sheetEnter(visible: Boolean): SheetMotion {
 /** The two values a sheet entrance hands its content. */
 class SheetMotion(val progress: Float) {
     val alpha: Float get() = progress
-    /** dp of travel, from below. */
     val translateYDp: Float get() = (1f - progress) * 12f
 }

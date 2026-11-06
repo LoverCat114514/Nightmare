@@ -1,6 +1,7 @@
 package com.abrah.nightmare.newui.card
 
-import androidx.compose.ui.draw.clip
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +26,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
@@ -116,11 +119,7 @@ fun CardTitle(text: String) {
 
 /**
  * ⭐ Two halves in one pill; the selected half in the soft violet.
- *
- * ⚠ **Frequency tier: 100+/day** (mode switching is frequent) → the selection
- * moves instantly, no sliding indicator. The animation skill's rule for tab
- * switches is explicit: tabs are peers, a slide implies depth that is not
- * there, and the person pays for it dozens of times a session.
+ * Smooth color transition between active and inactive states.
  */
 @Composable
 fun SegmentedRow(
@@ -149,20 +148,26 @@ private fun SegmentHalf(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // ⭐ The colour swap is a state change, not an animation: at 100+/day the
-    // tier says no animation, and an instant swap is what a native segmented
-    // control does too.
+    val bgColor by animateColorAsState(
+        targetValue = if (selected) Nm.priSoft else Color.Transparent,
+        animationSpec = tween(150),
+        label = "segBg",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) Nm.priLine else Color.Transparent,
+        animationSpec = tween(150),
+        label = "segBorder",
+    )
+    val textColor by animateColorAsState(
+        targetValue = if (selected) Nm.pri else Nm.sub,
+        animationSpec = tween(150),
+        label = "segText",
+    )
+
     Box(
         modifier
-            .background(
-                if (selected) Nm.priSoft else Color.Transparent,
-                RoundedCornerShape(999.dp),
-            )
-            .border(
-                1.dp,
-                if (selected) Nm.priLine else Color.Transparent,
-                RoundedCornerShape(999.dp),
-            )
+            .background(bgColor, RoundedCornerShape(999.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(999.dp))
             .clickable(onClick = onClick)
             .padding(vertical = 10.dp),
         contentAlignment = Alignment.Center,
@@ -171,7 +176,7 @@ private fun SegmentHalf(
             label,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            color = if (selected) Nm.pri else Nm.sub,
+            color = textColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -349,14 +354,8 @@ fun DropdownWire(
 /**
  * ⭐ A titled row with a switch at its end.
  *
- * ⚠ The switch is bound to the WIRE, not to a local copy. The old tree had
- * `remember { mutableStateOf(on) }` here, which took a copy that never
- * followed the wire afterwards: a reset cleared the wire but left the switch
- * drawn "on", and the next tap wrote the stale value back — reading as a dead
- * switch. No local state, no stale copy.
- *
- * ⚠ **One gesture target:** the switch owns the tap, the title does not. Two
- * handlers on one row is the bug this tree keeps removing.
+ * ⚠ The switch is bound to the WIRE, not to a local copy. No local state, no stale copy.
+ * ⚠ **One gesture target:** the switch owns the tap, the title does not.
  */
 @Composable
 fun SwitchRow(
@@ -391,6 +390,13 @@ fun SwitchRow(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = Nm.pri,
+                uncheckedThumbColor = Color.White,
+                uncheckedTrackColor = Nm.line,
+                uncheckedBorderColor = Color.Transparent,
+            ),
         )
     }
 }
@@ -437,7 +443,17 @@ fun PostTool(
                         color = Nm.sub,
                     )
                     Spacer(Modifier.width(8.dp))
-                    Switch(checked = on, onCheckedChange = onFlag)
+                    Switch(
+                        checked = on,
+                        onCheckedChange = onFlag,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Nm.pri,
+                            uncheckedThumbColor = Color.White,
+                            uncheckedTrackColor = Nm.line,
+                            uncheckedBorderColor = Color.Transparent,
+                        ),
+                    )
                 }
             }
             Spacer(Modifier.weight(1f))
