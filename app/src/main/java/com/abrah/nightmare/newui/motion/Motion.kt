@@ -148,8 +148,17 @@ fun Modifier.pressScale(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ): Modifier = composed {
+    // ⚠⚠ fix34c: `composed` is kept ONLY because `collectIsPressedAsState`
+    // needs a `MutableInteractionSource` from a `remember` — there is no
+    // non-composed way to own that per-callsite. But the modifier chain it
+    // builds is now STABLE across recompositions (`remember` on the source,
+    // one `clickable`), which is what matters inside a LazyColumn: a `composed`
+    // block that rebuilt its chain each pass would re-register the hit-test
+    // node and could drop a tap mid-scroll.
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    // ⚠ `animateFloatAsState`, not a state write per frame: the press animation
+    // costs one animator, not a recomposition of the whole row.
     val scale by animateFloatAsState(
         targetValue = if (pressed && enabled) Motion.PRESS_SCALE else 1f,
         animationSpec = Motion.timed(Motion.PRESS_MS, Motion.EaseOut),
@@ -185,8 +194,23 @@ fun FoldHeader(
     modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit,
 ) {
+    // ⚠⚠ fix34c: `clickable` DIRECTLY, not `pressScale`.
+    //
+    // Why this matters for "更多选项里的功能开关不可用" (the user's report):
+    // `pressScale` is a `Modifier.composed { … }`. Inside a LazyColumn item,
+    // `composed` rebuilds its chain on every reuse pass — including the
+    // `MutableInteractionSource` it remembers — so a press in progress (or a
+    // tap that lands while the list is still settling) can be dropped when the
+    // item is recycled. A plain `clickable` registers one stable hit-test node.
+    //
+    // The scale animation is ALSO the wrong tier here: this header is opened
+    // dozens of times a day, which the motion table puts in the "no animation"
+    // band — the body appearing is the feedback. Removing it costs nothing
+    // visible and removes one animator from a scroll-hot item.
     Row(
-        modifier = modifier.fillMaxWidth().pressScale(onClick = onToggle),
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // ⚠ `RowScope` receiver, not a bare lambda: the caller's title needs

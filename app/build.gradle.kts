@@ -51,8 +51,8 @@ android {
         // a minor bump per push, which is what the rule exists to stop. The
         // minor moves only when a release is called a release. âš  versionCode
         // stays a plain incrementing integer; Android requires that.
-        versionCode = 598
-        versionName = "1.6.291"
+        versionCode = 599
+        versionName = "1.6.292"
         // ⭐ fix31 (friend's audit P1-1): the touch/frame probe is a diagnostic
         // tool, not a product feature — release builds must not write to
         // external storage from every touch. dev keeps it (this push build is

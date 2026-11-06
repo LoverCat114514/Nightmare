@@ -36,10 +36,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.abrah.nightmare.R
 import com.abrah.nightmare.newui.theme.Nm
 
 /**
@@ -413,8 +415,14 @@ fun PostTool(
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (withSwitch) {
+                // ⚠ `stringResource`, not a literal. This was hardcoded "every
+                // run" in fix34's rewrite and shipped: on a Chinese device the
+                // three post-processing switches read in English while every
+                // label around them was Chinese (the user, 2026-11-06: "为什么
+                // 标签成英文了"). `post_every_run` already existed in both
+                // values/ and values-zh/; the old PostTool used it.
                 Text(
-                    "every run",
+                    androidx.compose.ui.res.stringResource(R.string.post_every_run),
                     style = MaterialTheme.typography.labelMedium,
                     color = Nm.sub,
                 )

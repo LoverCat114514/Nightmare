@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -281,7 +282,13 @@ fun ParamsCard(
         }
 
         // ── Post-processing: the three tools, folded open by default ────────
-        var postOpen by remember { mutableStateOf(true) }
+        // ⚠⚠ fix34c: `rememberSaveable`, not `remember`. These flags live
+        // INSIDE a LazyColumn item: when the card scrolls off and back, a plain
+        // `remember` is discarded and the fold snaps back to its default. The
+        // person opens "更多选项", scrolls up to check the prompt, comes back —
+        // and the switches they just set are folded away again, which reads as
+        // "the buttons don't work". `rememberSaveable` survives recycling.
+        var postOpen by rememberSaveable { mutableStateOf(true) }
         FoldHeader(open = postOpen, onToggle = { postOpen = !postOpen }) {
             Text(
                 stringResource(R.string.post_processing),
@@ -357,7 +364,7 @@ fun ParamsCard(
         // one tap ran both handlers and flipped the flag twice — net zero. The
         // arrow is now a glyph, the row is the only target, and the body is
         // instant.
-        var moreOpen by remember { mutableStateOf(false) }
+        var moreOpen by rememberSaveable { mutableStateOf(false) }
         FoldHeader(open = moreOpen, onToggle = { moreOpen = !moreOpen }) {
             Text(
                 stringResource(R.string.more_options),

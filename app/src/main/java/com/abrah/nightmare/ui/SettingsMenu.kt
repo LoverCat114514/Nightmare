@@ -260,7 +260,17 @@ internal fun SettingsMenuScrim(
             modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.28f * dim))
-                .pointerInput(Unit) { detectTapGestures { onDismiss() } },
+                // ⚠⚠ fix34c: the tap-closer is gated on `open`, NOT on `dim`.
+                // `dim` is an `animateFloatAsState`: on CLOSE it runs 1 → 0 over
+                // 150 ms, so `dim > 0f` stays true for those 150 ms after the
+                // menu is already dismissed — and this Box is `fillMaxSize`
+                // with a `pointerInput`, so it kept eating EVERY touch on the
+                // whole screen for 150 ms after each close. That is the
+                // "卡顿在任何地方都可能触发" report: not slow frames (gfxinfo
+                // measured 0.61% jank, 5 ms median), but touches vanishing.
+                // `DestCardSheet` was fixed for exactly this class in fix32b;
+                // this scrim was missed. Closing means inert, immediately.
+                .pointerInput(open) { if (open) detectTapGestures { onDismiss() } },
         )
     }
 }
