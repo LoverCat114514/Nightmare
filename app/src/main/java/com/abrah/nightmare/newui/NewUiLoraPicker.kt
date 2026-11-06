@@ -58,6 +58,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.abrah.nightmare.R
+import com.abrah.nightmare.newui.theme.Nm
+import com.abrah.nightmare.newui.theme.NmSheetShapes
+import com.abrah.nightmare.newui.theme.nmScheme
 
 /**
  * ⭐⭐⭐ (2026-11-05, fourteenth round) **The workbench's LoRA sheet**, to the
