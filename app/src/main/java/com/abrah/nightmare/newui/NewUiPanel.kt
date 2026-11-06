@@ -117,6 +117,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.MutableState
@@ -317,9 +319,19 @@ private class Shot(val bitmap: ImageBitmap, val ms: Long, val seed: Long, val fi
 
 /** The one shot the strip currently shows (a @Volatile ref the polling loop reads). */
 private val LAST_SHOT = java.util.concurrent.atomic.AtomicReference<Shot?>(null)
+/** ⭐ fix29 (performance): LAST_SHOT's version. Bumped whenever a shot is set so
+ *  ResultCard/its Image can re-read via `remember(LAST_SHOT_VERSION.get())` instead of
+ *  calling `LAST_SHOT.get()` on every recomposition — the old code re-read during
+ *  scrolls and could trigger a mid-scroll recomposition when a generation finished. */
+private val LAST_SHOT_VERSION = java.util.concurrent.atomic.AtomicInteger(0)
 
 /** This session's shots, newest first (the strip; capped like the app's own result pages). */
 private val SESSION = java.util.concurrent.ConcurrentLinkedDeque<Shot>()
+/** ⭐ fix29 (performance): bumped whenever a shot is added, so [ResultCard] can
+ *  re-read the list via `remember(SESSION_VERSION.get())` instead of calling
+ *  `SESSION.toList()` on every recomposition (the old code wasted GC and triggered
+ *  LazyRow re-measurement during scrolls). */
+private val SESSION_VERSION = java.util.concurrent.atomic.AtomicInteger(0)
 
 /**
  * Build the [RunRequest] from the screen's state. The rules the app's own runner follows:
@@ -542,7 +554,7 @@ fun NewUiScreen(
                     // The More-options quick enlarge: a lighter bilinear x2.
                     else -> android.graphics.Bitmap.createScaledBitmap(src, src.width * 2, src.height * 2, true)
                 }
-                LAST_SHOT.set(Shot(out.asImageBitmap(), cur.ms, cur.seed, cur.file))
+                LAST_SHOT.set(Shot(out.asImageBitmap(), cur.ms, cur.seed, cur.file)); LAST_SHOT_VERSION.incrementAndGet()
                 postVer.intValue++
             }
         }
@@ -832,7 +844,7 @@ private fun ResultCard(
                     .border(1.dp, Nm.line, RoundedCornerShape(14.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                val shot = LAST_SHOT.get()
+                val shot = remember(LAST_SHOT_VERSION.get()) { LAST_SHOT.get() }
                 if (shot != null) {
                     Image(
                         bitmap = shot.bitmap, contentDescription = null,
@@ -873,7 +885,7 @@ private fun ResultCard(
                 // ⭐ (2026-11-05, ninth round, revised) The top bar's save icon
                 // lives here now — the row's right end, where the Save button
                 // was — at icon-button size to fit the row (the user's re-marking).
-                val have = LAST_SHOT.get() != null
+                val have = remember(LAST_SHOT_VERSION.get()) { LAST_SHOT.get() != null }
                 IconButton(onClick = onSave, enabled = have) {
                     Icon(
                         com.abrah.nightmare.ui.SaveIcon,
@@ -902,7 +914,7 @@ private fun ResultCard(
                 // from here: the bottom nav already carries it, and two doors to
                 // one room is one door too many (the user's image-1 arrow).
             }
-            val hist = SESSION.toList()
+            val hist = remember(SESSION_VERSION.get()) { SESSION.toList() }
             if (hist.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(hist) { sh ->
@@ -1118,12 +1130,15 @@ private fun ModelCard(
                     // rather than inheriting the inspector's Material one. Same
                     // data, same callbacks — the four functions the user kept
                     // (grouping / search / import / the ⋮ menu) all live inside it.
+                    val loraSpecStr = remember(s.loras) {
+                        s.loras.joinToString(", ") { (n, w) ->
+                            if (w == 1.0f) n else "$n@" + LoraSpec.number(w.toDouble())
+                        }
+                    }
                     NewUiLoraPicker(
                         installed = installed,
                         library = library,
-                        spec = s.loras.joinToString(", ") { (n, w) ->
-                            if (w == 1.0f) n else "$n@" + LoraSpec.number(w.toDouble())
-                        },
+                        spec = loraSpecStr,
                         onSet = { txt ->
                             s.loras = LoraSpec.parse(txt).map { it.name to it.strength.toFloat() }.toMutableList()
                             ver++
@@ -1377,7 +1392,7 @@ private fun ParamsCard(
                     Text(if (postOpen) "▾" else "▸", style = MaterialTheme.typography.titleMedium)
                 }
             }
-            AnimatedVisibility(postOpen) {
+            AnimatedVisibility(postOpen, enter = fadeIn(), exit = fadeOut()) {
                 // ⭐ probe v4: the fold's measured height — pairs with SIZE wb
                 // to attribute a scroll-range jump to this block.
                 Column(
@@ -1405,7 +1420,7 @@ private fun ParamsCard(
                         onFlag = { s.adjOn = it },
                         actionLabel = stringResource(R.string.post_adjust_now),
                     ) { onApply(2) }
-                    AnimatedVisibility(s.adjOn) {
+                    AnimatedVisibility(s.adjOn, enter = fadeIn(), exit = fadeOut()) {
                         Column(Modifier.padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             PostSlider(stringResource(R.string.knob_brightness), s.adjBr.toFloat(), -60f..60f, fmt = { String.format("%.0f", it) }) {
                                 s.adjBr = it.toInt()
@@ -1443,7 +1458,7 @@ private fun ParamsCard(
                     Text(if (moreOpen) "▾" else "▸", style = MaterialTheme.typography.titleMedium)
                 }
             }
-            AnimatedVisibility(moreOpen) {
+            AnimatedVisibility(moreOpen, enter = fadeIn(), exit = fadeOut()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     // ⭐ (2026-11-05, ninth round) A per-run switch like the face/
                     // hand fixes, not a one-shot button (the user's item 1).
@@ -1603,9 +1618,13 @@ private fun PostSlider(
 private fun NumField(label: String, value: Int, onCommit: (Int) -> Unit, modifier: Modifier = Modifier) {
     var txt by remember { mutableStateOf(value.toString()) }
     var focused by remember { mutableStateOf(false) }
-    // Not focused -> mirror the wire (a drag or a canvas write-back shows up
-    // as you do it). Focused -> untouched.
-    if (!focused && txt != value.toString()) txt = value.toString()
+    // ⭐ fix29: Mirror the wire via LaunchedEffect instead of writing state during
+    // composition (the old `if (!focused && txt != value.toString()) txt = ...`
+    // violated Compose's "don't write state during composition" rule, risking
+    // recomposition loops when the slider and field fought over the value).
+    LaunchedEffect(value, focused) {
+        if (!focused) txt = value.toString()
+    }
     OutlinedTextField(
         value = txt,
         onValueChange = { t ->
@@ -1772,6 +1791,7 @@ private fun onTapGenerate(
             if (s.autosave) {
                 SESSION.addFirst(shot)
                 if (SESSION.size > 12) SESSION.pollLast()
+                SESSION_VERSION.incrementAndGet()
             }
             statusLine.value = "$ms ms"
         } catch (e: Exception) {
