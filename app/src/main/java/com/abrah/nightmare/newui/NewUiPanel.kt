@@ -82,6 +82,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
@@ -536,8 +537,22 @@ fun NewUiScreen(
     LaunchedEffect(Unit) {
         snapshotFlow { workbenchScroll.value }.collect { TouchProbe.markScroll(it.toFloat()) }
     }
+    // ⭐ TouchProbe layer 3b (2026-11-06, probe v3): the scroll RANGE, logged on
+    // change only. maxValue == 0 while the screen shows content = a collapsed
+    // measure: every drag is a no-op and the value glues at 0 — the dead-swipe
+    // signature the 14:00 freeze showed.
+    LaunchedEffect(Unit) {
+        snapshotFlow { workbenchScroll.maxValue }.collect { TouchProbe.markScrollRange(it) }
+    }
     Column(
         Modifier.fillMaxSize().verticalScroll(workbenchScroll)
+            // ⭐ TouchProbe layer 4 (2026-11-06, probe v3): INSIDE the scroll
+            // modifier on purpose. The Main pass travels leaf→root, so this
+            // observer reads `isConsumed` BEFORE the scrollable above it has its
+            // say: consumed=true here can only come from a child widget stealing
+            // the drag; all-unconsumed here with a frozen SCROLL means the
+            // scrollable itself refused (measurement collapse — see SCROLLRANGE).
+            .pointerInput(Unit) { passObserver("wb") }
             // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar is gone:
             // the host leaves the very top to this page, so the page keeps one
             // module gap (12dp) at its head — the spacing every card keeps.

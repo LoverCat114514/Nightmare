@@ -76,6 +76,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import com.abrah.nightmare.newui.TouchProbe
+import com.abrah.nightmare.newui.passObserver
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.graphics.graphicsLayer
@@ -673,7 +675,13 @@ fun CanvasScreen(
                 // (nm-workbench.html --bg), not the app theme's.
                 .background(Color(0xFFF2F0F7))
                 .statusBarsPadding()
-                .padding(top = 12.dp),
+                .padding(top = 12.dp)
+                // ⭐ TouchProbe layer 4 (2026-11-06, probe v3): the host-layer
+                // event observer. Bisects a frozen drag against the `wb` tag one
+                // level down: host logs while wb does not → the event died
+                // between the host Box and the workbench Column (something
+                // invisible eats it); both log → read the `consumed=` field.
+                .pointerInput(Unit) { passObserver("host") },
         ) {
             newUiContent()
         }

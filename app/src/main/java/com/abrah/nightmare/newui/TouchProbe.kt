@@ -4,6 +4,10 @@ import android.content.Context
 import android.os.Environment
 import android.view.Choreographer
 import android.view.MotionEvent
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputScope
 import java.io.File
 import java.io.FileWriter
 import java.text.SimpleDateFormat
@@ -166,6 +170,19 @@ object TouchProbe {
     }
 
     /**
+     * Layer 3b: the scroll RANGE. A collapsed measure (maxValue == 0 while the
+     * screen shows full content) makes every drag a no-op with the value glued
+     * at 0 — the exact dead-swipe signature. Logged only on CHANGE.
+     */
+    fun markScrollRange(max: Int) {
+        if (max == lastScrollMax) return
+        lastScrollMax = max
+        log("SCROLLRANGE max=$max")
+    }
+
+    private var lastScrollMax = -1
+
+    /**
      * Layer 2, installed from MainActivity.onCreate: re-posts itself every
      * frame and logs only gaps > 700 ms — an idle screen produces no frames
      * at all, so silence here is normal and a gap is always a real stall.
@@ -178,6 +195,55 @@ object TouchProbe {
                 if (gapMs > 700L) log("STALL gap=${gapMs}ms")
             }
             Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+}
+
+/**
+ * Layer 4 (probe v3): a Compose-tree pass observer, attached as
+ * `Modifier.pointerInput(Unit) { TouchProbe.passObserver("tag") }` on a node.
+ * Top-level EXTENSION on [PointerInputScope] — `awaitPointerEvent` only exists
+ * inside a pointer-input scope, and an extension declared INSIDE the object
+ * could not be called with the `TouchProbe.` qualifier anyway.
+ *
+ * What it answers, per gesture:
+ *   DOWN        — the hit path reached this subtree at all (awaited in the
+ *                 INITIAL pass, before any descendant can react).
+ *   MOVE c=true — a descendant IS consuming the drag (ownership conflict
+ *                 caught red-handed, at this layer of the tree).
+ *   UP          — the gesture ended (a system CANCEL lands here too: this
+ *                 Compose version has no Cancel event type, cancellation just
+ *                 drops every pointer's `pressed`); `consumed=` says whether
+ *                 anything ate the drag.
+ *
+ * Reading a frozen moment across two tags (host = the NEWUI host Box,
+ * wb = the workbench Column):
+ *   host logs, wb silent          → the event died BETWEEN the two layers
+ *                                   (something invisible eats it).
+ *   both log, SCROLL frozen,
+ *   MOVE consumed=true            → a descendant consumes the drag and the
+ *                                   scroll never applies it.
+ *   both log, SCROLL frozen,
+ *   MOVE consumed=false           → the scrollable saw the whole drag and
+ *                                   refused — measurement collapse territory
+ *                                   (check SCROLLRANGE).
+ */
+suspend fun PointerInputScope.passObserver(tag: String) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        TouchProbe.log("PASS tag=$tag DOWN")
+        var moves = 0
+        while (true) {
+            val ev = awaitPointerEvent(PointerEventPass.Main)
+            val consumed = ev.changes.any { it.isConsumed }
+            if (ev.changes.none { it.pressed }) {
+                TouchProbe.log("PASS tag=$tag UP consumed=$consumed")
+                break
+            }
+            // Throttle: one line per ~8 move events (~8/s at 60 Hz), and only
+            // while something consumes — silence means the drag is flowing
+            // through unconsumed.
+            if (consumed && moves++ % 8 == 0) TouchProbe.log("PASS tag=$tag MOVE consumed=true")
         }
     }
 }
