@@ -427,7 +427,13 @@ fun CanvasScreen(
         modifier
             .fillMaxSize()
             .background(CanvasColors.background)
-            .onSizeChanged { canvasSize = it },
+            .onSizeChanged { canvasSize = it }
+            // ⭐ fix32: the canvas-root observer — between the bar layer (the
+            // last root sibling, hit-first) and the NEWUI host Box. A tap that
+            // logs `bar` but not `croot` died in the root-siblings region
+            // (the destination cards); one that logs `croot` but not `host`
+            // died inside CanvasScreen's own overlay stack.
+            .pointerInput(Unit) { if (com.abrah.nightmare.BuildConfig.PROBE) passObserver("croot") },
     ) {
         // ⭐⭐ **The loop's clock.** One ticker for the whole screen, driving both
         // the thumbnails on the canvas and the one in the open sheet.

@@ -34,11 +34,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.abrah.nightmare.newui.passObserver
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -145,7 +147,13 @@ fun NightmareBottomBar(
     // for free and cannot get it wrong.
     Box(
         modifier
-            .fillMaxSize(),
+            .fillMaxSize()
+            // ⭐ fix32: the bar-layer observer. The bar is the LAST root-level
+            // sibling (fix32 moved it after the card sheets), so its outer Box
+            // is hit FIRST for every tap in the main window — this logs the
+            // tap even when a card is up, before the card's scrim answers.
+            // Never consumes: a pure pass-through observer.
+            .pointerInput(Unit) { if (com.abrah.nightmare.BuildConfig.PROBE) passObserver("bar") },
         contentAlignment = Alignment.BottomCenter,
     ) {
         Box(

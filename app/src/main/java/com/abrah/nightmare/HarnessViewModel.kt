@@ -9560,8 +9560,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun runOp(op: String) {
         // ⚠ `oparg` from MainActivity.takeOp: one string, so the pending
         // state stays a single value.
-        val name = op.substringBefore('')
-        val arg = op.substringAfter('', "").takeIf { it.isNotEmpty() }
+        val name = op.substringBefore('\u0000')
+        val arg = op.substringAfter('\u0000', "").takeIf { it.isNotEmpty() }
         run(name) { ops.run(name, arg) }
     }
 

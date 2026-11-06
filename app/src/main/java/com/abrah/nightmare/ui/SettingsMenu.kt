@@ -159,9 +159,14 @@ private fun MenuCapsule(
     val p by animateFloatAsState(
         targetValue = if (open) 1f else 0f,
         animationSpec = if (open) {
+            // ⭐ fix32: faster entrance. The old 60ms delay + 220ms rise
+            // (430ms total) meant rapid re-taps on the bar saw NOTHING yet —
+            // the open/close ping-pong read as dead buttons (probe 2026-11-06,
+            // 270 rapid-retry taps). 188ms total now, feedback inside one
+            // glance.
             tween(
-                durationMillis = 220,
-                delayMillis = 60 + index * 30,
+                durationMillis = 120,
+                delayMillis = 20 + index * 12,
                 easing = CubicBezierEasing(0.2f, 0f, 0f, 1f),
             )
         } else {
@@ -246,7 +251,7 @@ internal fun SettingsMenuScrim(
 ) {
     val dim by animateFloatAsState(
         targetValue = if (open) 1f else 0f,
-        animationSpec = tween(if (open) 200 else 150),
+        animationSpec = tween(if (open) 120 else 150),
         label = "settingsMenuScrim",
     )
     if (dim > 0f) {
@@ -303,6 +308,10 @@ internal fun SettingsCardSheet(
     }
     if (!shown) return
     androidx.activity.compose.BackHandler { onDismiss() }
+    // ⭐ fix32: same invisible-scrim gate as [DestCardSheet] — `graphicsLayer
+    // { alpha }` draws, it does not gate hit-testing; without this the scrim
+    // and the card ate every tap during the entrance/exit alpha≈0 window.
+    val interactive = p.value > 0.02f
     Box(Modifier.fillMaxSize()) {
         // ⭐ A tap beside the card closes it — back to the canvas.
         Box(
@@ -310,7 +319,10 @@ internal fun SettingsCardSheet(
                 .fillMaxSize()
                 .graphicsLayer { alpha = p.value }
                 .background(Color.Black.copy(alpha = 0.34f))
-                .pointerInput(Unit) { detectTapGestures { onDismiss() } },
+                .then(
+                    if (interactive) Modifier.pointerInput(Unit) { detectTapGestures { onDismiss() } }
+                    else Modifier,
+                ),
         )
         Box(
             Modifier
@@ -331,7 +343,11 @@ internal fun SettingsCardSheet(
                     .fillMaxWidth()
                     .fillMaxHeight(0.62f)
                     // ⚠ Swallows taps so a tap on the BODY never reaches the scrim.
-                    .pointerInput(Unit) { detectTapGestures { } }
+                    // ⭐ fix32: only while actually visible — same gate as the scrim.
+                    .then(
+                        if (interactive) Modifier.pointerInput(Unit) { detectTapGestures { } }
+                        else Modifier,
+                    )
                     .graphicsLayer {
                         val v = p.value
                         alpha = v

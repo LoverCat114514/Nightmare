@@ -67,6 +67,14 @@ internal fun DestCardSheet(
     }
     if (!shown) return
     BackHandler { onDismiss() }
+    // ⭐ fix32: the layers below are hit-testable the whole time `shown` is up.
+    // The scrim's tap-closer and the card's own swallow ride `graphicsLayer
+    // { alpha }` — which only affects DRAWING — so during the entrance/exit
+    // window (alpha ≈ 0, the layer invisible) they still ate EVERY tap on
+    // screen: the invisible-scrim signature (the same bug class the closed
+    // SettingsMenu capsules had, fixed 2026-11-05 by making them inert).
+    // Gate the GESTURE layers on real visibility: alpha 0 = no interception.
+    val interactive = p.value > 0.02f
     Box(Modifier.fillMaxSize()) {
         // Ambient: the dim rides the same progress, so it deepens with the
         // rise and lifts with the exit.
@@ -75,7 +83,10 @@ internal fun DestCardSheet(
                 .fillMaxSize()
                 .graphicsLayer { alpha = p.value }
                 .background(Color.Black.copy(alpha = 0.34f))
-                .pointerInput(Unit) { detectTapGestures { onDismiss() } },
+                .then(
+                    if (interactive) Modifier.pointerInput(Unit) { detectTapGestures { onDismiss() } }
+                    else Modifier,
+                ),
         )
         Box(
             Modifier
@@ -93,7 +104,11 @@ internal fun DestCardSheet(
                     .fillMaxWidth()
                     .fillMaxHeight(0.82f)
                     // ⚠ Swallows taps so a tap on the BODY never reaches the scrim.
-                    .pointerInput(Unit) { detectTapGestures { } }
+                    // ⭐ fix32: only while actually visible — same gate as the scrim.
+                    .then(
+                        if (interactive) Modifier.pointerInput(Unit) { detectTapGestures { } }
+                        else Modifier,
+                    )
                     .graphicsLayer {
                         val v = p.value
                         alpha = v

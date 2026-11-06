@@ -1027,11 +1027,6 @@ fun HarnessScreen(
             }
         }
 
-    // ⭐ The bar, composed ONCE, in the main window (2026-11-06): every
-    // destination is a card in THIS window — the bar keeps its real position
-    // (no sheet window, no sunken insets) and stays live over the dim.
-    sidebar()
-
     val settingsPage = vm.settingsPage
     com.abrah.nightmare.ui.SettingsCardSheet(
         visible = settingsPage != null,
@@ -1041,6 +1036,15 @@ fun HarnessScreen(
         visible = !vm.showCanvas && settingsPage == null && !vm.libraryOpen,
         onDismiss = { vm.setCanvasVisible(true) },
     ) { SettingsSheetBody(vm = vm, onlyPage = null) }
+    // ⭐ The bar, composed ONCE, in the main window (2026-11-06): every
+    // destination is a card in THIS window — the bar keeps its real position
+    // (no sheet window, no sunken insets).
+    // ⭐ fix32: composed AFTER the two card sheets — composition order IS
+    // hit-test order (later siblings are hit first), so the bar stays live
+    // while a card is up: one tap on a slot both switches the destination and
+    // drops the card (the card's `visible` flag falls by state; no scrim tap
+    // needed). Before, the card layers won the hit test over the bar's slots.
+    sidebar()
     if (vm.showCanvas) {
         return
     }
