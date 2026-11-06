@@ -2077,7 +2077,7 @@ object MaskNode : NodeType {
         if (raw == null && picks.isEmpty()) return null
         // ⚠ Memoised like [MaskState.decode]: the re-ENCODE cost as much as the
         // parse, and this runs per knob per recomposition (2026-10-05).
-        val key = (raw ?: "") + " " + picks.joinToString(",") { it.target }
+        val key = (raw ?: "") + "" + picks.joinToString(",") { it.target }
         synchronized(opsMemo) { opsMemo[key] }?.let { return it }
         val stored = MaskState.decode(raw)
         return stored.copy(ops = picks + stored.ops.filterNot { it is MaskOp.Pick }).encode()

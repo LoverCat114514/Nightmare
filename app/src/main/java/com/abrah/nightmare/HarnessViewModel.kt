@@ -9558,10 +9558,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Dispatch for an op named by intent (MainActivity.EXTRA_OP). */
     fun runOp(op: String) {
-        // ⚠ `op arg` from MainActivity.takeOp: one string, so the pending
+        // ⚠ `oparg` from MainActivity.takeOp: one string, so the pending
         // state stays a single value.
-        val name = op.substringBefore(' ')
-        val arg = op.substringAfter(' ', "").takeIf { it.isNotEmpty() }
+        val name = op.substringBefore('')
+        val arg = op.substringAfter('', "").takeIf { it.isNotEmpty() }
         run(name) { ops.run(name, arg) }
     }
 
