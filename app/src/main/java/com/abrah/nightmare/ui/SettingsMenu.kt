@@ -1,6 +1,11 @@
 package com.abrah.nightmare.ui
 
+import android.os.Build
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.graphics.asComposeRenderEffect
+
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Animatable
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -16,9 +21,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -170,44 +176,33 @@ private fun MenuCapsule(
     val p by animateFloatAsState(
         targetValue = if (open) 1f else 0f,
         animationSpec = if (open) {
-            // ⭐ fix32: faster entrance. The old 60ms delay + 220ms rise
-            // (430ms total) meant rapid re-taps on the bar saw NOTHING yet —
-            // the open/close ping-pong read as dead buttons (probe 2026-11-06,
-            // 270 rapid-retry taps). 188ms total now, feedback inside one
-            // glance.
             tween(
-                durationMillis = 120,
-                delayMillis = 20 + index * 12,
+                durationMillis = 150,
+                delayMillis = 20 + index * 14,
                 easing = CubicBezierEasing(0.2f, 0f, 0f, 1f),
             )
         } else {
-            // ⚠ No exit stagger: one that walked the capsules back out would take
-            // 6 × 30 ms longer than the menu and read as a stutter.
-            tween(150, easing = CubicBezierEasing(0.4f, 0f, 1f, 1f))
+            tween(220, easing = CubicBezierEasing(0.35f, 0f, 0.75f, 0.15f))
         },
         label = "settingsMenuCapsule$index",
     )
     val interaction = remember { MutableInteractionSource() }
-    // ⭐⭐⭐ The SURFACE, sized to the label — the bar's own glass (a translucent
-    // `surfaceContainer` pill with a faint outline), not a big hand-rolled block.
-    // This is the reference the user pointed at (2026-11-05): slim floating capsules.
-    // ⭐ This capsule's layout, read AT TAP TIME for the card's anchor.
     val coords = remember { mutableStateOf<LayoutCoordinates?>(null) }
+
+    // Dynamic horizontal motion blur radius on retraction (0 -> 16px)
+    val blurRadius = (1f - p) * 16f
+
     Surface(
         shape = RoundedCornerShape(percent = 50),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 3.dp,
+        color = Color.White.copy(alpha = 0.90f),
+        tonalElevation = 0.dp,
         shadowElevation = 6.dp,
         border = BorderStroke(
-            0.5.dp,
-            MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+            1.dp,
+            Color.White.copy(alpha = 0.85f),
         ),
         modifier = Modifier
             .onGloballyPositioned { coords.value = it }
-            // ⚠⚠ Clickable ONLY while open: an alpha-0 capsule is invisible but
-            // STILL hit-testable, and the closed menu's capsules sat over the
-            // canvas eating every tap and drag that started under them — the
-            // user's frozen page (2026-11-05). Closed = INERT, taps pass through.
             .then(
                 if (open) Modifier.clickable(
                     interactionSource = interaction,
@@ -218,17 +213,24 @@ private fun MenuCapsule(
             .graphicsLayer {
                 alpha = p
                 // ⭐ Cascade retraction: capsules gracefully waterfall down-right into the bottom bar
-                translationX = (1f - p) * (20.dp.toPx() + (index) * 6.dp.toPx())
-                translationY = (1f - p) * (24.dp.toPx() + (index) * 12.dp.toPx())
+                translationX = (1f - p) * (20.dp.toPx() + index * 6.dp.toPx())
+                translationY = (1f - p) * (24.dp.toPx() + index * 12.dp.toPx())
                 scaleY = 0.75f + 0.25f * p
                 scaleX = 0.85f + 0.15f * p
                 transformOrigin = TransformOrigin(1f, 1f)
+
+                // ⭐ Dynamic Motion Blur on text and capsule during retraction!
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !open && blurRadius > 0.5f) {
+                    renderEffect = android.graphics.RenderEffect.createBlurEffect(
+                        blurRadius,
+                        0.1f,
+                        android.graphics.Shader.TileMode.CLAMP,
+                    ).asComposeRenderEffect()
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    renderEffect = null
+                }
             },
     ) {
-        // ⭐⭐ The size lives INSIDE, on the content box: the capsule WRAPS its
-        // label (floor 120×48 — one lap bigger than the slim pill, the user's
-        // 2026-11-05 call) and centers it. Never `fillMaxWidth` here: that was
-        // what stretched the pills across the whole screen (the user's 图二).
         Box(
             Modifier
                 .widthIn(min = 120.dp)
@@ -239,7 +241,7 @@ private fun MenuCapsule(
             Text(
                 label,
                 style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 softWrap = false,
@@ -262,22 +264,12 @@ internal fun SettingsMenuScrim(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var active by remember { mutableStateOf(open) }
-    LaunchedEffect(open) {
-        if (open) active = true
-    }
-    val dim by animateFloatAsState(
-        targetValue = if (open) 1f else 0f,
-        animationSpec = tween(if (open) 120 else 150),
-        finishedListener = { if (it == 0f) active = false },
-        label = "settingsMenuScrim",
-    )
-    if (active && dim > 0.01f) {
+    // Transparent tap-dismiss backdrop (no black shadow mask)
+    if (open) {
         Box(
             modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.28f * dim))
-                .pointerInput(open) { if (open) detectTapGestures { onDismiss() } },
+                .pointerInput(Unit) { detectTapGestures { onDismiss() } },
         )
     }
 }
@@ -312,37 +304,34 @@ internal fun SettingsCardSheet(
     content: @Composable () -> Unit,
 ) {
     var shown by remember { mutableStateOf(visible) }
-    val p = remember { androidx.compose.animation.core.Animatable(0f) }
+    val p = remember { Animatable(0f) }
     LaunchedEffect(visible) {
         if (visible) {
             shown = true
-            // ⭐ Fluid water-droplet split curve: initial surface tension burst, settling softly to the left
-            p.animateTo(1f, tween(360, easing = CubicBezierEasing(0.08f, 0.92f, 0.18f, 1f)))
+            // ⭐ Fluid water-droplet split: 460ms with smooth, elegant fluid curve (pacing matches other sheets)
+            p.animateTo(1f, tween(460, easing = CubicBezierEasing(0.20f, 0.95f, 0.28f, 1f)))
         } else if (shown) {
-            p.animateTo(0f, tween(220, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)))
+            p.animateTo(0f, tween(260, easing = CubicBezierEasing(0.35f, 0f, 0.75f, 0.15f)))
             shown = false
         }
     }
     if (!shown) return
-    androidx.activity.compose.BackHandler { onDismiss() }
+    BackHandler { onDismiss() }
 
     var interactive by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         snapshotFlow { p.value > 0.02f }.collect { interactive = it }
     }
     Box(Modifier.fillMaxSize()) {
-        // Dimmed backdrop
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer { alpha = p.value }
-                .background(Color.Black.copy(alpha = 0.38f))
-                .then(
-                    if (interactive) Modifier.pointerInput(Unit) { detectTapGestures { onDismiss() } }
-                    else Modifier,
-                ),
-        )
-        androidx.compose.foundation.layout.BoxWithConstraints(
+        // Transparent tap-dismiss backdrop (no dark black shadow!)
+        if (interactive) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) { detectTapGestures { onDismiss() } },
+            )
+        }
+        BoxWithConstraints(
             Modifier.fillMaxSize(),
         ) {
             val totalW = maxWidth
@@ -376,12 +365,12 @@ internal fun SettingsCardSheet(
 
             Surface(
                 shape = RoundedCornerShape(cornerRadius),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 2.dp,
-                shadowElevation = 12.dp,
+                color = Color.White.copy(alpha = 0.95f),
+                tonalElevation = 0.dp,
+                shadowElevation = 14.dp,
                 border = BorderStroke(
-                    0.5.dp,
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                    1.2.dp,
+                    Color.White.copy(alpha = 0.90f),
                 ),
                 modifier = Modifier
                     .offset(x = currentLeft, y = currentTop)
