@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -74,7 +75,13 @@ internal fun DestCardSheet(
     // screen: the invisible-scrim signature (the same bug class the closed
     // SettingsMenu capsules had, fixed 2026-11-05 by making them inert).
     // Gate the GESTURE layers on real visibility: alpha 0 = no interception.
-    val interactive = p.value > 0.02f
+    // ⭐ fix32b: `p` is an Animatable — reading it in composition computes ONCE
+    // and never updates (not snapshot state). Bridge it through snapshotFlow
+    // so the modifier chain actually recomposes as the animation runs.
+    var interactive by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { p.value > 0.02f }.collect { interactive = it }
+    }
     Box(Modifier.fillMaxSize()) {
         // Ambient: the dim rides the same progress, so it deepens with the
         // rise and lifts with the exit.

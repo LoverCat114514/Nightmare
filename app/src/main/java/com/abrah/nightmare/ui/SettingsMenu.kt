@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -311,7 +312,12 @@ internal fun SettingsCardSheet(
     // ⭐ fix32: same invisible-scrim gate as [DestCardSheet] — `graphicsLayer
     // { alpha }` draws, it does not gate hit-testing; without this the scrim
     // and the card ate every tap during the entrance/exit alpha≈0 window.
-    val interactive = p.value > 0.02f
+    // ⭐ fix32b: `p` is an Animatable — bridge through snapshotFlow so the
+    // gate actually recomposes (a composition-time read computes once).
+    var interactive by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { p.value > 0.02f }.collect { interactive = it }
+    }
     Box(Modifier.fillMaxSize()) {
         // ⭐ A tap beside the card closes it — back to the canvas.
         Box(
