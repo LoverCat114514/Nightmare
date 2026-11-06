@@ -154,10 +154,15 @@ android {
             isMinifyEnabled = false
             isShrinkResources = false
             matchingFallbacks += listOf("release")
-            // ⭐ fix31: initWith copies release's field overrides too — dev must
-            // re-enable the probe explicitly (it inherited PROBE=false silently,
-            // and the phone's push build lost its black box).
-            buildConfigField("boolean", "PROBE", "true")
+            // ⭐ fix33 (user 2026-11-06): the probe is RETIRED. It is a
+            // diagnostic tool, and every measurement it could give has been
+            // taken — but it also cost the thing it was measuring: three
+            // `pointerInput` pass observers sat in the hit-test path of every
+            // touch, and one of them (the `bar` layer, fix32) intercepted the
+            // whole screen. The instrumentation stays in the source (off, not
+            // deleted) so a future stall report can flip one line and get the
+            // same black box back.
+            buildConfigField("boolean", "PROBE", "false")
         }
     }
 

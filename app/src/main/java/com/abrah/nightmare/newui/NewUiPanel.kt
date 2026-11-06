@@ -623,10 +623,6 @@ fun NewUiScreen(
             // say: consumed=true here can only come from a child widget stealing
             // the drag; all-unconsumed here with a frozen SCROLL means the
             // scrollable itself refused (measurement collapse — see SCROLLRANGE).
-            .pointerInput(Unit) { if (com.abrah.nightmare.BuildConfig.PROBE) passObserver("wb") }
-            // ⭐ probe v4 (review report 1 §3): the workbench's measured height,
-            // logged on change — correlates a SCROLLRANGE jump with WHICH block
-            // grew (the report asked for exactly this pairing).
             .onSizeChanged { if (com.abrah.nightmare.BuildConfig.PROBE) TouchProbe.sizeChange("wb", it.height) },
         state = workbenchList,
         contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = BOTTOM_BAR_RESERVE + 12.dp),

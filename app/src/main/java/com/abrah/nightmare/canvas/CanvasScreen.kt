@@ -427,13 +427,7 @@ fun CanvasScreen(
         modifier
             .fillMaxSize()
             .background(CanvasColors.background)
-            .onSizeChanged { canvasSize = it }
-            // ⭐ fix32: the canvas-root observer — between the bar layer (the
-            // last root sibling, hit-first) and the NEWUI host Box. A tap that
-            // logs `bar` but not `croot` died in the root-siblings region
-            // (the destination cards); one that logs `croot` but not `host`
-            // died inside CanvasScreen's own overlay stack.
-            .pointerInput(Unit) { if (com.abrah.nightmare.BuildConfig.PROBE) passObserver("croot") },
+            .onSizeChanged { canvasSize = it },
     ) {
         // ⭐⭐ **The loop's clock.** One ticker for the whole screen, driving both
         // the thumbnails on the canvas and the one in the open sheet.
@@ -682,12 +676,6 @@ fun CanvasScreen(
                 .background(Color(0xFFF2F0F7))
                 .statusBarsPadding()
                 .padding(top = 12.dp)
-                // ⭐ TouchProbe layer 4 (2026-11-06, probe v3): the host-layer
-                // event observer. Bisects a frozen drag against the `wb` tag one
-                // level down: host logs while wb does not → the event died
-                // between the host Box and the workbench Column (something
-                // invisible eats it); both log → read the `consumed=` field.
-                .pointerInput(Unit) { if (com.abrah.nightmare.BuildConfig.PROBE) passObserver("host") },
         ) {
             newUiContent()
         }
