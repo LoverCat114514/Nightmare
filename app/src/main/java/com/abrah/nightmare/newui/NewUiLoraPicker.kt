@@ -108,8 +108,13 @@ internal fun NewUiLoraPicker(
         // ⭐ probe v4 (review report 1 §6): log every selection write with its
         // outcome — distinguishes "callback ran, list unchanged" (the dead-tap
         // signature) from a real flip, and shows the count the UI should draw.
-        val added = next.size > chosen.size
-        TouchProbe.loraChange(next.lastOrNull()?.name ?: "?", added, next.size)
+        // The name is the DIFF against the old list: the added entry on a
+        // select, the removed one on a deselect (`next.lastOrNull()` alone
+        // logged "?" for the last-item removal).
+        val removed = next.size < chosen.size
+        val name = if (removed) chosen.firstOrNull { e -> next.none { it.name == e.name } }?.name ?: "?"
+                   else next.lastOrNull()?.name ?: "?"
+        TouchProbe.loraChange(name, !removed, next.size)
         chosen = next
         onSet(com.abrah.nightmare.LoraSpec.format(next))
     }
