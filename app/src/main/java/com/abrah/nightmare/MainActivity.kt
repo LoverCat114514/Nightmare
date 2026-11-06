@@ -282,7 +282,7 @@ class MainActivity : ComponentActivity() {
         intent.removeExtra(EXTRA_OP)
         // ⚠ The `arg` extra too, as `OpService` reads it — it was dropped here,
         // so a foreground `dit_bench t2i,20` arrived with no arguments (2026-10-06).
-        pending = op + (intent.getStringExtra(OpService.EXTRA_ARG)?.let { " $it" } ?: "")
+        pending = op + (intent.getStringExtra(OpService.EXTRA_ARG)?.let { "$it" } ?: "")
         pendingNonce++
     }
 
