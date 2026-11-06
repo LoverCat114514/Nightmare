@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,24 +32,43 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.abrah.nightmare.R
-import com.abrah.nightmare.newui.core.LoraPick
 import com.abrah.nightmare.newui.core.RunController
 import com.abrah.nightmare.newui.core.Shot
 import com.abrah.nightmare.newui.core.WbParams
-import com.abrah.nightmare.newui.core.thumb
 import com.abrah.nightmare.newui.theme.Nm
 import com.abrah.nightmare.ui.SaveIcon
+
+/**
+ * ⭐ Sleek vector play/generate icon for the primary action button.
+ */
+val GeneratePlayIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "GeneratePlay",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).run {
+        addPath(
+            pathData = PathParser().parsePathString("M8 5v14l11-7z").toNodes(),
+            fill = SolidColor(Color.White),
+        )
+        build()
+    }
+}
 
 /**
  * ⭐⭐ fix34 (2026-11-06) — Card 1: the result.
@@ -69,13 +89,8 @@ import com.abrah.nightmare.ui.SaveIcon
  *   instead of five separate `MutableState`s that the screen had to keep in
  *   step. A single immutable value cannot disagree with itself.
  * - **The shot** is a parameter, not a read of a file-level `AtomicReference`
- *   with a version counter beside it. The old pair (`LAST_SHOT` +
- *   `LAST_SHOT_VERSION`) was a hand-rolled observable whose correctness
- *   depended on every writer bumping the version — one missed bump and the
- *   frame showed a stale picture forever.
- * - **The history strip** draws 256 px thumbnails with stable keys. It used to
- *   draw full-resolution render bitmaps into an 84 dp square, so every scroll
- *   frame paid for a full-size texture upload per thumbnail.
+ *   with a version counter beside it.
+ * - **The history strip** draws pre-cached 256 px thumbnails directly from [Shot.thumbnail].
  *
  * ⚠ **The one gesture-target rule holds here.** The Generate button, the save
  * icon, the load button and the clear-source "✕" are each their own control on
@@ -148,9 +163,6 @@ fun ResultCard(
                 }
             }
             LinearProgressIndicator(
-                // ⚠ `progress = { }` (the lambda overload): a null fraction gives
-                // the indeterminate bar. The old code passed 0f for "unknown",
-                // which drew a bar permanently stuck at the left edge.
                 progress = { phase.fraction ?: 0f },
                 modifier = Modifier.fillMaxWidth(),
                 color = Nm.pri,
@@ -196,8 +208,6 @@ fun ResultCard(
                 modifier = Modifier.weight(1f),
             )
             if (srcName.isNotBlank()) {
-                // Its own target: clearing the source is a distinct action, and
-                // nesting it in the row's text would make the text tappable.
                 TextButton(onClick = { onPickSrc(null, "") }) { Text("✕") }
             }
         }
@@ -205,15 +215,9 @@ fun ResultCard(
         // ── The history strip ──────────────────────────────────────────────
         if (history.isNotEmpty()) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // ⭐ Keys: a strip keyed by position re-composes every thumb when
-                // one is inserted at the head, which is exactly what a new shot
-                // does. Keyed by identity, only the new one composes.
                 items(history, key = { it.key }) { sh ->
                     Image(
-                        // ⭐ 256 px, not the full render. 84 dp at 3× is ≈252 px;
-                        // anything more is uploaded and sampled every frame of a
-                        // scroll for no visible gain.
-                        bitmap = remember(sh.bitmap) { sh.bitmap.thumb(256) },
+                        bitmap = sh.thumbnail,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.size(84.dp)
@@ -260,12 +264,31 @@ fun ResultCard(
                 contentColor = Color.White,
             ),
         ) {
-            Text(
-                if (phase.running) stringResource(R.string.cancel_run)
-                else "▶  " + stringResource(R.string.newui_generate),
-                fontWeight = FontWeight.ExtraBold,
-                style = MaterialTheme.typography.titleMedium,
-            )
+            if (phase.running) {
+                Text(
+                    stringResource(R.string.cancel_run),
+                    fontWeight = FontWeight.ExtraBold,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        imageVector = GeneratePlayIcon,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = Color.White,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.newui_generate),
+                        fontWeight = FontWeight.ExtraBold,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+            }
         }
     }
 }

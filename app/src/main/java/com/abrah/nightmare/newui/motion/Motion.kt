@@ -1,15 +1,5 @@
 package com.abrah.nightmare.newui.motion
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.Spring
@@ -27,18 +17,29 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
+import com.abrah.nightmare.newui.theme.Nm
 
 /**
  * ⭐⭐ fix34 (2026-11-06) — the workbench's motion, rebuilt on one decision table.
@@ -146,40 +147,28 @@ object Motion {
  * only. Not a colour flash, not a shadow, not a ripple: `scale` takes the label
  * and the icon with it, which is what makes a press read as physical.
  *
- * ⚠ The scale rides `collectIsPressedAsState` + `animateFloatAsState`, so it
- * costs one animation, not a `MutableState` write per frame of the press.
- *
- * ⚠ **One gesture target.** This modifier owns the click. Never wrap it around
- * a child that also has an `onClick` — the old tree's `Row.clickable` + inner
- * `TextButton` ran BOTH handlers on one tap and flipped a flag twice (net
- * zero), which is why fold rows read as dead buttons.
+ * ⚠ Optimized: uses `graphicsLayer { scaleX = ...; scaleY = ... }` instead of
+ * `Modifier.scale()`, keeping the animation entirely in the GPU Draw phase
+ * without invalidating layout measurement.
  */
 fun Modifier.pressScale(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ): Modifier = composed {
-    // ⚠⚠ fix34c: `composed` is kept ONLY because `collectIsPressedAsState`
-    // needs a `MutableInteractionSource` from a `remember` — there is no
-    // non-composed way to own that per-callsite. But the modifier chain it
-    // builds is now STABLE across recompositions (`remember` on the source,
-    // one `clickable`), which is what matters inside a LazyColumn: a `composed`
-    // block that rebuilt its chain each pass would re-register the hit-test
-    // node and could drop a tap mid-scroll.
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    // ⚠ `animateFloatAsState`, not a state write per frame: the press animation
-    // costs one animator, not a recomposition of the whole row.
     val scale by animateFloatAsState(
         targetValue = if (pressed && enabled) Motion.PRESS_SCALE else 1f,
         animationSpec = Motion.timed(Motion.PRESS_MS, Motion.EaseOut),
         label = "pressScale",
     )
     this
-        .scale(scale)
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
         .clickable(
             interactionSource = interaction,
-            // ⚠ No ripple: this is a custom-designed surface, not Material. The
-            // same scale on every platform is more coherent than a ripple on one.
             indication = null,
             enabled = enabled,
             onClick = onClick,
@@ -187,15 +176,34 @@ fun Modifier.pressScale(
 }
 
 /**
- * ⭐ The header row of a fold — the title, an optional trailing slot, and the
+ * ⭐ Modern rounded disclosure chevron icon for fold headers.
+ * Sized 20x20 with smooth round stroke geometry, replacing the raw Unicode '▸' text glyph.
+ */
+val FoldChevronIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "FoldChevron",
+        defaultWidth = 20.dp,
+        defaultHeight = 20.dp,
+        viewportWidth = 20f,
+        viewportHeight = 20f,
+    ).run {
+        addPath(
+            pathData = PathParser().parsePathString("M7.5 4.5L13 10L7.5 15.5").toNodes(),
+            stroke = SolidColor(Color.White),
+            strokeLineWidth = 2.2f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round,
+        )
+        build()
+    }
+}
+
+/**
+ * ⭐ The header row of a fold – the title, an optional trailing slot, and the
  * disclosure arrow, as ONE gesture target.
  *
- * ⚠ Exists because of a real bug: `Row.clickable` + inner `TextButton(onClick)`
- * fired both handlers on one tap, flipping the flag twice — net zero, so the
- * row read as "buttons don't open" (user report 2026-11-06, item 2). A toggle
- * row owns its gesture; its children never carry one.
- *
- * The arrow is a glyph, not a button. It must never get its own `onClick`.
+ * Polished with a modern rounded chevron icon inside a subtle badge, smoothly
+ * rotating between 0° and 90° via `graphicsLayer`.
  */
 @Composable
 fun FoldHeader(
@@ -214,39 +222,48 @@ fun FoldHeader(
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onToggle)
-            .padding(vertical = 4.dp),
+            .padding(vertical = 6.dp, horizontal = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         content()
-        Text(
-            text = "▸",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.graphicsLayer { rotationZ = arrowRotation },
-        )
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (open) Nm.priSoft else Nm.fld.copy(alpha = 0.5f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = FoldChevronIcon,
+                contentDescription = null,
+                tint = if (open) Nm.pri else Nm.sub,
+                modifier = Modifier
+                    .size(14.dp)
+                    .graphicsLayer { rotationZ = arrowRotation },
+            )
+        }
     }
 }
 
+/**
+ * ⭐ The fold's body — instant visibility inside LazyColumn.
+ *
+ * ⚠ Banned: `expandVertically` / `shrinkVertically` (height animations).
+ * Because this fold lives inside a LazyColumn item, any frame-by-frame height
+ * animation forces the entire LazyColumn to re-measure and re-layout all items
+ * above and below it on every single frame, causing severe scrolling stutters.
+ * Following the table's rule: visibility toggle is instant and layout-stable.
+ */
 @Composable
 fun FoldBody(
     open: Boolean,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    AnimatedVisibility(
-        visible = open,
-        modifier = modifier,
-        enter = fadeIn(tween(160, easing = Motion.EaseOut)) +
-                expandVertically(
-                    animationSpec = tween(160, easing = Motion.EaseOut),
-                    expandFrom = Alignment.Top,
-                ),
-        exit = fadeOut(tween(120, easing = Motion.EaseOut)) +
-               shrinkVertically(
-                   animationSpec = tween(120, easing = Motion.EaseOut),
-                   shrinkTowards = Alignment.Top,
-               ),
-    ) {
-        content()
+    if (open) {
+        Box(modifier = modifier) {
+            content()
+        }
     }
 }
 
@@ -275,18 +292,12 @@ fun Scrim(
         animationSpec = Motion.timed(Motion.SCRIM_MS, Motion.EaseOut),
         label = "scrimAlpha",
     )
-    // ⚠ THE GATE: below the floor the scrim leaves the composition entirely, so
-    // its pointerInput is not in the hit-test tree at all. This is the fix for
-    // "an invisible layer eats taps".
     if (alpha > 0.01f) {
         Box(
             modifier
                 .fillMaxSize()
                 .background(color.copy(alpha = color.alpha * alpha))
                 .pointerInput(Unit) {
-                    // A tap anywhere dismisses. awaitFirstDown is enough — a full
-                    // detectTapGestures also waits for the up, which delays the
-                    // dismissal by however long the person held the screen.
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                         onDismiss()

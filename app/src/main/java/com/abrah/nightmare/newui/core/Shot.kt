@@ -30,6 +30,12 @@ class Shot(
     val file: File,
 ) {
     val key: String get() = file.absolutePath
+
+    /**
+     * ⭐ Cached 256 px thumbnail for the 84 dp history strip.
+     * Evaluated lazily once on demand, avoiding main-thread bitmap scaling during list scroll.
+     */
+    val thumbnail: ImageBitmap by lazy { bitmap.thumb(256) }
 }
 
 /**

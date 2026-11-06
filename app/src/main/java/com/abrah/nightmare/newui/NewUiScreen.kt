@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -292,6 +293,36 @@ fun NewUiScreen(
     val listState = rememberLazyListState()
     val family = ModelCatalog.byId(s.modelId)?.family ?: SelectedModel.spec.family
 
+    // ⭐ Stable callbacks: memoized with remember so child cards skip recomposition
+    // during scrolling or unrelated state changes.
+    val onPickSrcCallback = remember(ctx) {
+        { uri: android.net.Uri?, name: String ->
+            srcDataUrl = uri?.let { uriToDataUrl(ctx, it) }
+            srcName = name
+        }
+    }
+    val onSaveCallback = remember(ctx) {
+        {
+            shot?.let { saveShot(ctx, it) }
+            Unit
+        }
+    }
+    val onCancelCallback = remember(run) {
+        { run.cancel() }
+    }
+    val onDraftCallback = remember {
+        { text: String -> positive = text }
+    }
+    val onDraftSizeCallback = remember(s) {
+        { w: Int, h: Int -> s.w = w; s.h = h }
+    }
+    val onPickedModelCallback = remember(s) {
+        { id: String -> s.modelId = id }
+    }
+    val onImportLoraCallback = remember(loraImport) {
+        { loraImport.launch(arrayOf("application/octet-stream", "*/*")) }
+    }
+
     LazyColumn(
         Modifier.fillMaxSize(),
         state = listState,
@@ -319,17 +350,11 @@ fun NewUiScreen(
                     phase.message.isNotBlank() -> phase.message
                     else -> stringResource(R.string.newui_ready)
                 },
-                // ⭐ Keyed on the model id: [SelectedModel] is `@Volatile` with
-                // no state signal, so an unkeyed read here froze the label
-                // across picks (a real user report from the old tree).
                 modelLabel = modelLabel(s.modelId),
-                onPickSrc = { uri, name ->
-                    srcDataUrl = uri?.let { uriToDataUrl(ctx, it) }
-                    srcName = name
-                },
-                onSave = { shot?.let { saveShot(ctx, it) } },
+                onPickSrc = onPickSrcCallback,
+                onSave = onSaveCallback,
                 onRun = onGenerate,
-                onCancel = { run.cancel() },
+                onCancel = onCancelCallback,
             )
         }
 
@@ -338,29 +363,19 @@ fun NewUiScreen(
             ModeCard(
                 s = s,
                 family = family,
-                onDraft = { positive = it },
-                onDraftSize = { w, h -> s.w = w; s.h = h },
+                onDraft = onDraftCallback,
+                onDraftSize = onDraftSizeCallback,
             )
         }
 
         // ── Card 3: the prompts ───────────────────────────────────────────
         item(key = "prompts") {
-            NmCard {
-                CardTitle(stringResource(R.string.newui_prompt))
-                OutlinedTextField(
-                    value = positive,
-                    onValueChange = { positive = it },
-                    label = { Text(stringResource(R.string.newui_positive)) },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp),
-                    placeholder = { Text("1girl, solo, ...") },
-                )
-                OutlinedTextField(
-                    value = negative,
-                    onValueChange = { negative = it },
-                    label = { Text(stringResource(R.string.newui_negative)) },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
-                )
-            }
+            PromptsCard(
+                positive = positive,
+                negative = negative,
+                onPositiveChange = { positive = it },
+                onNegativeChange = { negative = it },
+            )
         }
 
         // ── Card 4: the model ─────────────────────────────────────────────
@@ -371,8 +386,8 @@ fun NewUiScreen(
                 modelId = s.modelId,
                 family = family,
                 loraEpoch = loraEpoch,
-                onPicked = { id -> s.modelId = id },
-                onImportLora = { loraImport.launch(arrayOf("application/octet-stream", "*/*")) },
+                onPicked = onPickedModelCallback,
+                onImportLora = onImportLoraCallback,
                 onBrowseLoras = onBrowseLoras,
                 onDeleteLora = onDeleteLora,
             )
@@ -388,6 +403,56 @@ fun NewUiScreen(
                 onApply = applyPost,
             )
         }
+    }
+}
+
+/**
+ * ⭐ The prompts card: positive and negative prompt text fields, isolated in its
+ * own composable to keep text-input styling consistent and clean with the Nm theme.
+ */
+@Composable
+fun PromptsCard(
+    positive: String,
+    negative: String,
+    onPositiveChange: (String) -> Unit,
+    onNegativeChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    NmCard(modifier = modifier) {
+        CardTitle(stringResource(R.string.newui_prompt))
+        OutlinedTextField(
+            value = positive,
+            onValueChange = onPositiveChange,
+            label = { Text(stringResource(R.string.newui_positive)) },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp),
+            placeholder = { Text("1girl, solo, ...") },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Nm.pri,
+                unfocusedBorderColor = Nm.fld,
+                focusedLabelColor = Nm.pri,
+                unfocusedLabelColor = Nm.sub,
+                cursorColor = Nm.pri,
+                focusedTextColor = Nm.ink,
+                unfocusedTextColor = Nm.ink,
+            ),
+            shape = RoundedCornerShape(12.dp),
+        )
+        OutlinedTextField(
+            value = negative,
+            onValueChange = onNegativeChange,
+            label = { Text(stringResource(R.string.newui_negative)) },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Nm.pri,
+                unfocusedBorderColor = Nm.fld,
+                focusedLabelColor = Nm.pri,
+                unfocusedLabelColor = Nm.sub,
+                cursorColor = Nm.pri,
+                focusedTextColor = Nm.ink,
+                unfocusedTextColor = Nm.ink,
+            ),
+            shape = RoundedCornerShape(12.dp),
+        )
     }
 }
 
