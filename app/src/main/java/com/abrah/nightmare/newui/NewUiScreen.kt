@@ -301,7 +301,7 @@ fun NewUiScreen(
             start = 16.dp,
             top = 12.dp,
             end = 16.dp,
-            bottom = BOTTOM_BAR_RESERVE + 12.dp,
+            bottom = BOTTOM_BAR_RESERVE + 48.dp,
         ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {

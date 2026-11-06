@@ -1,5 +1,15 @@
 package com.abrah.nightmare.newui.motion
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.Spring
@@ -194,64 +204,50 @@ fun FoldHeader(
     modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit,
 ) {
-    // ⚠⚠ fix34c: `clickable` DIRECTLY, not `pressScale`.
-    //
-    // Why this matters for "更多选项里的功能开关不可用" (the user's report):
-    // `pressScale` is a `Modifier.composed { … }`. Inside a LazyColumn item,
-    // `composed` rebuilds its chain on every reuse pass — including the
-    // `MutableInteractionSource` it remembers — so a press in progress (or a
-    // tap that lands while the list is still settling) can be dropped when the
-    // item is recycled. A plain `clickable` registers one stable hit-test node.
-    //
-    // The scale animation is ALSO the wrong tier here: this header is opened
-    // dozens of times a day, which the motion table puts in the "no animation"
-    // band — the body appearing is the feedback. Removing it costs nothing
-    // visible and removes one animator from a scroll-hot item.
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (open) 90f else 0f,
+        animationSpec = Motion.timed(Motion.TOGGLE_MS, Motion.EaseOut),
+        label = "foldArrowRotation",
+    )
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onToggle),
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onToggle)
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // ⚠ `RowScope` receiver, not a bare lambda: the caller's title needs
-        // `Modifier.weight(1f)` to push the arrow to the end, and `weight` only
-        // exists inside a RowScope. Without it every fold header would have its
-        // arrow hugging the title.
         content()
         Text(
-            text = if (open) "▾" else "▸",
+            text = "▸",
             style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.graphicsLayer { rotationZ = arrowRotation },
         )
     }
 }
 
-/**
- * ⭐ The body of a fold: **instant, no height animation.**
- *
- * ## Why this is not animated, and why that is the correct call
- *
- * This is the single most important performance decision in the tree.
- *
- * `AnimatedVisibility(visible, enter = expandVertically(), exit =
- * shrinkVertically())` animates HEIGHT. Both folds live inside a `LazyColumn`
- * item, so every frame of that animation invalidates measurement for the item
- * and forces the lazy list to re-measure what fits in the viewport. On a
- * throttled device the whole scroll stalls while a fold opens. That is not a
- * theory — it is the user's "上下滑卡顿，甚至划不动", read straight out of the code.
- *
- * **The motion table says no animation here anyway.** Opening a disclosure is a
- * 100+/day action; the tier says no animation. The content appearing IS the
- * feedback — someone who taps "More options" wants to see the options, not to
- * watch them slide. An instant reveal is both faster and *correct*, and free.
- *
- * ⚠ If a future design genuinely wants motion here, it must animate `alpha`
- * and a `translationY` on a `graphicsLayer` — draw-time properties that do not
- * re-measure the list. Never height. That is the one rule this tree will not
- * bend, because bending it is what caused the bug being fixed.
- */
 @Composable
-fun FoldBody(open: Boolean, content: @Composable () -> Unit) {
-    if (open) content()
+fun FoldBody(
+    open: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    AnimatedVisibility(
+        visible = open,
+        modifier = modifier,
+        enter = fadeIn(tween(160, easing = Motion.EaseOut)) +
+                expandVertically(
+                    animationSpec = tween(160, easing = Motion.EaseOut),
+                    expandFrom = Alignment.Top,
+                ),
+        exit = fadeOut(tween(120, easing = Motion.EaseOut)) +
+               shrinkVertically(
+                   animationSpec = tween(120, easing = Motion.EaseOut),
+                   shrinkTowards = Alignment.Top,
+               ),
+    ) {
+        content()
+    }
 }
 
 /**

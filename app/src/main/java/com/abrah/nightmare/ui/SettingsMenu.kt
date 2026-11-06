@@ -92,12 +92,19 @@ internal fun SettingsMenu(
         1 to stringResource(R.string.settings_prompts),
     )
     val fullLabel = stringResource(R.string.settings)
-    // ⭐ The menu Box's height, for turning a capsule's position into a screen
-    // fraction. A state, not a val: the geometry callback writes it after this
-    // composition, on rotation too.
+    var active by remember { mutableStateOf(open) }
+    LaunchedEffect(open) {
+        if (open) active = true
+    }
+    val menuAlpha by animateFloatAsState(
+        targetValue = if (open) 1f else 0f,
+        animationSpec = tween(if (open) 120 else 180),
+        finishedListener = { if (it == 0f) active = false },
+        label = "settingsMenuActive",
+    )
+    if (!active && !open) return
+
     val rootH = remember { mutableStateOf(1f) }
-    // ⭐⭐ The tapped capsule's center, in screen fractions — reported BEFORE the
-    // pick, so the card's anchor is already in place when the page flag flips.
     val onGeometry: (LayoutCoordinates) -> Unit = { coords ->
         val h = rootH.value
         if (h > 0f) {
@@ -250,26 +257,21 @@ internal fun SettingsMenuScrim(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var active by remember { mutableStateOf(open) }
+    LaunchedEffect(open) {
+        if (open) active = true
+    }
     val dim by animateFloatAsState(
         targetValue = if (open) 1f else 0f,
         animationSpec = tween(if (open) 120 else 150),
+        finishedListener = { if (it == 0f) active = false },
         label = "settingsMenuScrim",
     )
-    if (dim > 0f) {
+    if (active && dim > 0.01f) {
         Box(
             modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.28f * dim))
-                // ⚠⚠ fix34c: the tap-closer is gated on `open`, NOT on `dim`.
-                // `dim` is an `animateFloatAsState`: on CLOSE it runs 1 → 0 over
-                // 150 ms, so `dim > 0f` stays true for those 150 ms after the
-                // menu is already dismissed — and this Box is `fillMaxSize`
-                // with a `pointerInput`, so it kept eating EVERY touch on the
-                // whole screen for 150 ms after each close. That is the
-                // "卡顿在任何地方都可能触发" report: not slow frames (gfxinfo
-                // measured 0.61% jank, 5 ms median), but touches vanishing.
-                // `DestCardSheet` was fixed for exactly this class in fix32b;
-                // this scrim was missed. Closing means inert, immediately.
                 .pointerInput(open) { if (open) detectTapGestures { onDismiss() } },
         )
     }

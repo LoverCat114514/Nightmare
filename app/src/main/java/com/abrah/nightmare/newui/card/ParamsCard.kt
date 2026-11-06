@@ -152,9 +152,9 @@ fun ParamsCard(
         // sampler+schedule wire, a turbo pick drops to its bare sampler. Without
         // this the old family's value survived a model switch until a manual tap
         // (a real user report).
-        LaunchedEffect(family, wire) {
+        LaunchedEffect(family) {
             val choices = ModelCatalog.schedulersFor(family)
-            if (wire.isBlank() || wire !in choices) {
+            if (s.scheduler.isBlank() || s.scheduler !in choices) {
                 s.scheduler = choices.firstOrNull().orEmpty()
             }
         }
@@ -181,15 +181,24 @@ fun ParamsCard(
         if (schedules.size > 1 && ModelCatalog.schedulesSupported(base)) {
             // ⚠ stringResource is @Composable: build the names in composition,
             // not inside a remember calculation.
-            val schedNames = mapOf(
-                "" to stringResource(R.string.schedule_normal),
-                "_karras" to stringResource(R.string.schedule_karras),
-                "_exponential" to stringResource(R.string.schedule_exponential),
-                "_sgm_uniform" to stringResource(R.string.schedule_sgm_uniform),
-                "_bong_tangent" to stringResource(R.string.schedule_bong_tangent),
-                "_simple" to stringResource(R.string.schedule_simple),
-                "_beta" to stringResource(R.string.schedule_beta),
-            )
+            val normalStr = stringResource(R.string.schedule_normal)
+            val karrasStr = stringResource(R.string.schedule_karras)
+            val expStr = stringResource(R.string.schedule_exponential)
+            val sgmStr = stringResource(R.string.schedule_sgm_uniform)
+            val bongStr = stringResource(R.string.schedule_bong_tangent)
+            val simpleStr = stringResource(R.string.schedule_simple)
+            val betaStr = stringResource(R.string.schedule_beta)
+            val schedNames = remember(normalStr, karrasStr, expStr, sgmStr, bongStr, simpleStr, betaStr) {
+                mapOf(
+                    "" to normalStr,
+                    "_karras" to karrasStr,
+                    "_exponential" to expStr,
+                    "_sgm_uniform" to sgmStr,
+                    "_bong_tangent" to bongStr,
+                    "_simple" to simpleStr,
+                    "_beta" to betaStr,
+                )
+            }
             DropdownWire(
                 label = stringResource(R.string.sampler_schedule),
                 current = sched,

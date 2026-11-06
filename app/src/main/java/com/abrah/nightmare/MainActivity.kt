@@ -357,7 +357,9 @@ fun HarnessScreen(
         // were under investigation. Skip the poll there entirely.
         if (vm.canvasView == com.abrah.nightmare.MainView.NEWUI) return@LaunchedEffect
         while (vm.showCanvas) {
-            vm.refreshLoad()
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                vm.refreshLoad()
+            }
             kotlinx.coroutines.delay(2_000)
         }
     }

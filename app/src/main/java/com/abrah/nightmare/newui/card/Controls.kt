@@ -1,5 +1,6 @@
 package com.abrah.nightmare.newui.card
 
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -363,34 +364,39 @@ fun SwitchRow(
     hint: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 4.dp, horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
             Text(
-                hint,
-                style = MaterialTheme.typography.bodySmall,
-                color = Nm.sub,
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = Nm.ink,
             )
+            if (hint.isNotBlank()) {
+                Text(
+                    hint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Nm.sub,
+                )
+            }
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
     }
 }
 
 // ── The post-processing tool block ─────────────────────────────────────────
 
-/**
- * ⭐ One after-render tool: a title, a description, an optional per-run switch,
- * and a one-shot "apply now".
- *
- * ⚠ **The switch and the button are two different gesture targets on
- * different rows.** They must never be nested: the old `PostTool` had them in
- * one Row and it was fine only because they were siblings — the bug that
- * mattered was the fold header above them.
- *
- * ⚠ `withSwitch = false` for the More-options entries: those are one-shot
- * actions with no per-run flag (the person's own request).
- */
 @Composable
 fun PostTool(
     title: String,
@@ -401,7 +407,7 @@ fun PostTool(
     withSwitch: Boolean = true,
     onAction: () -> Unit,
 ) {
-    Column {
+    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         Text(
             title,
             style = MaterialTheme.typography.titleSmall,
@@ -413,21 +419,26 @@ fun PostTool(
             style = MaterialTheme.typography.bodySmall,
             color = Nm.sub,
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 4.dp),
+        ) {
             if (withSwitch) {
-                // ⚠ `stringResource`, not a literal. This was hardcoded "every
-                // run" in fix34's rewrite and shipped: on a Chinese device the
-                // three post-processing switches read in English while every
-                // label around them was Chinese (the user, 2026-11-06: "为什么
-                // 标签成英文了"). `post_every_run` already existed in both
-                // values/ and values-zh/; the old PostTool used it.
-                Text(
-                    androidx.compose.ui.res.stringResource(R.string.post_every_run),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Nm.sub,
-                )
-                Spacer(Modifier.width(8.dp))
-                Switch(checked = on, onCheckedChange = onFlag)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onFlag(!on) }
+                        .padding(vertical = 2.dp, horizontal = 2.dp),
+                ) {
+                    Text(
+                        androidx.compose.ui.res.stringResource(R.string.post_every_run),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Nm.sub,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Switch(checked = on, onCheckedChange = onFlag)
+                }
             }
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onAction) { Text(actionLabel) }
