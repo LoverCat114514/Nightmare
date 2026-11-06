@@ -134,12 +134,19 @@ object TouchProbe {
                 // Window height on DOWN: the IME eats 30-40% of it when it
                 // rises — a height drop between two DOWNs is the keyboard
                 // transition that swallows gestures in flight.
-                val h = try {
-                    windowMetricsHeight()
-                } catch (t: Throwable) {
-                    -1
+                // ⭐ fix28 (external review): currentWindowMetrics is a synchronous
+                // binder call into system_server — on the touch hot path it adds
+                // latency to every finger-down. Cache it: only re-query when the
+                // cached value is unknown, so the IME transition still shows (the
+                // NEXT DOWN after a height change reports the new height).
+                if (cachedWinH == Int.MIN_VALUE) {
+                    cachedWinH = try {
+                        windowMetricsHeight()
+                    } catch (t: Throwable) {
+                        -1
+                    }
                 }
-                log("DISPATCH a=DOWN took=${tookUs}us x=${(ev.x * 10).toInt() / 10f} y=${(ev.y * 10).toInt() / 10f} winH=$h")
+                log("DISPATCH a=DOWN took=${tookUs}us x=${(ev.x * 10).toInt() / 10f} y=${(ev.y * 10).toInt() / 10f} winH=$cachedWinH")
             }
             MotionEvent.ACTION_UP ->
                 log("DISPATCH a=UP took=${tookUs}us dur=${ev.eventTime - ev.downTime}ms")
@@ -154,6 +161,10 @@ object TouchProbe {
 
     /** The dispatch-time window height; needs the activity, set on install. */
     private var hostActivity: android.app.Activity? = null
+
+    /** ⭐ fix28: cached window height — see the DOWN branch in [dispatch]. */
+    @Volatile
+    private var cachedWinH: Int = Int.MIN_VALUE
 
     private fun windowMetricsHeight(): Int {
         val act = hostActivity ?: return -1
@@ -196,6 +207,23 @@ object TouchProbe {
             }
             Choreographer.getInstance().postFrameCallback(this)
         }
+    }
+
+    /**
+     * ⭐ fix28 (external review): the callback re-posts itself forever, so a
+     * second postFrameCallback from a recreated Activity's onCreate would
+     * double it — every recreation stacked one more permanent callback chain
+     * (each extra one just re-logs the same gaps). Guard: exactly one chain
+     * per process.
+     */
+    @Volatile
+    private var frameProbeRunning = false
+
+    /** Idempotent install of [frameProbe]; safe to call from every onCreate. */
+    fun ensureFrameProbe() {
+        if (frameProbeRunning) return
+        frameProbeRunning = true
+        Choreographer.getInstance().postFrameCallback(frameProbe)
     }
 }
 

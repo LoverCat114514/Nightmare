@@ -168,7 +168,10 @@ class MainActivity : ComponentActivity() {
         // frame stalls, workbench scroll. Writes Download/NightmareProbe/touch.log
         // from one background thread; never blocks, never crashes the app.
         com.abrah.nightmare.newui.TouchProbe.install(this)
-        android.view.Choreographer.getInstance().postFrameCallback(com.abrah.nightmare.newui.TouchProbe.frameProbe)
+        // ⭐ fix28 (external review): idempotent — onCreate can run again on
+        // activity recreation, and the old direct postFrameCallback stacked one
+        // never-ending self-reposting callback per recreation.
+        com.abrah.nightmare.newui.TouchProbe.ensureFrameProbe()
         enableEdgeToEdge()
         // ⚠ Before anything composes or any op runs: NODE_TYPES reads
         // SelectedModel for its `model` default, and the backend launches
@@ -339,7 +342,12 @@ fun HarnessScreen(
     // ⚠ Every 2 s, and it is one `ActivityManager.getMemoryInfo` plus a
     // `File.length()`. ⚠ Stops when the canvas is not showing, so it costs
     // nothing behind the library or in the background.
-    LaunchedEffect(vm.showCanvas) {
+    LaunchedEffect(vm.showCanvas, vm.canvasView) {
+        // ⭐ fix28 (external review): NEWUI draws no RAM readout, and refreshLoad
+        // does main-thread system calls (ActivityManager.getMemoryInfo) plus a
+        // graph walk — a recurring 2 s hitch on the very screen whose scrolls
+        // were under investigation. Skip the poll there entirely.
+        if (vm.canvasView == com.abrah.nightmare.MainView.NEWUI) return@LaunchedEffect
         while (vm.showCanvas) {
             vm.refreshLoad()
             kotlinx.coroutines.delay(2_000)

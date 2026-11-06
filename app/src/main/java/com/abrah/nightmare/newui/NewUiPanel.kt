@@ -224,6 +224,16 @@ private class WbState {
 private val RUN_EX = Executors.newSingleThreadExecutor()
 
 /**
+ * ⭐ fix28 (2026-11-06, external review): a SECOND single thread for the
+ * non-render work — "apply now" post tools and LoRA import. They used to
+ * share [RUN_EX] with generation, and `core.run` blocks that thread for the
+ * whole render: an "apply now" tapped mid-generation queued behind it and
+ * only executed after the picture finished (the user: buttons dead during a
+ * run). Independent thread = these stay live while the engine is busy.
+ */
+private val POST_EX = Executors.newSingleThreadExecutor()
+
+/**
  * The families with NO fix widgets on their sampler — [com.abrah.nightmare.detail.Detailer]'s
  * own exclusion list (offersDetail). Sending the knobs to those anyway would 400 the
  * whole render in [applyOverrides]'s checked().
@@ -498,21 +508,28 @@ fun NewUiScreen(
     val loraImport = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             val name = queryDisplayName(ctx, uri) ?: "lora-" + System.currentTimeMillis() + ".safetensors"
-            RUN_EX.execute {
+            POST_EX.execute {
                 try {
                     val dst = java.io.File(BackendProcess.lorasDir(ctx), name)
                     ctx.contentResolver.openInputStream(uri)?.use { inp ->
                         dst.outputStream().use { inp.copyTo(it) }
                     }
-                } catch (_: Exception) {}
+                } catch (_: Exception) {} finally {
+                    // ⭐ fix28 (external review): re-key the scan AFTER the copy —
+                    // the old code bumped [loraEpoch] on the UI thread immediately,
+                    // so the picker scanned before the file was written and the
+                    // fresh import was invisible until something else re-scanned.
+                    loraEpoch++
+                }
             }
-            loraEpoch++
         }
     }
     val applyPost: (Int) -> Unit = { tool ->
         val cur = LAST_SHOT.get()
         if (cur != null) {
-            RUN_EX.execute {
+            // ⭐ fix28 (external review): POST_EX, not RUN_EX — "apply now" must
+            // not queue behind a blocking `core.run` (see POST_EX's doc).
+            POST_EX.execute {
                 val src = BitmapFactory.decodeFile(cur.file.absolutePath) ?: return@execute
                 val out = when (tool) {
                     // ⭐ (2026-11-05, fourth round) x4 — the Default UI's apply-now
@@ -596,13 +613,13 @@ fun NewUiScreen(
                 OutlinedTextField(
                     value = positive, onValueChange = { positive = it },
                     label = { Text(stringResource(R.string.newui_positive)) },
-                    modifier = Modifier.fillMaxWidth().height(96.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp),
                     placeholder = { Text("1girl, solo, ...") },
                 )
                 OutlinedTextField(
                     value = negative, onValueChange = { negative = it },
                     label = { Text(stringResource(R.string.newui_negative)) },
-                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
                 )
             }
         }
@@ -1408,23 +1425,27 @@ private fun ParamsCard(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     // ⭐ (2026-11-05, ninth round) A per-run switch like the face/
                     // hand fixes, not a one-shot button (the user's item 1).
+                    // ⭐ fix28 (external review): the flags are compose state already — the
+                    // debounced-save LaunchedEffect keys on them directly, and
+                    // `modelVer` has no consumer that needs a bump here. The old
+                    // onPicked() re-invalidated the whole NewUiScreen on every flip.
                     SwitchRow(
                         stringResource(R.string.knob_enlarge),
                         stringResource(R.string.newui_m_ups_hint),
                         on = s.pUps2,
-                        onFlag = { s.pUps2 = it; onPicked() },
+                        onFlag = { s.pUps2 = it },
                     )
                     SwitchRow(
                         stringResource(R.string.knob_fix_faces),
                         stringResource(R.string.newui_p_face_hint),
                         on = s.pFace,
-                        onFlag = { s.pFace = it; onPicked() },
+                        onFlag = { s.pFace = it },
                     )
                     SwitchRow(
                         stringResource(R.string.knob_fix_hands),
                         stringResource(R.string.newui_p_hands_hint),
                         on = s.pHands,
-                        onFlag = { s.pHands = it; onPicked() },
+                        onFlag = { s.pHands = it },
                     )
                     TextButton(onClick = {
                         s.steps = 29; s.cfg = 5.0f
@@ -1463,7 +1484,13 @@ private fun PostTool(
     // only when the OUTSIDE value changes, so a flip here updated [on]'s source
     // but kept the OLD local — the switch looked dead until the card was folded
     // away and back (the user's item 2). Stateless: the flag IS the state.
-    var onNow by remember { mutableStateOf(on) }
+    // ⭐ fix28 (2026-11-06, external review): bind the switch to the WIRE
+    // directly, exactly like [SwitchRow] — no local state. The old
+    // `remember { mutableStateOf(on) }` took a copy that never followed [on]
+    // afterwards: a reset (or any outside change) cleared the wire but left
+    // the switch drawn "on", and the NEXT tap wrote the stale value back,
+    // looking dead. (The ninth-round note feared a keyed remember's trap;
+    // the fix27 answer — PostSlider's — is no local state at all.)
     Column {
         Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Nm.ink)
         Text(
@@ -1477,7 +1504,7 @@ private fun PostTool(
             if (withSwitch) {
                 Text(stringResource(R.string.post_every_run), style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.width(8.dp))
-                Switch(checked = onNow, onCheckedChange = { onNow = it; onFlag(it) })
+                Switch(checked = on, onCheckedChange = onFlag)
             }
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onAction) { Text(actionLabel) }
