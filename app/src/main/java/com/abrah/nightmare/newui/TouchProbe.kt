@@ -77,6 +77,10 @@ object TouchProbe {
 
     /** Called from MainActivity.onCreate, once per process. */
     fun install(ctx: Context) {
+        // ⭐ fix31 (friend's audit P1-1): belt-and-braces — the call site is
+        // PROBE-gated, but a release build must never open the log file even
+        // if some future code path calls install unconditionally.
+        if (!com.abrah.nightmare.BuildConfig.PROBE) return
         synchronized(lock) {
             if (writer != null) return
             hostActivity = ctx as? android.app.Activity

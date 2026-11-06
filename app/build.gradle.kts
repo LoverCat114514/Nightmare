@@ -53,6 +53,11 @@ android {
         // stays a plain incrementing integer; Android requires that.
         versionCode = 597
         versionName = "1.6.290"
+        // ⭐ fix31 (friend's audit P1-1): the touch/frame probe is a diagnostic
+        // tool, not a product feature — release builds must not write to
+        // external storage from every touch. dev keeps it (this push build is
+        // what the phone runs; the probe is how every stall report got made).
+        buildConfigField("boolean", "PROBE", "true")
         ndk { abiFilters += "arm64-v8a" }
 
         // The plugin runtime and the NPU runner, both built from source.
@@ -121,7 +126,10 @@ android {
             isMinifyEnabled = false
         }
         release {
-            // âš  Null when there is no keystore, which leaves the APK unsigned
+            // ⭐ fix31 (friend's audit P1-1): the probe ships OFF in release —
+            // see the PROBE field in defaultConfig.
+            buildConfigField("boolean", "PROBE", "false")
+            // ⚠ Null when there is no keystore, which leaves the APK unsigned
             // rather than failing the build.
             signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
@@ -146,6 +154,10 @@ android {
             isMinifyEnabled = false
             isShrinkResources = false
             matchingFallbacks += listOf("release")
+            // ⭐ fix31: initWith copies release's field overrides too — dev must
+            // re-enable the probe explicitly (it inherited PROBE=false silently,
+            // and the phone's push build lost its black box).
+            buildConfigField("boolean", "PROBE", "true")
         }
     }
 

@@ -681,7 +681,7 @@ fun CanvasScreen(
                 // level down: host logs while wb does not → the event died
                 // between the host Box and the workbench Column (something
                 // invisible eats it); both log → read the `consumed=` field.
-                .pointerInput(Unit) { passObserver("host") },
+                .pointerInput(Unit) { if (com.abrah.nightmare.BuildConfig.PROBE) passObserver("host") },
         ) {
             newUiContent()
         }

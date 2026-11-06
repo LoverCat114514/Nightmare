@@ -216,16 +216,26 @@ internal fun NewUiLoraPicker(
     var query by remember { mutableStateOf("") }
     var favourites by remember(library) { mutableStateOf(com.abrah.nightmare.LoraLibrary.favourites(ctx)) }
     val uses = remember(library) { com.abrah.nightmare.LoraLibrary.uses(ctx) }
-    val bases = items.map { it.base }.distinct().sortedBy { if (it == nodeBase) -1 else it.ordinal }
-    val arranged = com.abrah.nightmare.LoraLibrary.arrange(items, sort, base, query, favourites, uses)
-    val installedNames = items.map { it.name }.toSet()
-    val sizes = items.associate { it.name to it.bytes }
-    val baseOf = items.associate { it.name to it.base }
+    // ⭐ fix31 (friend's audit P0-2): the derived collections ran BARE in
+    // composition — every recomposition of the sheet (every slider drag, every
+    // folder flip) re-sorted `arrange` and rebuilt three O(n) maps/sets. All
+    // keyed on what they actually read.
+    val bases = remember(items) {
+        items.map { it.base }.distinct().sortedBy { if (it == nodeBase) -1 else it.ordinal }
+    }
+    val arranged = remember(items, sort, base, query, favourites, uses) {
+        com.abrah.nightmare.LoraLibrary.arrange(items, sort, base, query, favourites, uses)
+    }
+    val installedNames = remember(items) { items.map { it.name }.toSet() }
+    val sizes = remember(items) { items.associate { it.name to it.bytes } }
+    val baseOf = remember(items) { items.associate { it.name to it.base } }
     // ⚠⚠ Chosen ones FIRST and in their own order, then everything else: the
     // order in the param is the order the engine applies them in, so re-sorting
     // the list would silently re-sort the stack.
-    val rows = chosen.map { it.name }.distinct() +
+    val rows = remember(chosen, arranged) {
+        chosen.map { it.name }.distinct() +
         arranged.map { it.name }.filter { n -> chosen.none { it.name == n } }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,

@@ -39,6 +39,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -113,8 +114,10 @@ import java.util.concurrent.Executors
 import org.json.JSONObject
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -561,42 +564,54 @@ fun NewUiScreen(
         }
     }
 
-    val workbenchScroll = rememberScrollState()
+    val workbenchList = rememberLazyListState()
     // ⭐ TouchProbe layer 3 (2026-11-06): observe the scroll OFF the recomposition
     // path (snapshotFlow emits on the applier thread) — a frozen SCROLL stream
     // while DISPATCH lines keep flowing is the ownership-conflict signature.
+    // ⭐ fix31 (friend's audit P1-1): PROBE-gated — snapshotFlow emits every
+    // frame during a fling; release builds don't pay the emit/collect at all.
+    // ⭐ fix31 (P0-1): a lazy list has no single scroll value — the probe logs
+    // itemIndex+offset; a frozen stream reads the same as before.
     LaunchedEffect(Unit) {
-        snapshotFlow { workbenchScroll.value }.collect { TouchProbe.markScroll(it.toFloat()) }
+        if (!com.abrah.nightmare.BuildConfig.PROBE) return@LaunchedEffect
+        snapshotFlow { workbenchList.firstVisibleItemIndex to workbenchList.firstVisibleItemScrollOffset }
+            .collect { (i, o) -> TouchProbe.markScroll(i * 10000f + o) }
     }
     // ⭐ TouchProbe layer 3b (2026-11-06, probe v3): the scroll RANGE, logged on
-    // change only. maxValue == 0 while the screen shows content = a collapsed
-    // measure: every drag is a no-op and the value glues at 0 — the dead-swipe
-    // signature the 14:00 freeze showed.
+    // change only. For a lazy list the collapsed-measure signature is an EMPTY
+    // item list while content shows (maxValue == 0 has no analogue).
     LaunchedEffect(Unit) {
-        snapshotFlow { workbenchScroll.maxValue }.collect { TouchProbe.markScrollRange(it) }
+        if (!com.abrah.nightmare.BuildConfig.PROBE) return@LaunchedEffect
+        snapshotFlow { workbenchList.layoutInfo.visibleItemsInfo.size }.collect { TouchProbe.markScrollRange(it) }
     }
-    Column(
-        Modifier.fillMaxSize().verticalScroll(workbenchScroll)
+    // ⭐ fix31 (friend's audit P0-1): LazyColumn — the old verticalScroll Column
+    // composed EVERY card on entry and hit-tested the whole tree on every DOWN
+    // (the audit's 2-3x DOWN-cost gap between the dense and sparse regions of
+    // this very screen). Viewport-only composition + keys per card.
+    // ⚠ ContentPadding over Modifier.padding: a lazy list must apply the page
+    // insets to the VIEWPORT, not the scroll container — padding on the
+    // LazyColumn itself would clip the edge of the scrolled content.
+    LazyColumn(
+        Modifier.fillMaxSize()
             // ⭐ TouchProbe layer 4 (2026-11-06, probe v3): INSIDE the scroll
-            // modifier on purpose. The Main pass travels leaf→root, so this
+            // container on purpose. The Main pass travels leaf→root, so this
             // observer reads `isConsumed` BEFORE the scrollable above it has its
             // say: consumed=true here can only come from a child widget stealing
             // the drag; all-unconsumed here with a frozen SCROLL means the
             // scrollable itself refused (measurement collapse — see SCROLLRANGE).
-            .pointerInput(Unit) { passObserver("wb") }
+            .pointerInput(Unit) { if (com.abrah.nightmare.BuildConfig.PROBE) passObserver("wb") }
             // ⭐ probe v4 (review report 1 §3): the workbench's measured height,
             // logged on change — correlates a SCROLLRANGE jump with WHICH block
             // grew (the report asked for exactly this pairing).
-            .onSizeChanged { TouchProbe.sizeChange("wb", it.height) }
-            // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar is gone:
-            // the host leaves the very top to this page, so the page keeps one
-            // module gap (12dp) at its head — the spacing every card keeps.
-            .padding(horizontal = 16.dp).padding(top = 12.dp, bottom = BOTTOM_BAR_RESERVE + 12.dp),
+            .onSizeChanged { if (com.abrah.nightmare.BuildConfig.PROBE) TouchProbe.sizeChange("wb", it.height) },
+        state = workbenchList,
+        contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = BOTTOM_BAR_RESERVE + 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // ── Card 1: the result ────────────────────────────────────────────
         // ⭐ (2026-11-05, ninth round, revised) The run head is in the top bar
         // now (the brand's old spot); the card keeps status + save icon.
+        item(key = "result") {
         ResultCard(
             ctx, busy.value, progTxt.value, progFrac.value, srcName, postVer.intValue,
             mode = s.mode,
@@ -614,8 +629,10 @@ fun NewUiScreen(
                        else stringResource(R.string.newui_generate),
             onRun = { onTapGenerate(ctx, s, positive, negative, srcDataUrl, busy, progTxt, progFrac, statusLine, msLine) },
         )
+        }
 
         // ── Card 2: the mode ──────────────────────────────────────────────
+        item(key = "mode") {
         ModeCard(
             s,
             family = ModelCatalog.byId(s.modelId)?.family ?: SelectedModel.spec.family,
@@ -623,8 +640,10 @@ fun NewUiScreen(
             onDraft = { positive = it },
             onDraftSize = { w, h -> s.w = w; s.h = h; modelVer++ },
         )
+        }
 
         // ── Card 3: the prompts ───────────────────────────────────────────
+        item(key = "prompts") {
         Card(Modifier.fillMaxWidth().border(1.dp, Nm.line, RoundedCornerShape(16.dp)), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Nm.card), elevation = CardDefaults.cardElevation(0.dp)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(stringResource(R.string.newui_prompt), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, color = Nm.ink)
@@ -641,8 +660,10 @@ fun NewUiScreen(
                 )
             }
         }
+        }
 
         // ── Card 4: the model ─────────────────────────────────────────────
+        item(key = "model") {
         ModelCard(
             ctx, s,
             modelId = s.modelId,
@@ -654,14 +675,17 @@ fun NewUiScreen(
             onBrowseLoras = onBrowseLoras,
             onDeleteLora = onDeleteLora,
         )
+        }
 
         // ── Card 5: the parameters ────────────────────────────────────────
+        item(key = "params") {
         ParamsCard(
             ctx, s,
             family = ModelCatalog.byId(s.modelId)?.family ?: SelectedModel.spec.family,
             onPicked = { modelVer++ },
             onApply = { applyPost(it) },
         )
+        }
 
         // ⭐ (2026-11-05, ninth round) The footer (time · model · GENERATE ·
         // status) moved INTO the result card's head — the user's items 5-6.

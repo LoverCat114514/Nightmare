@@ -155,7 +155,11 @@ class MainActivity : ComponentActivity() {
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         val t0 = android.os.SystemClock.elapsedRealtimeNanos()
         val out = super.dispatchTouchEvent(ev)
-        com.abrah.nightmare.newui.TouchProbe.dispatch(ev, (android.os.SystemClock.elapsedRealtimeNanos() - t0) / 1000)
+        // ⭐ fix31 (friend's audit P1-1): the probe is diagnostic-only — release
+        // builds skip the timestamp work and the log call entirely.
+        if (com.abrah.nightmare.BuildConfig.PROBE) {
+            com.abrah.nightmare.newui.TouchProbe.dispatch(ev, (android.os.SystemClock.elapsedRealtimeNanos() - t0) / 1000)
+        }
         return out
     }
 
@@ -167,11 +171,15 @@ class MainActivity : ComponentActivity() {
         // ⭐ TouchProbe (2026-11-06): the problem-4 black box — dispatch costs,
         // frame stalls, workbench scroll. Writes Download/NightmareProbe/touch.log
         // from one background thread; never blocks, never crashes the app.
-        com.abrah.nightmare.newui.TouchProbe.install(this)
-        // ⭐ fix28 (external review): idempotent — onCreate can run again on
-        // activity recreation, and the old direct postFrameCallback stacked one
-        // never-ending self-reposting callback per recreation.
-        com.abrah.nightmare.newui.TouchProbe.ensureFrameProbe()
+        // ⭐ fix31 (friend's audit P1-1): PROBE-gated — release builds run with
+        // no probe, no file writes, no Choreographer callback.
+        if (com.abrah.nightmare.BuildConfig.PROBE) {
+            com.abrah.nightmare.newui.TouchProbe.install(this)
+            // ⭐ fix28 (external review): idempotent — onCreate can run again on
+            // activity recreation, and the old direct postFrameCallback stacked one
+            // never-ending self-reposting callback per recreation.
+            com.abrah.nightmare.newui.TouchProbe.ensureFrameProbe()
+        }
         enableEdgeToEdge()
         // ⚠ Before anything composes or any op runs: NODE_TYPES reads
         // SelectedModel for its `model` default, and the backend launches
