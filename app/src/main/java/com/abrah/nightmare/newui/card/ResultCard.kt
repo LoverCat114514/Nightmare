@@ -197,7 +197,10 @@ fun ResultCard(
         val pickParamImage = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) onImportImageParams?.invoke(uri)
         }
-        val needsSource = mode in listOf(WbParams.MODE_IMG2IMG, WbParams.MODE_INPAINT, WbParams.MODE_UPSCALE)
+        val needsSource = mode in setOf(
+            WbParams.MODE_IMG2IMG, WbParams.MODE_INPAINT, WbParams.MODE_UPSCALE,
+            "face_edit", "animate_portrait", "swap_i2i", "flux_edit", "i2v", "motion",
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (needsSource) {
                 OutlinedButton(onClick = { pickSrc.launch(arrayOf("image/*")) }) {
@@ -277,6 +280,12 @@ fun ResultCard(
         val sourceLabel = when (mode) {
             WbParams.MODE_INPAINT -> "重绘源图"
             WbParams.MODE_UPSCALE -> "放大原图"
+            "face_edit" -> "人脸底图"
+            "animate_portrait" -> "人像底图"
+            "i2v" -> "视频首帧图"
+            "motion" -> "迁移人物图"
+            "flux_edit" -> "待编辑图"
+            "swap_i2i" -> "图生图源"
             else -> stringResource(R.string.newui_src)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -328,23 +337,20 @@ fun ResultCard(
                 color = Nm.sub,
                 modifier = Modifier.weight(1f),
             )
-            if (mode == WbParams.MODE_UPSCALE) {
-                Text(
-                    "超分模型: 4x 独立模型",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Nm.sub,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            } else {
-                Text(
-                    stringResource(R.string.newui_model, modelLabel),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Nm.sub,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            val modelDesc = when {
+                mode == WbParams.MODE_UPSCALE -> "超分模型: 4x 独立模型"
+                mode in setOf("face_edit", "animate_portrait") -> "人像模型: LivePortrait"
+                mode in setOf("t2v", "i2v", "motion") -> "视频模型: Wan 2.2 Turbo"
+                mode == "t2v14" -> "视频模型: Wan 2.2 14B"
+                else -> stringResource(R.string.newui_model, modelLabel)
             }
+            Text(
+                modelDesc,
+                style = MaterialTheme.typography.labelMedium,
+                color = Nm.sub,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
 
         // ── Generate / Cancel ──────────────────────────────────────────────
@@ -378,6 +384,10 @@ fun ResultCard(
                     val actionLabel = when (mode) {
                         WbParams.MODE_UPSCALE -> "开始超分放大"
                         WbParams.MODE_INPAINT -> "开始局部重绘"
+                        "face_edit" -> "开始人脸微调"
+                        "animate_portrait" -> "开始动态人像"
+                        "flux_edit" -> "开始智能编辑"
+                        "t2v", "i2v", "t2v14", "motion" -> "开始生成视频"
                         else -> stringResource(R.string.newui_generate)
                     }
                     Text(

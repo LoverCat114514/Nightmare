@@ -1,6 +1,8 @@
 package com.abrah.nightmare.newui.card
 
 import android.content.Context
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -246,10 +249,15 @@ private fun CheckpointPicker(
             // menu on a tap and the row reads as dead.
             modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
         )
-        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        ExposedDropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            containerColor = Color.White,
+            modifier = Modifier.background(Color.White).border(1.dp, Nm.fld, RoundedCornerShape(12.dp)),
+        ) {
             for (m in installed) {
                 DropdownMenuItem(
-                    text = { Text(m.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    text = { Text(m.label, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Nm.ink) },
                     onClick = {
                         open = false
                         try {
@@ -257,6 +265,9 @@ private fun CheckpointPicker(
                             onPicked(m.id)
                         } catch (_: Exception) {}
                     },
+                    colors = androidx.compose.material3.MenuDefaults.itemColors(
+                        textColor = Nm.ink,
+                    ),
                 )
             }
         }

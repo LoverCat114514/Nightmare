@@ -10,20 +10,34 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.abrah.nightmare.Family
 import com.abrah.nightmare.R
@@ -32,11 +46,57 @@ import com.abrah.nightmare.newui.core.WbParams
 import com.abrah.nightmare.newui.theme.Nm
 
 /**
- * ⭐⭐ fix34 (2026-11-06) — Card 2: the mode.
+ * ⭐⭐ Complete All-Flow Support for NewUI
  *
- * Full multi-flow support (txt2img, img2img, inpaint, upscale) directly within NewUI,
- * smooth sliding indicator mode picker, denoise slider, and animated MOSS layout block.
+ * Fully covers all 5 built-in categories:
+ * - 图片 (Pictures): txt2img, img2img, inpaint, upscale
+ * - 人脸 (Faces): face_edit, animate_portrait
+ * - 高级 (Advanced): swap_t2i, swap_i2i
+ * - 编辑 (Edit): flux_edit
+ * - 视频 (Video): t2v, i2v, t2v14, motion
  */
+private val CATEGORIES = listOf(
+    "pictures" to "🖼️ 图片",
+    "faces" to "👤 人脸",
+    "advanced" to "⚡ 高级",
+    "edit" to "✨ 编辑",
+    "video" to "🎬 视频",
+)
+
+private val CATEGORY_MODES = mapOf(
+    "pictures" to listOf(
+        "txt2img" to "✦ 文生图",
+        "img2img" to "🖼 图生图",
+        "inpaint" to "🎨 局部重绘",
+        "upscale" to "🔍 超分放大",
+    ),
+    "faces" to listOf(
+        "face_edit" to "😊 人脸微调",
+        "animate_portrait" to "🎭 动态人像",
+    ),
+    "advanced" to listOf(
+        "swap_t2i" to "✦ 高级文生图",
+        "swap_i2i" to "🖼 高级图生图",
+    ),
+    "edit" to listOf(
+        "flux_edit" to "✨ 智能重绘编辑",
+    ),
+    "video" to listOf(
+        "t2v" to "✦ 文生视频",
+        "i2v" to "🎬 图生视频",
+        "t2v14" to "🌟 14B顶级视频",
+        "motion" to "🕺 动作迁移",
+    ),
+)
+
+fun categoryForMode(mode: String): String = when (mode) {
+    "face_edit", "animate_portrait" -> "faces"
+    "swap_t2i", "swap_i2i" -> "advanced"
+    "flux_edit" -> "edit"
+    "t2v", "i2v", "t2v14", "motion" -> "video"
+    else -> "pictures"
+}
+
 @Composable
 fun ModeCard(
     s: WbParams,
@@ -44,17 +104,68 @@ fun ModeCard(
     onDraft: (String) -> Unit,
     onDraftSize: (Int, Int) -> Unit,
 ) {
-    NmCard {
-        // ⭐ 4 modes supported smoothly: 文生图, 图生图, 局部重绘, 超分放大
-        ModeSegmentedRow(
-            selectedMode = s.mode,
-            onSelect = { s.mode = it },
-        )
+    // Current category automatically follows s.mode
+    var activeCategory by remember(s.mode) { mutableStateOf(categoryForMode(s.mode)) }
 
-        // ⭐ img2img / inpaint: Denoise slider
-        if (s.mode == WbParams.MODE_IMG2IMG || s.mode == WbParams.MODE_INPAINT) {
+    NmCard {
+        CardTitle("流程模式")
+
+        // ── 1. Top Category Pills ──────────────────────────────────────────
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 2.dp),
+        ) {
+            items(CATEGORIES.size) { idx ->
+                val (catId, catLabel) = CATEGORIES[idx]
+                val isSel = catId == activeCategory
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(if (isSel) Nm.priSoft else Color.Transparent)
+                        .border(
+                            1.dp,
+                            if (isSel) Nm.priLine else Nm.fld,
+                            RoundedCornerShape(999.dp),
+                        )
+                        .clickable {
+                            activeCategory = catId
+                            val defaultMode = CATEGORY_MODES[catId]?.firstOrNull()?.first ?: "txt2img"
+                            s.mode = defaultMode
+                        }
+                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        catLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isSel) Nm.pri else Nm.sub,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+
+        // ── 2. Sub-mode Segmented Row (smooth sliding translation animation) ─
+        val modesInCat = CATEGORY_MODES[activeCategory] ?: emptyList()
+        if (modesInCat.isNotEmpty()) {
+            PillSegmentedRow(
+                selectedId = s.mode,
+                items = modesInCat,
+                onSelect = { s.mode = it },
+            )
+        }
+
+        // ── 3. Mode Knobs (Denoise slider for img2img / inpaint / swap_i2i) ─
+        if (s.mode in setOf(WbParams.MODE_IMG2IMG, WbParams.MODE_INPAINT, "swap_i2i")) {
+            val denoiseLabel = when (s.mode) {
+                WbParams.MODE_INPAINT -> "重绘重度 (Denoise)"
+                "swap_i2i" -> "高级图生图重绘度 (Denoise)"
+                else -> stringResource(R.string.newui_denoise)
+            }
             PostSlider(
-                label = if (s.mode == WbParams.MODE_INPAINT) "重绘重度 (Denoise)" else stringResource(R.string.newui_denoise),
+                label = denoiseLabel,
                 value = s.denoise,
                 range = if (s.mode == WbParams.MODE_INPAINT) 0.05f..1.00f else 0.05f..0.95f,
                 fmt = { String.format(java.util.Locale.US, "%.2f", it) },
@@ -62,23 +173,40 @@ fun ModeCard(
             )
         }
 
-        // ⭐ Mode hints
-        if (s.mode == WbParams.MODE_INPAINT) {
+        // ── 4. Informative hint for the current active flow ─────────────────
+        val modeHint = when (s.mode) {
+            "txt2img" -> "✦ 文生图模式：输入正向及负向提示词，直接生成全新画面。"
+            "img2img" -> "🖼 图生图模式：在上方加载参考原图，按设定的重绘幅度重新演绎。"
+            "inpaint" -> "🎨 局部重绘模式：在上方加载待重绘的源图片，在提示词输入需要重绘生成的画面内容。"
+            "upscale" -> "🔍 超分放大模式：利用内置 4x 独立超分模型将图片无损放大 4 倍（无需加载主模型）。"
+            "face_edit" -> "😊 人脸微调模式：加载带有人脸的照片，通过 LivePortrait 调整面部表情与动作（无需主模型）。"
+            "animate_portrait" -> "🎭 动态人像模式：加载人像图片，让静态人像根据驱动视频生动流畅地运动起来（无需主模型）。"
+            "swap_t2i" -> "✦ 高级文生图：支持 LoRA、ControlNet 及 IP-Adapter 多重高级条件组合注入。"
+            "swap_i2i" -> "🖼 高级图生图：基于原图进行 LoRA、ControlNet 及 IP-Adapter 深入渲染。"
+            "flux_edit" -> "✨ 智能重绘编辑：FLUX.2/Qwen 深度图片编辑，按提示词重构图像。"
+            "t2v" -> "✦ 文生视频模式：由提示词驱动生成 Wan 2.2 Turbo 高清动态短片。"
+            "i2v" -> "🎬 图生视频模式：加载首帧源图，使静止画面流畅运动成视频短片。"
+            "t2v14" -> "🌟 14B顶级视频：由主模型生成首帧，Wan 2.2 14B 大模型完成超高质量视频渲染。"
+            "motion" -> "🕺 动作迁移模式：将指定视频中的姿势与动作精准迁移复制到源图片人物中。"
+            else -> "已就绪"
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(Nm.priSoft.copy(alpha = 0.35f))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                "🎨 局部重绘模式：请在上方加载待重绘的源图片，在提示词输入需要重绘生成的画面内容。",
+                modeHint,
                 style = MaterialTheme.typography.bodySmall,
-                color = Nm.sub,
-            )
-        } else if (s.mode == WbParams.MODE_UPSCALE) {
-            Text(
-                "🔍 超分放大模式：利用内置 4x 独立超分模型将图片无损放大 4 倍（无需加载主模型 Checkpoint）。",
-                style = MaterialTheme.typography.bodySmall,
-                color = Nm.sub,
+                color = Nm.ink,
             )
         }
 
-        // ⭐ The MOSS layout block exists only for the MOSS family
-        if (family == Family.MOSS && s.mode != WbParams.MODE_UPSCALE) {
+        // ── 5. MOSS layout block (MOSS family only) ─────────────────────────
+        if (family == Family.MOSS && s.mode in setOf(WbParams.MODE_TXT2IMG, WbParams.MODE_IMG2IMG)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -94,7 +222,6 @@ fun ModeCard(
                 Switch(checked = s.mossOn, onCheckedChange = { s.mossOn = it })
             }
 
-            // ⭐ AnimatedVisibility with 280ms cubic bezier curve for smooth expand/shrink
             AnimatedVisibility(
                 visible = s.mossOn,
                 enter = expandVertically(

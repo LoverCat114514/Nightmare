@@ -206,30 +206,27 @@ fun SegmentedRow(
 
 
 /**
- * ⭐ Four-mode segmented pill (txt2img, img2img, inpaint, upscale) with smooth sliding indicator pill.
+ * ⭐ Dynamic segmented pill row with smooth sliding indicator pill matching the bottom status bar.
  */
 @Composable
-fun ModeSegmentedRow(
-    selectedMode: String,
+fun PillSegmentedRow(
+    selectedId: String,
+    items: List<Pair<String, String>>,
     onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val items = listOf(
-        com.abrah.nightmare.newui.core.WbParams.MODE_TXT2IMG to "✦ 文生图",
-        com.abrah.nightmare.newui.core.WbParams.MODE_IMG2IMG to "🖼 图生图",
-        com.abrah.nightmare.newui.core.WbParams.MODE_INPAINT to "🎨 重绘",
-        com.abrah.nightmare.newui.core.WbParams.MODE_UPSCALE to "🔍 超分",
-    )
-    val selIndex = items.indexOfFirst { it.first == selectedMode }.let { if (it >= 0) it else 0 }
+    if (items.isEmpty()) return
+    val count = items.size
+    val selIndex = items.indexOfFirst { it.first == selectedId }.let { if (it >= 0) it else 0 }
 
     BoxWithConstraints(
-        Modifier
+        modifier
             .fillMaxWidth()
             .height(46.dp)
             .background(Nm.card, RoundedCornerShape(999.dp))
             .border(1.dp, Nm.fld, RoundedCornerShape(999.dp))
             .padding(4.dp),
     ) {
-        val count = items.size
         val totalSpacing = 2.dp * (count - 1)
         val itemW = (maxWidth - totalSpacing) / count
         val pillX by animateDpAsState(
@@ -238,10 +235,10 @@ fun ModeSegmentedRow(
                 dampingRatio = 0.85f,
                 stiffness = 500f,
             ),
-            label = "modePillX",
+            label = "pillSegmentX",
         )
 
-        // ⭐ The sliding indicator pill (smooth gliding translation matching BottomBar)
+        // ⭐ The sliding indicator pill
         Box(
             modifier = Modifier
                 .offset(x = pillX)
@@ -261,7 +258,7 @@ fun ModeSegmentedRow(
                 val textColor by animateColorAsState(
                     targetValue = if (isSel) Nm.pri else Nm.sub,
                     animationSpec = tween(150),
-                    label = "modeTextCol_$idx",
+                    label = "pillTextCol_$idx",
                 )
 
                 Box(
@@ -284,6 +281,21 @@ fun ModeSegmentedRow(
             }
         }
     }
+}
+
+/** Backward-compatible 4-mode row */
+@Composable
+fun ModeSegmentedRow(
+    selectedMode: String,
+    onSelect: (String) -> Unit,
+) {
+    val items = listOf(
+        com.abrah.nightmare.newui.core.WbParams.MODE_TXT2IMG to "✦ 文生图",
+        com.abrah.nightmare.newui.core.WbParams.MODE_IMG2IMG to "🖼 图生图",
+        com.abrah.nightmare.newui.core.WbParams.MODE_INPAINT to "🎨 重绘",
+        com.abrah.nightmare.newui.core.WbParams.MODE_UPSCALE to "🔍 超分",
+    )
+    PillSegmentedRow(selectedId = selectedMode, items = items, onSelect = onSelect)
 }
 
 // ── The slider row ─────────────────────────────────────────────────────────
@@ -409,14 +421,22 @@ fun DropdownWire(
             modifier = Modifier.fillMaxWidth()
                 .menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable),
         )
-        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        ExposedDropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            containerColor = Color.White,
+            modifier = Modifier.background(Color.White).border(1.dp, Nm.fld, RoundedCornerShape(12.dp)),
+        ) {
             for (c in choices) {
                 DropdownMenuItem(
-                    text = { Text(textOf(c), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    text = { Text(textOf(c), maxLines = 1, overflow = TextOverflow.Ellipsis, color = Nm.ink) },
                     onClick = {
                         open = false
                         onPick(c)
                     },
+                    colors = androidx.compose.material3.MenuDefaults.itemColors(
+                        textColor = Nm.ink,
+                    ),
                 )
             }
         }

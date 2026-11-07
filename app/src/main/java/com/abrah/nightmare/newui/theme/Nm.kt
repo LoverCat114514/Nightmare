@@ -116,13 +116,13 @@ fun nmScheme(dark: Boolean = false) = lightColorScheme(
     onBackground = Nm.ink,
     surface = Nm.card,
     onSurface = Nm.ink,
-    surfaceVariant = Nm.soft2,
+    surfaceVariant = Nm.card,
     onSurfaceVariant = Nm.sub,
-    // ⚠ `surfaceContainerHigh` is what an AlertDialog paints its own card with.
-    // Left unset it stays the app's near-black in dark mode and the LoRA sheet
-    // would be dark inside a light workbench.
+    surfaceContainer = Nm.card,
+    surfaceContainerLow = Nm.card,
+    surfaceContainerLowest = Nm.card,
     surfaceContainerHigh = Nm.card,
-    surfaceContainerHighest = Nm.soft2,
+    surfaceContainerHighest = Nm.card,
     outline = Nm.fld,
     outlineVariant = Nm.line,
     error = Nm.bad,

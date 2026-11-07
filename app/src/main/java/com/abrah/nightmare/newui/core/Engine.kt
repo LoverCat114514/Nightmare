@@ -174,100 +174,63 @@ fun buildRequest(
     negative: String,
     srcDataUrl: String?,
 ): RunRequest {
-    when (s.mode) {
-        WbParams.MODE_UPSCALE -> {
-            val b64 = srcDataUrl
-                ?: throw ApiError(400, "超分放大需要先加载一张原图")
+    val mode = s.mode
+    val takesImage = mode in setOf(
+        WbParams.MODE_IMG2IMG,
+        WbParams.MODE_INPAINT,
+        WbParams.MODE_UPSCALE,
+        "face_edit",
+        "animate_portrait",
+        "swap_i2i",
+        "flux_edit",
+        "i2v",
+        "motion",
+    )
+    val images = if (takesImage) {
+        val b64 = srcDataUrl
+            ?: throw ApiError(400, "当前流程需要先加载一张源图片")
+        mapOf("image" to b64)
+    } else {
+        emptyMap()
+    }
+
+    when (mode) {
+        "upscale", "face_edit", "animate_portrait", "motion" -> {
             return RunRequest(
-                flow = "upscale",
+                flow = mode,
                 model = null,
                 prompt = null,
                 negative = null,
                 knobs = emptyMap(),
                 params = emptyMap(),
-                images = mapOf("image" to b64),
+                images = images,
             )
         }
-        WbParams.MODE_INPAINT -> {
-            val model = ModelCatalog.byId(s.modelId) ?: throw ApiError(400, "no model selected")
-            val b64 = srcDataUrl
-                ?: throw ApiError(400, "局部重绘需要先加载一张源图片")
+        "t2v", "i2v" -> {
             val knobs = mutableMapOf<String, String>()
-            if (s.scheduler.isNotBlank()) knobs["scheduler"] = s.scheduler
-            if (s.w > 0) knobs["width"] = s.w.toString()
-            if (s.h > 0) knobs["height"] = s.h.toString()
-            if (s.steps > 0) knobs["steps"] = s.steps.toString()
-            if (s.cfg > 0f) knobs["cfg"] = s.cfg.toString()
-            knobs["denoise"] = s.denoise.toString()
             if (s.fixedSeed && s.seed > 0L) knobs["seed"] = s.seed.toString()
-            if (model.family !in DETAIL_EXCLUDED) {
-                if (s.pFace) knobs[Detailer.FIX_FACES] = "true"
-                if (s.pHands) knobs[Detailer.FIX_HANDS] = "true"
-            }
-            if (s.loras.isNotEmpty()) {
-                knobs["loras"] = s.loras.joinToString(", ") { pick ->
-                    val fn = if (pick.name.endsWith(".safetensors", ignoreCase = true)) {
-                        pick.name
-                    } else {
-                        pick.name + ".safetensors"
-                    }
-                    "$fn@${LoraPick.formatWeight(pick.weight)}"
-                }
-            }
-            val params = if (s.mossOn && model.family == Family.MOSS) {
-                mapOf("generate" to mapOf(SdSampler.MOSS_LAYOUT to "true"))
-            } else {
-                emptyMap()
-            }
             return RunRequest(
-                flow = "inpaint",
+                flow = mode,
+                model = null,
+                prompt = prompt,
+                negative = negative,
+                knobs = knobs,
+                params = emptyMap(),
+                images = images,
+            )
+        }
+        "t2v14" -> {
+            val model = ModelCatalog.byId(s.modelId) ?: throw ApiError(400, "no model selected")
+            val knobs = mutableMapOf<String, String>()
+            if (s.fixedSeed && s.seed > 0L) knobs["seed"] = s.seed.toString()
+            return RunRequest(
+                flow = mode,
                 model = model.id,
                 prompt = prompt,
                 negative = negative,
                 knobs = knobs,
-                params = params,
-                images = mapOf("image" to b64),
-            )
-        }
-        WbParams.MODE_IMG2IMG -> {
-            val model = ModelCatalog.byId(s.modelId) ?: throw ApiError(400, "no model selected")
-            val b64 = srcDataUrl
-                ?: throw ApiError(400, "img2img needs a source picture — load one first")
-            val knobs = mutableMapOf<String, String>()
-            if (s.scheduler.isNotBlank()) knobs["scheduler"] = s.scheduler
-            if (s.w > 0) knobs["width"] = s.w.toString()
-            if (s.h > 0) knobs["height"] = s.h.toString()
-            if (s.steps > 0) knobs["steps"] = s.steps.toString()
-            if (s.cfg > 0f) knobs["cfg"] = s.cfg.toString()
-            knobs["denoise"] = s.denoise.toString()
-            if (s.fixedSeed && s.seed > 0L) knobs["seed"] = s.seed.toString()
-            if (model.family !in DETAIL_EXCLUDED) {
-                if (s.pFace) knobs[Detailer.FIX_FACES] = "true"
-                if (s.pHands) knobs[Detailer.FIX_HANDS] = "true"
-            }
-            if (s.loras.isNotEmpty()) {
-                knobs["loras"] = s.loras.joinToString(", ") { pick ->
-                    val fn = if (pick.name.endsWith(".safetensors", ignoreCase = true)) {
-                        pick.name
-                    } else {
-                        pick.name + ".safetensors"
-                    }
-                    "$fn@${LoraPick.formatWeight(pick.weight)}"
-                }
-            }
-            val params = if (s.mossOn && model.family == Family.MOSS) {
-                mapOf("generate" to mapOf(SdSampler.MOSS_LAYOUT to "true"))
-            } else {
-                emptyMap()
-            }
-            return RunRequest(
-                flow = "img2img",
-                model = model.id,
-                prompt = prompt,
-                negative = negative,
-                knobs = knobs,
-                params = params,
-                images = mapOf("image" to b64),
+                params = emptyMap(),
+                images = images,
             )
         }
         else -> {
@@ -278,6 +241,9 @@ fun buildRequest(
             if (s.h > 0) knobs["height"] = s.h.toString()
             if (s.steps > 0) knobs["steps"] = s.steps.toString()
             if (s.cfg > 0f) knobs["cfg"] = s.cfg.toString()
+            if (mode == WbParams.MODE_IMG2IMG || mode == WbParams.MODE_INPAINT || mode == "swap_i2i") {
+                knobs["denoise"] = s.denoise.toString()
+            }
             if (s.fixedSeed && s.seed > 0L) knobs["seed"] = s.seed.toString()
             if (model.family !in DETAIL_EXCLUDED) {
                 if (s.pFace) knobs[Detailer.FIX_FACES] = "true"
@@ -299,13 +265,13 @@ fun buildRequest(
                 emptyMap()
             }
             return RunRequest(
-                flow = "txt2img",
+                flow = mode,
                 model = model.id,
                 prompt = prompt,
                 negative = negative,
                 knobs = knobs,
                 params = params,
-                images = emptyMap(),
+                images = images,
             )
         }
     }
