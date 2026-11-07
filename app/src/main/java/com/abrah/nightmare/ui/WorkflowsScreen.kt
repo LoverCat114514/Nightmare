@@ -76,6 +76,7 @@ fun WorkflowsScreen(
      * the body, so a golden can draw both sides of the gate without a device.
      */
     caps: com.abrah.nightmare.DeviceProbe.Caps = com.abrah.nightmare.DeviceProbe.caps(),
+    initialPage: Int = 1,
     modifier: Modifier = Modifier,
 ) {
     // ⚠ The name being edited, and the one being deleted. Local: an
@@ -100,6 +101,7 @@ fun WorkflowsScreen(
                 stringResource(R.string.flows_recommended),
                 stringResource(R.string.flows_saved),
             ),
+            initialPage = initialPage,
             modifier = Modifier.padding(top = 8.dp),
         ) { page ->
             LazyColumn(

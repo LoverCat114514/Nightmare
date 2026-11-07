@@ -110,22 +110,43 @@ fun LibraryScreen(
         Column(modifier.fillMaxSize().navigationBarsPadding().padding(16.dp)) {
             // ⭐⭐ Models and Flows as TWO CARDS at the top, the open one selected (the user, 2026-10-23: "go to Flows
             // from Models and vice versa, both cards on top and we can toggle"); each list's "+" after them.
-            if (tab != LibraryTab.RESULTS) Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Space.s),
-            ) {
-                LibraryTabsSwitcher(
-                    selectedTab = tab,
-                    onTab = onTab,
-                    modifier = Modifier.weight(1f),
-                )
-                if (tab == LibraryTab.MODELS) modelsAction?.invoke() else flowsAction?.invoke()
-            } else ScreenHeader(
-                stringResource(R.string.nav_results),
-                onClose = null,
-                onMenu = null,
-            )
+            when (tab) {
+                LibraryTab.MODELS -> {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ScreenHeader(
+                            stringResource(R.string.nav_models),
+                            onClose = null,
+                            onMenu = null,
+                            modifier = Modifier.weight(1f),
+                        )
+                        modelsAction?.invoke()
+                    }
+                }
+                LibraryTab.FLOWS -> {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ScreenHeader(
+                            "已保存流程",
+                            onClose = null,
+                            onMenu = null,
+                            modifier = Modifier.weight(1f),
+                        )
+                        flowsAction?.invoke()
+                    }
+                }
+                LibraryTab.RESULTS -> {
+                    ScreenHeader(
+                        stringResource(R.string.nav_results),
+                        onClose = null,
+                        onMenu = null,
+                    )
+                }
+            }
             // ⚠ AnimatedContent with horizontal slide translation (matching BottomBar motion)
             AnimatedContent(
                 targetState = tab,

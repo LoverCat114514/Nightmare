@@ -849,6 +849,10 @@ fun HarnessScreen(
             onAnchor = { vm.noteBarAnchor(it) },
             modelsBusy = vm.importing != null,
             hideFlows = (vm.canvasView == com.abrah.nightmare.MainView.NEWUI),
+            onMore = {
+                vm.closeSettingsMenu()
+                vm.toast("更多功能正在开发中，敬请期待")
+            },
         )
         // ⭐⭐ The list itself, over the bar's Settings slot and clear of it.
         com.abrah.nightmare.ui.SettingsMenu(

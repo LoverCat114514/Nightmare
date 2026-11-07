@@ -77,7 +77,7 @@ import com.abrah.nightmare.R
  */
 
 /** The five slots, in bar order. Derived from state, not stored — one source of truth. */
-enum class BottomDest { CANVAS, MODELS, FLOWS, RESULTS, SETTINGS }
+enum class BottomDest { CANVAS, MODELS, MORE, FLOWS, RESULTS, SETTINGS }
 
 /**
  * ⭐  What one full bar occupies above the system navigation area: the capsule
@@ -97,6 +97,12 @@ val CanvasIcon: ImageVector by lazy {
     glyph(
         "Canvas",
         "M3 3h18v18H3V3zm2 2v14h14V5H5zm2.5 9.5l2.5-3 1.83 2.2L14.5 10l4 4.5h-13l1-1z",
+    )
+}
+val MoreIcon: ImageVector by lazy {
+    glyph(
+        "MoreHoriz",
+        "M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z",
     )
 }
 val SettingsIcon: ImageVector by lazy {
@@ -123,6 +129,7 @@ fun NightmareBottomBar(
     onFlows: () -> Unit,
     onResults: () -> Unit,
     onSettings: () -> Unit,
+    onMore: (() -> Unit)? = null,
     /** ⭐ Where a slot was tapped: its centre as a fraction of the screen height —
      * a destination card unfolds out of this point (2026-11-06). */
     onAnchor: (Float) -> Unit = {},
@@ -137,7 +144,15 @@ fun NightmareBottomBar(
         Triple(BottomDest.RESULTS, ResultsIcon, stringResource(R.string.nav_results)),
         Triple(BottomDest.SETTINGS, SettingsIcon, stringResource(R.string.nav_settings)),
     )
-    val slots = if (hideFlows) allSlots.filterNot { it.first == BottomDest.FLOWS } else allSlots
+    val slots = if (hideFlows) {
+        listOf(
+            Triple(BottomDest.CANVAS, CanvasIcon, stringResource(R.string.nav_canvas)),
+            Triple(BottomDest.MODELS, ModelsIcon, stringResource(R.string.nav_models)),
+            Triple(BottomDest.MORE, MoreIcon, "更多"),
+            Triple(BottomDest.RESULTS, ResultsIcon, stringResource(R.string.nav_results)),
+            Triple(BottomDest.SETTINGS, SettingsIcon, stringResource(R.string.nav_settings)),
+        )
+    } else allSlots
     // ⭐⭐⭐ fillMaxSize + BottomCenter: the bar is composed as a plain child of a
     // Box (the canvas's root, or a sheet's full-window overlay), and a Box child
     // without an alignment modifier sits TOP-START — which is exactly where the
@@ -217,6 +232,7 @@ fun NightmareBottomBar(
                                     when (dest) {
                                         BottomDest.CANVAS -> onCanvas()
                                         BottomDest.MODELS -> if (isSel) onCanvas() else onModels()
+                                        BottomDest.MORE -> onMore?.invoke()
                                         BottomDest.FLOWS -> if (isSel) onCanvas() else onFlows()
                                         BottomDest.RESULTS -> if (isSel) onCanvas() else onResults()
                                         BottomDest.SETTINGS -> if (isSel) onCanvas() else onSettings()

@@ -146,15 +146,6 @@ internal fun SettingsMenu(
                     },
                 )
             }
-            MenuCapsule(
-                label = fullLabel,
-                open = open,
-                index = rows.size,
-                onTap = { c ->
-                    onGeometry(c)
-                    onFull()
-                },
-            )
         }
     }
 }

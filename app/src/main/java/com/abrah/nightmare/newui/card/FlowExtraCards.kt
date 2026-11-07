@@ -214,12 +214,71 @@ fun DriverVideoCard(
 }
 
 /**
- * ⭐ 视频生成配置卡片 (Wan 2.2 / 14B)
+ * ⭐ 专用视频模型选择卡片 (VideoModelCard)
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun VideoModelCard(s: WbParams) {
+    NmCard {
+        CardTitle("视频模型")
+
+        val videoModels = listOf(
+            "wan22_turbo" to "Wan 2.2 Turbo (5B 极速高质)",
+            "wan22_14b" to "Wan 2.2 14B (超高清顶级画质)",
+            "wan21_nsfw13" to "Wan 2.1 1.3B (轻量微型模型)",
+            "minimax_h3" to "MiniMax H3 (带音效音视频同步)",
+            "nd.sample" to "Neodragon (端侧极速生成)",
+        )
+
+        DropdownWire(
+            label = "选择视频模型",
+            current = s.videoModel,
+            choices = videoModels.map { it.first },
+            textOf = { id -> videoModels.firstOrNull { it.first == id }?.second ?: id },
+            onPick = { s.videoModel = it },
+        )
+
+        val modelHint = when (s.videoModel) {
+            "wan22_turbo" -> "✦ Wan 2.2 Turbo 5B：端侧综合画质与动态最佳的主力视频生成模型。"
+            "wan22_14b" -> "🌟 Wan 2.2 14B：140亿参数顶级画质模型，极佳的动作连贯性与细节重现。"
+            "wan21_nsfw13" -> "⚡ Wan 2.1 1.3B：轻量微型视频模型，生成速度快，显存占用低。"
+            "minimax_h3" -> "🎵 MiniMax H3：支持音视频同步生成的全模态端侧模型。"
+            "nd.sample" -> "🚀 Neodragon：超轻量秒级预览视频采样器。"
+            else -> "已就绪"
+        }
+
+        Text(
+            modelHint,
+            style = MaterialTheme.typography.bodySmall,
+            color = Nm.sub,
+        )
+    }
+}
+
+/**
+ * ⭐ 视频生成配置卡片 (Wan 2.2 / 14B / H3 / Neodragon)
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun VideoParamsCard(s: WbParams) {
     NmCard {
         CardTitle("🎬 视频生成设置")
+
+        // ── 视频模型选择 ──────────────────────────────────────────
+        val videoModels = listOf(
+            "wan22_turbo" to "Wan 2.2 Turbo (5B 极速高质)",
+            "wan22_14b" to "Wan 2.2 14B (超高清顶级画质)",
+            "wan21_nsfw13" to "Wan 2.1 1.3B (轻量微型模型)",
+            "minimax_h3" to "MiniMax H3 (带音效音视频同步)",
+            "nd.sample" to "Neodragon (端侧极速生成)",
+        )
+        DropdownWire(
+            label = "视频模型",
+            current = s.videoModel,
+            choices = videoModels.map { it.first },
+            textOf = { id -> videoModels.firstOrNull { it.first == id }?.second ?: id },
+            onPick = { s.videoModel = it },
+        )
 
         // 视频时长选择
         Text("生成片段时长", style = MaterialTheme.typography.labelMedium, color = Nm.sub)
