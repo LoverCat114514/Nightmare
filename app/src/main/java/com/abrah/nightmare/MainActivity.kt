@@ -768,12 +768,10 @@ fun HarnessScreen(
     // what is on screen. The canvas views (AGENT/NODES/GRAPH) all light CANVAS:
     // they are three views of one flow, not three destinations.
     val dest = when {
+        vm.settingsMenuOpen || vm.settingsPage != null -> com.abrah.nightmare.ui.BottomDest.SETTINGS
         vm.mainView == com.abrah.nightmare.MainView.MODELS -> com.abrah.nightmare.ui.BottomDest.MODELS
         vm.mainView == com.abrah.nightmare.MainView.FLOWS -> com.abrah.nightmare.ui.BottomDest.FLOWS
         vm.mainView == com.abrah.nightmare.MainView.RESULTS -> com.abrah.nightmare.ui.BottomDest.RESULTS
-        // ⭐ The menu IS the Settings destination (the user, 2026-11-05): the slot lights
-        // while its list is up, even though the canvas keeps drawing behind it.
-        vm.settingsMenuOpen || !vm.showCanvas -> com.abrah.nightmare.ui.BottomDest.SETTINGS
         else -> com.abrah.nightmare.ui.BottomDest.CANVAS
     }
     // ⭐⭐ THE SHELL NAVIGATION, now the bar alone (2026-11-04: "将侧边的抽屉栏删掉

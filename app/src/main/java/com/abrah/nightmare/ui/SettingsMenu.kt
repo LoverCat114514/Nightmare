@@ -189,14 +189,11 @@ private fun MenuCapsule(
     val interaction = remember { MutableInteractionSource() }
     val coords = remember { mutableStateOf<LayoutCoordinates?>(null) }
 
-    // Dynamic horizontal motion blur radius on retraction (0 -> 16px)
-    val blurRadius = (1f - p) * 16f
-
     Surface(
         shape = RoundedCornerShape(percent = 50),
         color = Color.White.copy(alpha = 0.90f),
         tonalElevation = 0.dp,
-        shadowElevation = 6.dp,
+        shadowElevation = 0.dp, // No drop shadow that creates dark smudges
         border = BorderStroke(
             1.dp,
             Color.White.copy(alpha = 0.85f),
@@ -211,24 +208,13 @@ private fun MenuCapsule(
                 ) else Modifier,
             )
             .graphicsLayer {
-                alpha = p
-                // ⭐ Cascade retraction: capsules gracefully waterfall down-right into the bottom bar
-                translationX = (1f - p) * (20.dp.toPx() + index * 6.dp.toPx())
-                translationY = (1f - p) * (24.dp.toPx() + index * 12.dp.toPx())
-                scaleY = 0.75f + 0.25f * p
-                scaleX = 0.85f + 0.15f * p
+                alpha = p.coerceIn(0f, 1f)
+                // ⭐ Pure, clean cascade retraction: no dirty black blur smearing
+                translationX = (1f - p) * (18.dp.toPx() + index * 4.dp.toPx())
+                translationY = (1f - p) * (20.dp.toPx() + index * 8.dp.toPx())
+                scaleY = 0.85f + 0.15f * p
+                scaleX = 0.90f + 0.10f * p
                 transformOrigin = TransformOrigin(1f, 1f)
-
-                // ⭐ Dynamic Motion Blur on text and capsule during retraction!
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !open && blurRadius > 0.5f) {
-                    renderEffect = android.graphics.RenderEffect.createBlurEffect(
-                        blurRadius,
-                        0.1f,
-                        android.graphics.Shader.TileMode.CLAMP,
-                    ).asComposeRenderEffect()
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    renderEffect = null
-                }
             },
     ) {
         Box(

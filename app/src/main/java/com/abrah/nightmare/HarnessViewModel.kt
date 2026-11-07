@@ -164,8 +164,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     /** ⭐ The bar's Settings slot: open the list, over the canvas. */
     fun openSettingsMenu() {
-        // ⭐ Keep current view intact, float capsules over active page
-        settingsMenuOpen = true
+        if (settingsPage != null) {
+            settingsPage = null
+            settingsMenuOpen = false
+        } else {
+            settingsMenuOpen = !settingsMenuOpen
+        }
     }
 
     fun closeSettingsMenu() { settingsMenuOpen = false }
