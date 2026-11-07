@@ -251,6 +251,7 @@ class MainActivity : ComponentActivity() {
                 black = vm.theme == Prefs.Theme.BLACK,
                 accent = vm.accent,
                 customColor = vm.customAccentColor,
+                customBackgroundActive = vm.customBackgroundPath != null,
             ) {
                 Box(Modifier.fillMaxSize()) {
                     if (vm.customBackgroundPath != null) {
@@ -809,7 +810,11 @@ fun HarnessScreen(
             // one page. ⚠ Not `openLater`: nothing is closing, so there is no close
             // animation to wait for — and the canvas stays behind the menu on purpose,
             // which is what keeps the bar's other slots working under it.
-            onSettings = { vm.openSettingsMenu() },
+            onSettings = {
+                // ⭐ Close any open card/sheet before opening settings, eliminating overlap!
+                vm.closeLibrary()
+                vm.openSettingsMenu()
+            },
             // ⭐ The card unfolds out of the tapped slot (2026-11-06).
             onAnchor = { vm.noteBarAnchor(it) },
             modelsBusy = vm.importing != null,

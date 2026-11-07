@@ -198,14 +198,19 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     fun chooseCustomAccent(color: Color) {
-        val argb = (color.value.toLong() and 0xFFFFFFFFL)
+        val r = (color.red * 255f).toInt().coerceIn(0, 255)
+        val g = (color.green * 255f).toInt().coerceIn(0, 255)
+        val b = (color.blue * 255f).toInt().coerceIn(0, 255)
+        val argb = ((0xFFL shl 24) or ((r.toLong() and 0xFFL) shl 16) or ((g.toLong() and 0xFFL) shl 8) or (b.toLong() and 0xFFL)) and 0xFFFFFFFFL
         customAccentColor = argb
         Prefs.setCustomAccentColor(getApplication(), argb)
+        com.abrah.nightmare.newui.theme.Nm.customPri = color
     }
 
     fun resetCustomAccent() {
         customAccentColor = 0L
         Prefs.setCustomAccentColor(getApplication(), 0L)
+        com.abrah.nightmare.newui.theme.Nm.customPri = null
     }
 
     var customBackgroundPath by mutableStateOf(Prefs.customBackgroundPath)

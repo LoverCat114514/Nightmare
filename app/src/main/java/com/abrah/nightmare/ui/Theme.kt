@@ -235,11 +235,17 @@ fun NightmareTheme(
     /** ⭐ The accent colour (`Accents.kt`); [Prefs.Accent.WALLPAPER] is Android 12+'s, violet before it. */
     accent: Prefs.Accent = Prefs.Accent.VIOLET,
     customColor: Long = 0L,
+    customBackgroundActive: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val wallpaper = accent == Prefs.Accent.WALLPAPER && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && customColor == 0L
-    val p = if (customColor != 0L) dynamicPaletteFromColor(Color(customColor)) else paletteOf(accent)
+    val p = if (customColor != 0L) {
+        val r = (((customColor shr 16) and 0xFFL).toFloat() / 255f).coerceIn(0f, 1f)
+        val g = (((customColor shr 8) and 0xFFL).toFloat() / 255f).coerceIn(0f, 1f)
+        val b = ((customColor and 0xFFL).toFloat() / 255f).coerceIn(0f, 1f)
+        dynamicPaletteFromColor(Color(red = r, green = g, blue = b, alpha = 1f))
+    } else paletteOf(accent)
     val scheme = when {
         wallpaper && !darkTheme -> dynamicLightColorScheme(context)
         wallpaper -> dynamicDarkColorScheme(context).let { if (black) it.blacked(NeutralBlack) else it }
@@ -258,6 +264,8 @@ fun NightmareTheme(
     // the right one. A state write: flipping the theme redraws the canvas.
     com.abrah.nightmare.canvas.CanvasColors.light = !darkTheme
     com.abrah.nightmare.canvas.CanvasColors.black = black && darkTheme
+    com.abrah.nightmare.canvas.CanvasColors.customBackgroundActive = customBackgroundActive
+    com.abrah.nightmare.newui.theme.Nm.customPri = p.fill
     com.abrah.nightmare.canvas.CanvasColors.selection = when {
         wallpaper -> scheme.primary to if (darkTheme) p.canvasSel else scheme.secondaryContainer
         darkTheme -> p.canvasStroke to p.canvasSel

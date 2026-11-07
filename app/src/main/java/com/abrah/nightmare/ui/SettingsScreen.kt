@@ -1242,9 +1242,25 @@ private fun ThemePaletteCard(
         hsv[2]
     } else 0.90f) }
 
+    androidx.compose.runtime.LaunchedEffect(customColor) {
+        if (customColor != 0L) {
+            val hsv = FloatArray(3)
+            android.graphics.Color.colorToHSV(customColor.toInt(), hsv)
+            hue = hsv[0]
+            sat = hsv[1]
+            value = hsv[2]
+        }
+    }
+
     val activeColor = remember(hue, sat, value, customColor) {
-        if (customColor != 0L) androidx.compose.ui.graphics.Color(customColor)
-        else androidx.compose.ui.graphics.Color.hsv(hue, sat, value)
+        if (customColor != 0L) {
+            val r = (((customColor shr 16) and 0xFFL).toFloat() / 255f).coerceIn(0f, 1f)
+            val g = (((customColor shr 8) and 0xFFL).toFloat() / 255f).coerceIn(0f, 1f)
+            val b = ((customColor and 0xFFL).toFloat() / 255f).coerceIn(0f, 1f)
+            androidx.compose.ui.graphics.Color(red = r, green = g, blue = b, alpha = 1f)
+        } else {
+            androidx.compose.ui.graphics.Color.hsv(hue, sat, value)
+        }
     }
 
     StudioCard {
@@ -1386,7 +1402,7 @@ private fun ThemePaletteCard(
             )
             Column(Modifier.weight(1f)) {
                 Text(
-                    "HEX: #" + Integer.toHexString((activeColor.value.toLong() and 0xFFFFFFFFL).toInt()).uppercase(),
+                    "HEX: #" + String.format(java.util.Locale.US, "%02X%02X%02X", (activeColor.red * 255).toInt(), (activeColor.green * 255).toInt(), (activeColor.blue * 255).toInt()),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
                 )

@@ -1,4 +1,7 @@
 package com.abrah.nightmare.newui.theme
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
@@ -59,22 +62,24 @@ object Nm {
     /** --sub, secondary text. */
     val sub = Color(0xFF6E6A7A)
 
-    // ── The violet ─────────────────────────────────────────────────────────
+    // ── The primary theme color (dynamic from theme & palette!) ───────────
 
-    /** --pri, the brand violet. CTAs and key indicators — the 10% of 60/30/10. */
-    val pri = Color(0xFF6D4AE0)
+    var customPri by mutableStateOf<Color?>(null)
+
+    /** --pri, the brand color. CTAs and key indicators — the 10% of 60/30/10. */
+    val pri: Color get() = customPri ?: Color(0xFF6D4AE0)
 
     /** --pri-d, pressed/darker. */
-    val priD = Color(0xFF5B39CE)
+    val priD: Color get() = customPri?.let { Color((it.red * 0.85f).coerceIn(0f, 1f), (it.green * 0.85f).coerceIn(0f, 1f), (it.blue * 0.85f).coerceIn(0f, 1f)) } ?: Color(0xFF5B39CE)
 
     /** --pri-soft, selected chips. */
-    val priSoft = Color(0xFFEFEAFB)
+    val priSoft: Color get() = customPri?.let { Color((0.92f + it.red * 0.08f).coerceIn(0f, 1f), (0.92f + it.green * 0.08f).coerceIn(0f, 1f), (0.92f + it.blue * 0.08f).coerceIn(0f, 1f)) } ?: Color(0xFFEFEAFB)
 
     /** --pri-soft2, tinted panels (the run strip). */
-    val soft2 = Color(0xFFF7F4FE)
+    val soft2: Color get() = customPri?.let { Color((0.95f + it.red * 0.05f).coerceIn(0f, 1f), (0.95f + it.green * 0.05f).coerceIn(0f, 1f), (0.95f + it.blue * 0.05f).coerceIn(0f, 1f)) } ?: Color(0xFFF7F4FE)
 
     /** A SELECTED chip's edge (.chip.on border). */
-    val priLine = Color(0xFFD8CCF5)
+    val priLine: Color get() = customPri?.let { Color((0.85f + it.red * 0.15f).coerceIn(0f, 1f), (0.85f + it.green * 0.15f).coerceIn(0f, 1f), (0.85f + it.blue * 0.15f).coerceIn(0f, 1f)) } ?: Color(0xFFD8CCF5)
 
     // ── Status ─────────────────────────────────────────────────────────────
 
