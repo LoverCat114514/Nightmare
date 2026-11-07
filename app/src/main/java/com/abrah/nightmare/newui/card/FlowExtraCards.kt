@@ -5,8 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -214,7 +214,7 @@ fun DriverVideoCard(
 }
 
 /**
- * ⭐ 视频生成配置卡片
+ * ⭐ 视频生成配置卡片 (Wan 2.2 / 14B / H3 / Neodragon)
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -222,38 +222,58 @@ fun VideoParamsCard(s: WbParams) {
     NmCard {
         CardTitle("🎬 视频生成设置")
 
-        // ── 视频模型选择（仅保留应用内置真实存在的视频模型） ───────
-        val videoModels = listOf(
-            "wan22_turbo" to "Wan 2.2 Turbo",
-            "wan22_14b" to "Wan 2.2 14B",
-            "wan21_nsfw13" to "Wan 2.1 1.3B",
-            "minimax_h3" to "MiniMax H3",
-        )
-        DropdownWire(
-            label = "视频模型",
-            current = s.videoModel,
-            choices = videoModels.map { it.first },
-            textOf = { id -> videoModels.firstOrNull { it.first == id }?.second ?: id },
-            onPick = { s.videoModel = it },
-        )
+        // ── 视频模型选择 ──────────────────────────────────────────
+        // 动作迁移默认用 wan2.2 fun control；14B 流程默认用 14B 模型；文生视频与图生视频提供模型切换选择（含 neodragon）
+        if (s.mode == "motion") {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("视频模型: ", style = MaterialTheme.typography.labelMedium, color = Nm.sub)
+                Text("Wan 2.2 Fun Control (推荐专属模型)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Nm.ink)
+            }
+        } else if (s.mode == "t2v14") {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("视频模型: ", style = MaterialTheme.typography.labelMedium, color = Nm.sub)
+                Text("Wan 2.2 14B (超高清顶级画质模型)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Nm.ink)
+            }
+        } else {
+            val videoModels = listOf(
+                "wan22_turbo" to "Wan 2.2 Turbo (5B 极速高质)",
+                "wan22_14b" to "Wan 2.2 14B (超高清顶级画质)",
+                "wan21_nsfw13" to "Wan 2.1 1.3B (轻量微型模型)",
+                "minimax_h3" to "MiniMax H3 (音视频同步生成)",
+                "nd.sample" to "Neodragon (端侧极速生成)",
+            )
+            DropdownWire(
+                label = "选择视频模型",
+                current = s.videoModel,
+                choices = videoModels.map { it.first },
+                textOf = { id -> videoModels.firstOrNull { it.first == id }?.second ?: id },
+                onPick = { s.videoModel = it },
+            )
+        }
 
-        // 视频时长选择
+        // ── 生成片段时长（预设快捷按钮 + 自定义精准滑块） ────────
         Text("生成片段时长", style = MaterialTheme.typography.labelMedium, color = Nm.sub)
-        val durations = listOf(2 to "2 秒 (极速预览)", 3 to "3 秒 (标准)", 5 to "5 秒 (完整动作)")
+        val durations = listOf(1 to "1 秒", 2 to "2 秒", 3 to "3 秒", 5 to "5 秒", 10 to "10 秒")
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             durations.forEach { (sec, label) ->
                 val isSel = s.videoSeconds == sec
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(10.dp))
                         .background(if (isSel) Nm.priSoft else Color.Transparent)
-                        .border(1.dp, if (isSel) Nm.priLine else Nm.fld, RoundedCornerShape(12.dp))
+                        .border(1.dp, if (isSel) Nm.priLine else Nm.fld, RoundedCornerShape(10.dp))
                         .clickable { s.videoSeconds = sec }
-                        .padding(vertical = 10.dp),
+                        .padding(vertical = 8.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -266,6 +286,15 @@ fun VideoParamsCard(s: WbParams) {
                 }
             }
         }
+
+        // 自定义精确时长微调滑块 (1秒至30秒自由设置，特别是 H3 模型的 1s 短片)
+        PostSlider(
+            label = "自定义精确时长 (秒)",
+            value = s.videoSeconds.toFloat(),
+            range = 1f..30f,
+            fmt = { "${it.toInt()} 秒" },
+            onSet = { s.videoSeconds = it.toInt() },
+        )
 
         // 随机种子控制
         Row(verticalAlignment = Alignment.CenterVertically) {

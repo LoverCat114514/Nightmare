@@ -261,6 +261,24 @@ fun buildRequest(
         "t2v" -> {
             val videoParams = mutableMapOf("seconds" to s.videoSeconds.toString())
             if (s.fixedSeed && s.seed > 0L) videoParams["seed"] = s.seed.toString()
+            if (s.videoModel == "wan22_14b") {
+                return RunRequest(
+                    flow = "t2v14",
+                    model = null,
+                    prompt = prompt,
+                    negative = negative,
+                    knobs = emptyMap(),
+                    params = mapOf("video" to videoParams),
+                    images = emptyMap(),
+                )
+            }
+            if (s.videoModel == "nd.sample") {
+                videoParams["model"] = "nd.sample"
+            } else if (s.videoModel == "minimax_h3") {
+                videoParams["model"] = com.abrah.nightmare.npu.H3Node.name
+            } else if (s.videoModel == "wan21_nsfw13") {
+                videoParams["model"] = com.abrah.nightmare.npu.WanNsfw13Node.name
+            }
             return RunRequest(
                 flow = "t2v",
                 model = null,
@@ -274,6 +292,13 @@ fun buildRequest(
         "i2v" -> {
             val videoParams = mutableMapOf("seconds" to s.videoSeconds.toString())
             if (s.fixedSeed && s.seed > 0L) videoParams["seed"] = s.seed.toString()
+            if (s.videoModel == "nd.sample") {
+                videoParams["model"] = "nd.sample"
+            } else if (s.videoModel == "minimax_h3") {
+                videoParams["model"] = com.abrah.nightmare.npu.H3Node.name
+            } else if (s.videoModel == "wan21_nsfw13") {
+                videoParams["model"] = com.abrah.nightmare.npu.WanNsfw13Node.name
+            }
             return RunRequest(
                 flow = "i2v",
                 model = null,
