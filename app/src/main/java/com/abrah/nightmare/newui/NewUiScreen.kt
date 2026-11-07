@@ -3,9 +3,11 @@ package com.abrah.nightmare.newui
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -13,10 +15,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -26,10 +30,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.abrah.nightmare.LoraSources
 import com.abrah.nightmare.ModelCatalog
@@ -45,6 +51,7 @@ import com.abrah.nightmare.newui.core.Engine
 import com.abrah.nightmare.newui.core.RunController
 import com.abrah.nightmare.newui.core.Shot
 import com.abrah.nightmare.newui.core.WbParams
+import com.abrah.nightmare.newui.core.WbSnapshots
 import com.abrah.nightmare.newui.core.buildRequest
 import com.abrah.nightmare.newui.core.modelLabel
 import com.abrah.nightmare.newui.core.queryDisplayName
@@ -149,6 +156,124 @@ fun NewUiScreen(
     ) {
         delay(600)
         WbParams.save(ctx, s)
+    }
+
+    // ── fix35f: the workbench snapshot dialogs ─────────────────────────────
+    //
+    // ⭐ "保存工作流" on THIS screen saves the NewUI's own parameters (tags
+    // included) as a named snapshot — NOT the canvas graph. The NewUI is its
+    // own generation pipeline (WbParams + Engine); the canvas graph holds
+    // none of it, which is why the old saveRequest++ path produced a workflow
+    // "without even the tags". "已保存" lists and restores the snapshots.
+    var showSaveSnapshot by remember { mutableStateOf(false) }
+    var showSnapshotList by remember { mutableStateOf(false) }
+    var snapshotError by remember { mutableStateOf<String?>(null) }
+
+    if (showSaveSnapshot) {
+        var name by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showSaveSnapshot = false; snapshotError = null },
+            title = { Text("保存工作流", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "保存当前的全部参数与提示词（tag），可随时恢复。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Nm.sub,
+                    )
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("名称") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Nm.pri,
+                            unfocusedBorderColor = Nm.fld,
+                            cursorColor = Nm.pri,
+                            focusedTextColor = Nm.ink,
+                            unfocusedTextColor = Nm.ink,
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                    )
+                    snapshotError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val n = name.trim()
+                        when {
+                            n.isEmpty() -> snapshotError = "请输入名称"
+                            WbSnapshots.list(ctx).contains(n) -> snapshotError = "同名快照已存在"
+                            else -> {
+                                WbSnapshots.save(ctx, n, s, positive, negative)
+                                showSaveSnapshot = false
+                                snapshotError = null
+                            }
+                        }
+                    },
+                ) { Text("保存", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSaveSnapshot = false; snapshotError = null }) { Text("取消") }
+            },
+        )
+    }
+
+    if (showSnapshotList) {
+        var names by remember(showSnapshotList) { mutableStateOf(WbSnapshots.list(ctx)) }
+        AlertDialog(
+            onDismissRequest = { showSnapshotList = false; snapshotError = null },
+            title = { Text("已保存的工作流", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    snapshotError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (names.isEmpty()) {
+                        Text(
+                            "还没有保存过。点结果卡上的「保存工作流」把当前参数与 tag 存为快照。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Nm.sub,
+                        )
+                    } else {
+                        names.forEach { n ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        if (WbSnapshots.load(ctx, n, s, { positive = it }, { negative = it })) {
+                                            showSnapshotList = false
+                                            snapshotError = null
+                                        } else {
+                                            snapshotError = "快照损坏: $n"
+                                        }
+                                    }
+                                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    n,
+                                    modifier = Modifier.weight(1f),
+                                    color = Nm.ink,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                TextButton(onClick = {
+                                    WbSnapshots.delete(ctx, n)
+                                    names = WbSnapshots.list(ctx)
+                                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showSnapshotList = false; snapshotError = null }) { Text("关闭") }
+            },
+        )
     }
 
     // The global follows the workbench's restored pick (symmetric with the
@@ -454,7 +579,10 @@ fun NewUiScreen(
                 modelLabel = modelLabel(s.modelId),
                 onPickSrc = onPickSrcCallback,
                 onSave = onSaveCallback,
-                onSaveWorkflow = onSaveWorkflow,
+                // fix35f: NewUI's own save — a workbench snapshot (params + tags),
+                // not the canvas graph. The outer onSaveWorkflow (canvas saveRequest)
+                // is deliberately not invoked from here.
+                onSaveWorkflow = { showSaveSnapshot = true },
                 onImportImageParams = onImportImageParamsCallback,
                 onRun = onGenerate,
                 onCancel = onCancelCallback,
@@ -468,7 +596,9 @@ fun NewUiScreen(
                 family = family,
                 onDraft = onDraftCallback,
                 onDraftSize = onDraftSizeCallback,
-                onOpenSavedWorkflows = onOpenSavedWorkflows,
+                // fix35f: opens the workbench snapshot list (restore/delete),
+                // which is what "已保存" means on the NewUI screen.
+                onOpenSavedWorkflows = { showSnapshotList = true },
                 onImportWorkflow = onImportWorkflow,
             )
         }

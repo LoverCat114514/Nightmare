@@ -501,6 +501,17 @@ object PngMetadata {
 
 /** Finished PNG → Pictures/Nightmare via MediaStore; with embedded ComfyUI-like parameter metadata. */
 fun saveShot(ctx: Context, shot: Shot) {
+    // ⚠ fix35f: this runs on RunController's sideWork lane — a plain background
+    // thread with NO Looper. Every Toast here used to be constructed on that
+    // thread and died with "Can't toast on a thread that has not called
+    // Looper.prepare()" the moment the save finished (crash on save, reported
+    // 2026-11-07). Toast must be created and shown on a Looper thread: hop to
+    // the main thread for the toast, keep the file I/O where it already is.
+    val toast: (String) -> Unit = { msg ->
+        android.os.Handler(ctx.mainLooper).post {
+            Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+        }
+    }
     try {
         val isVideo = shot.file.name.endsWith(".mp4", ignoreCase = true)
         if (isVideo) {
@@ -515,7 +526,7 @@ fun saveShot(ctx: Context, shot: Shot) {
             ctx.contentResolver.openOutputStream(uri)?.use { out ->
                 java.io.FileInputStream(shot.file).use { it.copyTo(out) }
             }
-            Toast.makeText(ctx, "视频已保存至相册: Movies/Nightmare/$name", Toast.LENGTH_SHORT).show()
+            toast("视频已保存至相册: Movies/Nightmare/$name")
         } else {
             val name = "nm-" + System.currentTimeMillis() + ".png"
             val cv = ContentValues().apply {
@@ -532,14 +543,10 @@ fun saveShot(ctx: Context, shot: Shot) {
                     java.io.FileInputStream(shot.file).use { it.copyTo(out) }
                 }
             }
-            Toast.makeText(
-                ctx,
-                ctx.getString(R.string.newui_saved, "Pictures/Nightmare/$name"),
-                Toast.LENGTH_SHORT,
-            ).show()
+            toast(ctx.getString(R.string.newui_saved, "Pictures/Nightmare/$name"))
         }
     } catch (e: Exception) {
-        Toast.makeText(ctx, "save: " + e.message, Toast.LENGTH_SHORT).show()
+        toast("save: " + e.message)
     }
 }
 

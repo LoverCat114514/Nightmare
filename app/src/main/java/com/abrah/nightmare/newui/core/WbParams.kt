@@ -1,9 +1,9 @@
 package com.abrah.nightmare.newui.core
-
 import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import java.io.File
 
 /**
  * ⭐⭐ fix34 (2026-11-06) — the workbench's parameter state, rebuilt.
@@ -260,4 +260,129 @@ data class LoraPick(val name: String, val weight: Float) {
             return s.trimEnd('0').trimEnd('.')
         }
     }
+}
+
+/**
+ * ⭐ fix35f — the NewUI workbench snapshot: a named, restorable copy of every
+ * parameter that goes into a generation, tags included.
+ *
+ * ## Why this exists
+ *
+ * The "保存工作流" button used to bump the canvas' save counter — which saved
+ * the *node graph* on the canvas, something the NewUI never touches. The NewUI
+ * is its own generation pipeline ([WbParams] + [com.abrah.nightmare.newui.core.Engine]),
+ * so "saving the workflow" from NewUI saved a graph that held none of the tags,
+ * model, LoRAs or sizes the user actually set — reading as "nothing was saved".
+ * (Reported 2026-11-07: "保存的工作流不完全，甚至什么都没保存下来，连tag都没保存下来".)
+ *
+ * A snapshot is a plain JSON file under `filesDir/wb_workflows/`, one file per
+ * named preset, loadable back into the live [WbParams] + the prompt fields.
+ */
+object WbSnapshots {
+    private const val DIR = "wb_workflows"
+
+    private fun dir(ctx: Context): File = File(ctx.filesDir, DIR)
+
+    /** The user's saved snapshots, newest first. */
+    fun list(ctx: Context): List<String> =
+        dir(ctx).listFiles { f -> f.isFile && f.name.endsWith(".json") }
+            ?.map { it.name.removeSuffix(".json") }
+            ?.sortedDescending()
+            ?: emptyList()
+
+    /** Every field a generation reads — plus the tags, which live outside [WbParams]. */
+    fun save(ctx: Context, name: String, s: WbParams, positive: String, negative: String) {
+        val d = dir(ctx)
+        d.mkdirs()
+        val o = org.json.JSONObject()
+            .put("kind", "wb-snapshot")
+            .put("version", 1)
+            .put("savedAt", System.currentTimeMillis())
+            .put("positive", positive)
+            .put("negative", negative)
+            .put("modelId", s.modelId)
+            .put("scheduler", s.scheduler)
+            .put("loras", LoraPick.encode(s.loras))
+            .put("w", s.w).put("h", s.h)
+            .put("steps", s.steps).put("cfg", s.cfg.toDouble())
+            .put("seed", s.seed).put("fixedSeed", s.fixedSeed)
+            .put("denoise", s.denoise.toDouble())
+            .put("mossOn", s.mossOn).put("mode", s.mode)
+            .put("pUps", s.pUps).put("pUps2", s.pUps2)
+            .put("pFace", s.pFace).put("pHands", s.pHands).put("pColor", s.pColor)
+            .put("adjOn", s.adjOn).put("adjBr", s.adjBr)
+            .put("adjCo", s.adjCo).put("adjSa", s.adjSa).put("warm", s.warm)
+            .put("faceSmile", s.faceSmile.toDouble()).put("faceEyes", s.faceEyes.toDouble())
+            .put("faceLipOpen", s.faceLipOpen.toDouble()).put("faceMouthPout", s.faceMouthPout.toDouble())
+            .put("facePitch", s.facePitch.toDouble()).put("faceYaw", s.faceYaw.toDouble())
+            .put("faceRoll", s.faceRoll.toDouble())
+            .put("videoModel", s.videoModel).put("videoSeconds", s.videoSeconds)
+            .put("controlNetOn", s.controlNetOn).put("controlNetStrength", s.controlNetStrength.toDouble())
+            .put("ipAdapterOn", s.ipAdapterOn).put("ipAdapterWeight", s.ipAdapterWeight.toDouble())
+        // Atomic replace: a truncated snapshot must never parse as a valid one.
+        val tmp = File(d, "$name.json.${System.nanoTime()}.tmp")
+        tmp.writeText(o.toString(2))
+        val dest = File(d, "$name.json")
+        if (!tmp.renameTo(dest)) {
+            tmp.copyTo(dest, overwrite = true)
+            tmp.delete()
+        }
+    }
+
+    /**
+     * Restore into the live state. ⚠ Only keys present in the file are applied —
+     * a snapshot from an older build keeps whatever the current session holds
+     * for fields it does not mention. Returns false if the file is unreadable.
+     */
+    fun load(ctx: Context, name: String, s: WbParams, setPositive: (String) -> Unit, setNegative: (String) -> Unit): Boolean {
+        val f = File(dir(ctx), "$name.json")
+        val o = try {
+            org.json.JSONObject(f.readText())
+        } catch (_: Exception) {
+            return false
+        }
+        fun str(k: String) = if (o.has(k) && !o.isNull(k)) o.getString(k) else null
+        fun dbl(k: String) = if (o.has(k) && !o.isNull(k)) o.getDouble(k) else null
+        if (o.optString("kind") != "wb-snapshot") return false
+        str("positive")?.let(setPositive)
+        str("negative")?.let(setNegative)
+        str("modelId")?.let { s.modelId = it }
+        str("scheduler")?.let { s.scheduler = it }
+        str("loras")?.let { s.loras = LoraPick.decode(it) }
+        if (o.has("w") && !o.isNull("w")) s.w = o.getInt("w")
+        if (o.has("h") && !o.isNull("h")) s.h = o.getInt("h")
+        if (o.has("steps") && !o.isNull("steps")) s.steps = o.getInt("steps")
+        dbl("cfg")?.let { s.cfg = it.toFloat() }
+        if (o.has("seed") && !o.isNull("seed")) { s.seed = o.getLong("seed"); s.fixedSeed = true }
+        if (o.has("fixedSeed") && !o.isNull("fixedSeed")) s.fixedSeed = o.getBoolean("fixedSeed")
+        dbl("denoise")?.let { s.denoise = it.toFloat() }
+        if (o.has("mossOn") && !o.isNull("mossOn")) s.mossOn = o.getBoolean("mossOn")
+        str("mode")?.let { s.mode = it }
+        if (o.has("pUps") && !o.isNull("pUps")) s.pUps = o.getBoolean("pUps")
+        if (o.has("pUps2") && !o.isNull("pUps2")) s.pUps2 = o.getBoolean("pUps2")
+        if (o.has("pFace") && !o.isNull("pFace")) s.pFace = o.getBoolean("pFace")
+        if (o.has("pHands") && !o.isNull("pHands")) s.pHands = o.getBoolean("pHands")
+        if (o.has("pColor") && !o.isNull("pColor")) s.pColor = o.getBoolean("pColor")
+        if (o.has("adjOn") && !o.isNull("adjOn")) s.adjOn = o.getBoolean("adjOn")
+        if (o.has("adjBr") && !o.isNull("adjBr")) s.adjBr = o.getInt("adjBr")
+        if (o.has("adjCo") && !o.isNull("adjCo")) s.adjCo = o.getInt("adjCo")
+        if (o.has("adjSa") && !o.isNull("adjSa")) s.adjSa = o.getInt("adjSa")
+        if (o.has("warm") && !o.isNull("warm")) s.warm = o.getInt("warm")
+        dbl("faceSmile")?.let { s.faceSmile = it.toFloat() }
+        dbl("faceEyes")?.let { s.faceEyes = it.toFloat() }
+        dbl("faceLipOpen")?.let { s.faceLipOpen = it.toFloat() }
+        dbl("faceMouthPout")?.let { s.faceMouthPout = it.toFloat() }
+        dbl("facePitch")?.let { s.facePitch = it.toFloat() }
+        dbl("faceYaw")?.let { s.faceYaw = it.toFloat() }
+        dbl("faceRoll")?.let { s.faceRoll = it.toFloat() }
+        str("videoModel")?.let { s.videoModel = it }
+        if (o.has("videoSeconds") && !o.isNull("videoSeconds")) s.videoSeconds = o.getInt("videoSeconds")
+        if (o.has("controlNetOn") && !o.isNull("controlNetOn")) s.controlNetOn = o.getBoolean("controlNetOn")
+        dbl("controlNetStrength")?.let { s.controlNetStrength = it.toFloat() }
+        if (o.has("ipAdapterOn") && !o.isNull("ipAdapterOn")) s.ipAdapterOn = o.getBoolean("ipAdapterOn")
+        dbl("ipAdapterWeight")?.let { s.ipAdapterWeight = it.toFloat() }
+        return true
+    }
+
+    fun delete(ctx: Context, name: String): Boolean = File(dir(ctx), "$name.json").delete()
 }
