@@ -252,6 +252,7 @@ class MainActivity : ComponentActivity() {
                 accent = vm.accent,
                 customColor = vm.customAccentColor,
                 customBackgroundActive = vm.customBackgroundPath != null,
+                cardOpacity = vm.cardOpacity,
             ) {
                 Box(Modifier.fillMaxSize()) {
                     if (vm.customBackgroundPath != null) {
@@ -1164,9 +1165,11 @@ private fun SettingsSheetBody(vm: HarnessViewModel, onlyPage: Int?) {
             onResetCustomColor = vm::resetCustomAccent,
             customBackgroundPath = vm.customBackgroundPath,
             backgroundDim = vm.backgroundDim,
+            cardOpacity = vm.cardOpacity,
             onPickBackground = { bgPicker.launch("image/*") },
             onClearBackground = { vm.clearCustomBackground(appCtx) },
             onBackgroundDim = vm::setBackgroundDim,
+            onCardOpacity = vm::setCardOpacity,
             batteryUnrestricted = batteryUnrestricted,
             onRequestBatteryUnrestricted = {
                 // ⚠⚠ The DIRECT request, not just a link to the settings list —

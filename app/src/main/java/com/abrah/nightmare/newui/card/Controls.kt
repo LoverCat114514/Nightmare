@@ -82,7 +82,7 @@ fun NmCard(
     androidx.compose.material3.Card(
         modifier = modifier
             .fillMaxWidth()
-            .border(1.dp, Nm.line, RoundedCornerShape(16.dp)),
+            .border(1.dp, if (com.abrah.nightmare.newui.theme.Nm.customBgActive) Color.White.copy(alpha = 0.70f) else Nm.line, RoundedCornerShape(16.dp)),
         shape = RoundedCornerShape(16.dp),
         colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = Nm.card),
         elevation = androidx.compose.material3.CardDefaults.cardElevation(0.dp),

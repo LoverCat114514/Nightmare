@@ -23,6 +23,7 @@ object Prefs {
     private const val KEY_CUSTOM_ACCENT = "custom_accent_color"
     private const val KEY_CUSTOM_BG = "custom_bg_path"
     private const val KEY_BG_DIM = "bg_dim"
+    private const val KEY_CARD_OPACITY = "card_opacity"
 
     /**
      * ⚠⚠ THREE values, not a boolean. "Follow the system" is the default and
@@ -58,6 +59,9 @@ object Prefs {
     @Volatile var backgroundDim: Float = 0.40f
         private set
 
+    @Volatile var cardOpacity: Float = 0.85f
+        private set
+
     fun load(context: Context) {
         val raw = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .getString(KEY_THEME, null)
@@ -77,6 +81,7 @@ object Prefs {
         customAccentColor = p.getLong(KEY_CUSTOM_ACCENT, 0L)
         customBackgroundPath = p.getString(KEY_CUSTOM_BG, null)
         backgroundDim = p.getFloat(KEY_BG_DIM, 0.40f)
+        cardOpacity = p.getFloat(KEY_CARD_OPACITY, 0.85f)
         defaultView = MainView.entries.firstOrNull { it.name == p.getString(KEY_VIEW, null) }
         // ⭐ Top to bottom for NEW users (the user, 2026-10-13); someone who has already been asked
         // which view to open on keeps the side-to-side pages they had. Written once either way, so
@@ -257,6 +262,12 @@ object Prefs {
         backgroundDim = dim
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
             .putFloat(KEY_BG_DIM, dim).apply()
+    }
+
+    fun setCardOpacity(context: Context, opacity: Float) {
+        cardOpacity = opacity
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .putFloat(KEY_CARD_OPACITY, opacity).apply()
     }
 
     fun setTheme(context: Context, value: Theme) {

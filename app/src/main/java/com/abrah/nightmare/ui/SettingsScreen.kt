@@ -109,9 +109,11 @@ fun SettingsScreen(
     onResetCustomColor: () -> Unit = {},
     customBackgroundPath: String? = null,
     backgroundDim: Float = 0.40f,
+    cardOpacity: Float = 0.85f,
     onPickBackground: () -> Unit = {},
     onClearBackground: () -> Unit = {},
     onBackgroundDim: (Float) -> Unit = {},
+    onCardOpacity: (Float) -> Unit = {},
     /**
      * ⭐ Whether this app is currently exempt from Doze/App Standby battery
      * optimisation. Read fresh from `PowerManager` by the caller — this
@@ -346,9 +348,11 @@ fun SettingsScreen(
                 CustomBackgroundCard(
                     customBackgroundPath = customBackgroundPath,
                     backgroundDim = backgroundDim,
+                    cardOpacity = cardOpacity,
                     onPickBackground = onPickBackground,
                     onClearBackground = onClearBackground,
                     onBackgroundDim = onBackgroundDim,
+                    onCardOpacity = onCardOpacity,
                 )
                 // [LOCAL-NEWUI 2026-11-05] Interface mode: the SAME choice the top-left toggle makes
                 // (the flow views of MainView), now also in Settings — the three original views
@@ -1422,9 +1426,11 @@ private fun ThemePaletteCard(
 private fun CustomBackgroundCard(
     customBackgroundPath: String?,
     backgroundDim: Float,
+    cardOpacity: Float,
     onPickBackground: () -> Unit,
     onClearBackground: () -> Unit,
     onBackgroundDim: (Float) -> Unit,
+    onCardOpacity: (Float) -> Unit,
 ) {
     StudioCard {
         SectionHeading("背景图片", "选择自定义图片作为全屏背景，系统将自动按屏幕比例居中裁切")
@@ -1484,13 +1490,29 @@ private fun CustomBackgroundCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("背景半透遮罩浓度", style = MaterialTheme.typography.bodyMedium)
+                Text("背景遮罩浓度", style = MaterialTheme.typography.bodyMedium)
                 Text("${(backgroundDim * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
             }
             Slider(
                 value = backgroundDim,
                 onValueChange = onBackgroundDim,
-                valueRange = 0.1f..0.85f,
+                valueRange = 0.05f..0.85f,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("主界面卡片不透明度 (磨砂透光度)", style = MaterialTheme.typography.bodyMedium)
+                Text("${(cardOpacity * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+            }
+            Slider(
+                value = cardOpacity,
+                onValueChange = onCardOpacity,
+                valueRange = 0.20f..1.0f,
                 modifier = Modifier.fillMaxWidth()
             )
         } else {

@@ -671,9 +671,8 @@ fun CanvasScreen(
         // lower with the same breathing room every card already keeps.
         Box(
             Modifier.fillMaxSize()
-                // ⭐ (2026-11-05, seventh round) The workbench's own page colour
-                // (nm-workbench.html --bg), not the app theme's.
-                .background(Color(0xFFF2F0F7))
+                // ⭐ Transparent when custom wallpaper is on, so wallpaper shines through!
+                .background(if (CanvasColors.customBackgroundActive) Color.Transparent else Color(0xFFF2F0F7))
                 .statusBarsPadding()
                 .padding(top = 12.dp)
         ) {

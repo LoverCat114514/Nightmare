@@ -37,22 +37,25 @@ import androidx.compose.ui.unit.sp
  */
 object Nm {
 
-    // ── The page and its surfaces ──────────────────────────────────────────
+    // ── The page and its surfaces (dynamic for custom background) ─────────
 
-    /** --bg, the lavender-grey page. */
-    val bg = Color(0xFFF2F0F7)
+    var customBgActive by mutableStateOf(false)
+    var cardOpacity by mutableStateOf(0.85f)
 
-    /** --card. */
-    val card = Color(0xFFFFFFFF)
+    /** --bg, the page background: transparent when custom wallpaper is on! */
+    val bg: Color get() = if (customBgActive) Color.Transparent else Color(0xFFF2F0F7)
+
+    /** --card: frosted semi-transparent when custom wallpaper is on! */
+    val card: Color get() = if (customBgActive) Color.White.copy(alpha = cardOpacity) else Color(0xFFFFFFFF)
 
     /** --line, the hairline stroke. */
-    val line = Color(0xFFE5E1EF)
+    val line: Color get() = if (customBgActive) Color.White.copy(alpha = 0.60f) else Color(0xFFE5E1EF)
 
-    /** #canvasBox — the result frame's empty state. */
-    val canvas = Color(0xFFFBFAFE)
+    /** #canvasBox — the result frame's empty state: translucent on wallpaper! */
+    val canvas: Color get() = if (customBgActive) Color.White.copy(alpha = (cardOpacity * 0.45f).coerceAtLeast(0.08f)) else Color(0xFFFBFAFE)
 
     /** The field stroke. */
-    val fld = Color(0xFFD9D4E8)
+    val fld: Color get() = if (customBgActive) Color.White.copy(alpha = 0.70f) else Color(0xFFD9D4E8)
 
     // ── Text ───────────────────────────────────────────────────────────────
 
@@ -76,7 +79,7 @@ object Nm {
     val priSoft: Color get() = customPri?.let { Color((0.92f + it.red * 0.08f).coerceIn(0f, 1f), (0.92f + it.green * 0.08f).coerceIn(0f, 1f), (0.92f + it.blue * 0.08f).coerceIn(0f, 1f)) } ?: Color(0xFFEFEAFB)
 
     /** --pri-soft2, tinted panels (the run strip). */
-    val soft2: Color get() = customPri?.let { Color((0.95f + it.red * 0.05f).coerceIn(0f, 1f), (0.95f + it.green * 0.05f).coerceIn(0f, 1f), (0.95f + it.blue * 0.05f).coerceIn(0f, 1f)) } ?: Color(0xFFF7F4FE)
+    val soft2: Color get() = if (customBgActive) Color.White.copy(alpha = (cardOpacity * 0.50f).coerceAtLeast(0.10f)) else customPri?.let { Color((0.95f + it.red * 0.05f).coerceIn(0f, 1f), (0.95f + it.green * 0.05f).coerceIn(0f, 1f), (0.95f + it.blue * 0.05f).coerceIn(0f, 1f)) } ?: Color(0xFFF7F4FE)
 
     /** A SELECTED chip's edge (.chip.on border). */
     val priLine: Color get() = customPri?.let { Color((0.85f + it.red * 0.15f).coerceIn(0f, 1f), (0.85f + it.green * 0.15f).coerceIn(0f, 1f), (0.85f + it.blue * 0.15f).coerceIn(0f, 1f)) } ?: Color(0xFFD8CCF5)

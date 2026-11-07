@@ -236,6 +236,7 @@ fun NightmareTheme(
     accent: Prefs.Accent = Prefs.Accent.VIOLET,
     customColor: Long = 0L,
     customBackgroundActive: Boolean = false,
+    cardOpacity: Float = 0.85f,
     content: @Composable () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -265,6 +266,8 @@ fun NightmareTheme(
     com.abrah.nightmare.canvas.CanvasColors.light = !darkTheme
     com.abrah.nightmare.canvas.CanvasColors.black = black && darkTheme
     com.abrah.nightmare.canvas.CanvasColors.customBackgroundActive = customBackgroundActive
+    com.abrah.nightmare.newui.theme.Nm.customBgActive = customBackgroundActive
+    com.abrah.nightmare.newui.theme.Nm.cardOpacity = cardOpacity
     com.abrah.nightmare.newui.theme.Nm.customPri = p.fill
     com.abrah.nightmare.canvas.CanvasColors.selection = when {
         wallpaper -> scheme.primary to if (darkTheme) p.canvasSel else scheme.secondaryContainer

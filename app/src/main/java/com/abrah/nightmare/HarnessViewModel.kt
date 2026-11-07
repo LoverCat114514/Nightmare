@@ -219,16 +219,28 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     var backgroundDim by mutableStateOf(Prefs.backgroundDim)
         private set
 
+    var cardOpacity by mutableStateOf(Prefs.cardOpacity)
+        private set
+
     @JvmName("setCustomBackgroundPref")
     fun setCustomBackground(path: String?) {
         customBackgroundPath = path
         Prefs.setCustomBackground(getApplication(), path)
+        com.abrah.nightmare.newui.theme.Nm.customBgActive = path != null
+        com.abrah.nightmare.canvas.CanvasColors.customBackgroundActive = path != null
     }
 
     @JvmName("setBackgroundDimPref")
     fun setBackgroundDim(dim: Float) {
         backgroundDim = dim
         Prefs.setBackgroundDim(getApplication(), dim)
+    }
+
+    @JvmName("setCardOpacityPref")
+    fun setCardOpacity(opacity: Float) {
+        cardOpacity = opacity
+        Prefs.setCardOpacity(getApplication(), opacity)
+        com.abrah.nightmare.newui.theme.Nm.cardOpacity = opacity
     }
 
     fun processAndSetBackground(context: Context, uri: Uri) {
