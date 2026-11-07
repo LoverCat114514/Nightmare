@@ -107,7 +107,7 @@ internal fun SettingsMenu(
     }
     val menuAlpha by animateFloatAsState(
         targetValue = if (open) 1f else 0f,
-        animationSpec = tween(if (open) 120 else 180),
+        animationSpec = tween(if (open) 320 else 240, easing = CubicBezierEasing(0.20f, 0.90f, 0.30f, 1f)),
         finishedListener = { if (it == 0f) active = false },
         label = "settingsMenuActive",
     )
@@ -177,12 +177,16 @@ private fun MenuCapsule(
         targetValue = if (open) 1f else 0f,
         animationSpec = if (open) {
             tween(
-                durationMillis = 150,
-                delayMillis = 20 + index * 14,
-                easing = CubicBezierEasing(0.2f, 0f, 0f, 1f),
+                durationMillis = 340,
+                delayMillis = index * 36,
+                easing = CubicBezierEasing(0.18f, 0.90f, 0.25f, 1.0f),
             )
         } else {
-            tween(220, easing = CubicBezierEasing(0.35f, 0f, 0.75f, 0.15f))
+            tween(
+                durationMillis = 220,
+                delayMillis = (5 - index).coerceAtLeast(0) * 16,
+                easing = CubicBezierEasing(0.35f, 0f, 0.75f, 0.15f),
+            )
         },
         label = "settingsMenuCapsule$index",
     )
@@ -209,11 +213,11 @@ private fun MenuCapsule(
             )
             .graphicsLayer {
                 alpha = p.coerceIn(0f, 1f)
-                // ⭐ Pure, clean cascade retraction: no dirty black blur smearing
-                translationX = (1f - p) * (18.dp.toPx() + index * 4.dp.toPx())
-                translationY = (1f - p) * (20.dp.toPx() + index * 8.dp.toPx())
+                // ⭐ Harmonious, gentle physical rise and cascade retraction
+                translationX = (1f - p) * (14.dp.toPx() + index * 3.dp.toPx())
+                translationY = (1f - p) * (24.dp.toPx() + index * 6.dp.toPx())
                 scaleY = 0.85f + 0.15f * p
-                scaleX = 0.90f + 0.10f * p
+                scaleX = 0.88f + 0.12f * p
                 transformOrigin = TransformOrigin(1f, 1f)
             },
     ) {
