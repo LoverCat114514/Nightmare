@@ -672,6 +672,7 @@ fun HarnessScreen(
                     onDeleteLora = vm::deleteLora,
                     onSaveWorkflow = { saveRequest++ },
                     onKept = { bmp, seed, meta -> vm.keepResultFromNewUi(bmp, seed, meta) },
+                    promptBridgeHost = { vm.wbPromptBridge = it },
                     onOpenSavedWorkflows = {
                         vm.closeSettingsMenu()
                         vm.setCanvasVisible(true)

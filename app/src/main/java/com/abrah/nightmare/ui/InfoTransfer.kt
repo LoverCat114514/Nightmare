@@ -54,6 +54,9 @@ data class TransferTarget(val nodeId: String, val name: String, val current: Str
 
 /** ⚠ The "New image node" choice's id: no node has it ([TransferDialog]). */
 const val NEW_IMAGE_NODE = "\u0000new"
+/** ⭐ fix35k: the workbench prompt boxes as transfer targets — no node has these ids. */
+const val WB_POSITIVE = "\u0000wb-positive"
+const val WB_NEGATIVE = "\u0000wb-negative"
 
 /** ⚠ Pure: the Info row [key] / [value] as an item, or null for a row that does not transfer. */
 fun transferItemOf(key: String, value: String): TransferItem? = when (key) {

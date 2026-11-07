@@ -7699,6 +7699,13 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     /** ⭐ The items "Use N" picked in a picture's Info, while [com.abrah.nightmare.ui.TransferDialog] is up. */
     var pendingTransfer by mutableStateOf<List<com.abrah.nightmare.ui.TransferItem>?>(null)
         private set
+    /**
+     * ⭐ fix35k — the live workbench prompt bridge, set/cleared by
+     * [com.abrah.nightmare.newui.NewUiScreen] itself. Null when the workbench
+     * is not on screen (or was disposed): the transfer then offers no
+     * workbench targets.
+     */
+    var wbPromptBridge: com.abrah.nightmare.newui.WbPromptBridge? = null
 
     /** ⭐ What [r]'s Info can send: its picture (not a clip's poster) and where Use goes. */
     fun infoTransferFor(r: com.abrah.nightmare.canvas.Result): com.abrah.nightmare.ui.InfoTransfer =
@@ -7717,7 +7724,33 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         return when (item) {
             is com.abrah.nightmare.ui.TransferItem.Prompt, is com.abrah.nightmare.ui.TransferItem.Negative -> {
                 val key = if (item is com.abrah.nightmare.ui.TransferItem.Prompt) "prompt" else "negative"
-                g.nodes.filter { it.type == "core.prompt" }.map { n ->
+                // ⭐ fix35k: the workbench's own prompt boxes, when the screen is
+                // alive and the box is not empty — the same "current" line every
+                // other target shows.
+                val bridge = wbPromptBridge
+                val wb = buildList {
+                    if (bridge != null && item is com.abrah.nightmare.ui.TransferItem.Prompt &&
+                        bridge.positive.isNotBlank()
+                    ) {
+                        add(
+                            com.abrah.nightmare.ui.TransferTarget(
+                                com.abrah.nightmare.ui.WB_POSITIVE, "工作台 · 正面提示词",
+                                bridge.positive.take(40).ifBlank { "(empty)" },
+                            ),
+                        )
+                    }
+                    if (bridge != null && item is com.abrah.nightmare.ui.TransferItem.Negative &&
+                        bridge.negative.isNotBlank()
+                    ) {
+                        add(
+                            com.abrah.nightmare.ui.TransferTarget(
+                                com.abrah.nightmare.ui.WB_NEGATIVE, "工作台 · 负面提示词",
+                                bridge.negative.take(40).ifBlank { "(empty)" },
+                            ),
+                        )
+                    }
+                }
+                wb + g.nodes.filter { it.type == "core.prompt" }.map { n ->
                     com.abrah.nightmare.ui.TransferTarget(n.id, name(n.id), n.params[key].orEmpty().ifBlank { "(empty)" })
                 }
             }
@@ -7746,10 +7779,44 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun applyTransfer(picks: Map<com.abrah.nightmare.ui.TransferItem, String>, append: Boolean) {
         pendingTransfer = null
         if (picks.isEmpty()) return
+        // ⭐ fix35k: the workbench prompt boxes are not canvas nodes — the
+        // bridge's write-back hooks carry the text to the live screen.
+        val bridge = wbPromptBridge
+        var wbCount = 0
+        if (bridge != null) {
+            for ((item, target) in picks) {
+                val text = when (item) {
+                    is com.abrah.nightmare.ui.TransferItem.Prompt -> item.text.trim()
+                    is com.abrah.nightmare.ui.TransferItem.Negative -> item.text.trim()
+                    else -> continue
+                }
+                when (target) {
+                    com.abrah.nightmare.ui.WB_POSITIVE -> {
+                        val old = bridge.positive.trim()
+                        bridge.onPositive?.invoke(if (append && old.isNotEmpty()) "$old, $text" else text)
+                        wbCount++
+                    }
+                    com.abrah.nightmare.ui.WB_NEGATIVE -> {
+                        val old = bridge.negative.trim()
+                        bridge.onNegative?.invoke(if (append && old.isNotEmpty()) "$old, $text" else text)
+                        wbCount++
+                    }
+                }
+            }
+        }
+        val canvasPicks = picks.filterValues { t ->
+            t != com.abrah.nightmare.ui.WB_POSITIVE && t != com.abrah.nightmare.ui.WB_NEGATIVE
+        }
+        if (canvasPicks.isEmpty()) {
+            say("from the picture: $wbCount to the workbench")
+            closeResult()
+            closeLibrary()
+            return
+        }
         val changed = mutableSetOf<String>()
         editCanvas { s0 ->
             var s = s0
-            for ((item, target) in picks) {
+            for ((item, target) in canvasPicks) {
                 fun joined(key: String, text: String): String {
                     val old = s.workflow.graph.byId[target]?.params?.get(key).orEmpty().trim()
                     return if (append && old.isNotEmpty()) "$old, ${text.trim()}" else text.trim()
@@ -7777,7 +7844,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             }
             s.copy(selection = changed.toSet())
         }
-        say("from the picture: " + picks.entries.joinToString { (item, t) ->
+        say("from the picture: " + canvasPicks.entries.joinToString { (item, t) ->
             val what = when (item) {
                 is com.abrah.nightmare.ui.TransferItem.Prompt -> "prompt"
                 is com.abrah.nightmare.ui.TransferItem.Negative -> "negative"

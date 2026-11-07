@@ -109,6 +109,11 @@ fun NewUiScreen(
      * signature stays backward-compatible.
      */
     onKept: ((android.graphics.Bitmap, Long, String?) -> Unit)? = null,
+    /**
+     * ⭐ fix35k: hosts the workbench prompt bridge while this screen is alive —
+     * the host passes `{ vm.wbPromptBridge = it }`. Null on dispose.
+     */
+    promptBridgeHost: ((com.abrah.nightmare.newui.WbPromptBridge?) -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
 
@@ -128,6 +133,23 @@ fun NewUiScreen(
 
     var positive by remember { mutableStateOf("") }
     var negative by remember { mutableStateOf("") }
+    // ⭐ fix35k — publish the prompt boxes to the host while this screen is
+    // alive, so the Results "use on the current flow" transfer can land text
+    // in them. Set up in a DisposableEffect so a disposed screen can never
+    // leave a dangling bridge behind.
+    val bridge = remember { com.abrah.nightmare.newui.WbPromptBridge() }
+    DisposableEffect(bridge) {
+        promptBridgeHost?.invoke(bridge)
+        onDispose {
+            promptBridgeHost?.invoke(null)
+            bridge.onPositive = null
+            bridge.onNegative = null
+        }
+    }
+    LaunchedEffect(positive, negative) {
+        bridge.positive = positive
+        bridge.negative = negative
+    }
     var srcDataUrl by remember { mutableStateOf<String?>(null) }
     var srcName by remember { mutableStateOf("") }
 
