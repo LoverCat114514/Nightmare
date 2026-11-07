@@ -189,3 +189,87 @@ internal val PinkPalette = AccentPalette(
     lightCanvasStroke = Color(0xFFD51E86),
     lightCanvasSel = Color(0xFFFFF0F7),
 )
+
+data class PresetThemeColor(
+    val name: String,
+    val color: Color,
+    val argb: Long,
+)
+
+val PRESET_THEME_COLORS = listOf(
+    PresetThemeColor("经典紫", Color(0xFF8B4DEE), 0xFF8B4DEEL),
+    PresetThemeColor("晨曦蓝", Color(0xFF1F6FD9), 0xFF1F6FD9L),
+    PresetThemeColor("翡翠绿", Color(0xFF0E7E82), 0xFF0E7E82L),
+    PresetThemeColor("珊瑚橙", Color(0xFFBF5010), 0xFFBF5010L),
+    PresetThemeColor("樱花粉", Color(0xFFD51E86), 0xFFD51E86L),
+    PresetThemeColor("薄荷青", Color(0xFF10B981), 0xFF10B981L),
+    PresetThemeColor("枫叶红", Color(0xFFE11D48), 0xFFE11D48L),
+    PresetThemeColor("曜石金", Color(0xFFD97706), 0xFFD97706L),
+    PresetThemeColor("极光青", Color(0xFF06B6D4), 0xFF06B6D4L),
+    PresetThemeColor("鸢尾紫", Color(0xFF6366F1), 0xFF6366F1L),
+)
+
+internal fun dynamicPaletteFromColor(seed: Color): AccentPalette {
+    val r = seed.red
+    val g = seed.green
+    val b = seed.blue
+
+    val lightFill = seed
+    val lightText = Color(r * 0.85f, g * 0.85f, b * 0.85f, 1f)
+    val lightContainer = Color(0.92f + r * 0.07f, 0.92f + g * 0.07f, 0.92f + b * 0.07f, 1f)
+    val lightOnContainer = Color(r * 0.35f, g * 0.35f, b * 0.35f, 1f)
+    val lightCanvasSel = Color(0.95f + r * 0.04f, 0.95f + g * 0.04f, 0.95f + b * 0.04f, 1f)
+
+    val fill = seed
+    val accent = Color((r + 0.15f).coerceAtMost(1f), (g + 0.15f).coerceAtMost(1f), (b + 0.15f).coerceAtMost(1f), 1f)
+    val text = Color((r + 0.30f).coerceAtMost(1f), (g + 0.30f).coerceAtMost(1f), (b + 0.30f).coerceAtMost(1f), 1f)
+
+    val surface = Color(0.04f + r * 0.04f, 0.04f + g * 0.04f, 0.05f + b * 0.05f, 1f)
+    val card = Color(0.08f + r * 0.06f, 0.08f + g * 0.06f, 0.10f + b * 0.07f, 1f)
+    val raised = Color(0.12f + r * 0.08f, 0.12f + g * 0.08f, 0.15f + b * 0.09f, 1f)
+    val lowest = Color(0.02f + r * 0.02f, 0.02f + g * 0.02f, 0.03f + b * 0.03f, 1f)
+    val low = Color(0.06f + r * 0.04f, 0.06f + g * 0.04f, 0.08f + b * 0.05f, 1f)
+    val highest = Color(0.16f + r * 0.10f, 0.16f + g * 0.10f, 0.20f + b * 0.12f, 1f)
+    val container = Color(0.18f + r * 0.15f, 0.18f + g * 0.15f, 0.22f + b * 0.18f, 1f)
+    val border = Color(0.20f + r * 0.12f, 0.20f + g * 0.12f, 0.24f + b * 0.14f, 1f)
+    val outlineVar = Color(0.15f + r * 0.08f, 0.15f + g * 0.08f, 0.18f + b * 0.10f, 1f)
+    val onMuted = Color(0.70f + r * 0.15f, 0.70f + g * 0.15f, 0.75f + b * 0.15f, 1f)
+    val on = Color(0.95f + r * 0.05f, 0.95f + g * 0.05f, 0.97f + b * 0.03f, 1f)
+    val controlBorder = Color(0.40f + r * 0.20f, 0.40f + g * 0.20f, 0.48f + b * 0.20f, 1f)
+
+    val bLow = Color(0.03f + r * 0.02f, 0.03f + g * 0.02f, 0.04f + b * 0.02f, 1f)
+    val bCont = Color(0.06f + r * 0.03f, 0.06f + g * 0.03f, 0.08f + b * 0.04f, 1f)
+    val bHigh = Color(0.10f + r * 0.04f, 0.10f + g * 0.04f, 0.12f + b * 0.05f, 1f)
+    val bHighest = Color(0.14f + r * 0.05f, 0.14f + g * 0.05f, 0.16f + b * 0.06f, 1f)
+    val canvasSel = Color(0.12f + r * 0.06f, 0.12f + g * 0.06f, 0.16f + b * 0.08f, 1f)
+
+    return AccentPalette(
+        fill = fill,
+        accent = accent,
+        text = text,
+        lightFill = lightFill,
+        lightText = lightText,
+        surface = surface,
+        card = card,
+        raised = raised,
+        lowest = lowest,
+        low = low,
+        highest = highest,
+        container = container,
+        border = border,
+        outlineVar = outlineVar,
+        onMuted = onMuted,
+        on = on,
+        controlBorder = controlBorder,
+        bLow = bLow,
+        bCont = bCont,
+        bHigh = bHigh,
+        bHighest = bHighest,
+        canvasSel = canvasSel,
+        lightContainer = lightContainer,
+        lightOnContainer = lightOnContainer,
+        canvasStroke = accent,
+        lightCanvasStroke = lightFill,
+        lightCanvasSel = lightCanvasSel,
+    )
+}

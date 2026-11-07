@@ -234,11 +234,12 @@ fun NightmareTheme(
     black: Boolean = false,
     /** ⭐ The accent colour (`Accents.kt`); [Prefs.Accent.WALLPAPER] is Android 12+'s, violet before it. */
     accent: Prefs.Accent = Prefs.Accent.VIOLET,
+    customColor: Long = 0L,
     content: @Composable () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val wallpaper = accent == Prefs.Accent.WALLPAPER && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    val p = paletteOf(accent)
+    val wallpaper = accent == Prefs.Accent.WALLPAPER && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && customColor == 0L
+    val p = if (customColor != 0L) dynamicPaletteFromColor(Color(customColor)) else paletteOf(accent)
     val scheme = when {
         wallpaper && !darkTheme -> dynamicLightColorScheme(context)
         wallpaper -> dynamicDarkColorScheme(context).let { if (black) it.blacked(NeutralBlack) else it }

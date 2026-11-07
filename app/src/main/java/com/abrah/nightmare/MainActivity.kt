@@ -1,4 +1,5 @@
 package com.abrah.nightmare
+import android.graphics.BitmapFactory
 
 import com.abrah.nightmare.ui.StudioButton
 import com.abrah.nightmare.ui.StudioOutlinedButton
@@ -52,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -244,15 +246,47 @@ class MainActivity : ComponentActivity() {
                     isAppearanceLightNavigationBars = !dark
                 }
             }
-            NightmareTheme(darkTheme = dark, black = vm.theme == Prefs.Theme.BLACK, accent = vm.accent) {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    // ⭐ What a reportable ErrorNotice's share icon opens.
-                    androidx.compose.runtime.CompositionLocalProvider(
-                        com.abrah.nightmare.ui.LocalErrorReport provides vm::errorReport,
-                        com.abrah.nightmare.ui.LocalBlankDiagnose provides vm::diagnoseBlank,
-                        com.abrah.nightmare.ui.LocalUseEnabled provides vm.canUse,
+            NightmareTheme(
+                darkTheme = dark,
+                black = vm.theme == Prefs.Theme.BLACK,
+                accent = vm.accent,
+                customColor = vm.customAccentColor,
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    if (vm.customBackgroundPath != null) {
+                        val bgFile = androidx.compose.runtime.remember(vm.customBackgroundPath) { java.io.File(vm.customBackgroundPath ?: "") }
+                        val bgBitmap = androidx.compose.runtime.remember(vm.customBackgroundPath) {
+                            if (bgFile.exists()) android.graphics.BitmapFactory.decodeFile(bgFile.absolutePath)?.asImageBitmap() else null
+                        }
+                        if (bgBitmap != null) {
+                            androidx.compose.foundation.Image(
+                                bitmap = bgBitmap,
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                            androidx.compose.foundation.layout.Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(
+                                        if (dark) androidx.compose.ui.graphics.Color.Black.copy(alpha = vm.backgroundDim)
+                                        else androidx.compose.ui.graphics.Color.White.copy(alpha = vm.backgroundDim)
+                                    )
+                            )
+                        }
+                    }
+                    Surface(
+                        Modifier.fillMaxSize(),
+                        color = if (vm.customBackgroundPath != null) androidx.compose.ui.graphics.Color.Transparent else MaterialTheme.colorScheme.background,
                     ) {
-                        HarnessScreen(op = pending, nonce = pendingNonce, vm = vm)
+                        // ⭐ What a reportable ErrorNotice's share icon opens.
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            com.abrah.nightmare.ui.LocalErrorReport provides vm::errorReport,
+                            com.abrah.nightmare.ui.LocalBlankDiagnose provides vm::diagnoseBlank,
+                            com.abrah.nightmare.ui.LocalUseEnabled provides vm.canUse,
+                        ) {
+                            HarnessScreen(op = pending, nonce = pendingNonce, vm = vm)
+                        }
                     }
                 }
             }
@@ -1114,11 +1148,22 @@ private fun SettingsSheetBody(vm: HarnessViewModel, onlyPage: Int?) {
         }
         androidx.compose.runtime.LaunchedEffect(Unit) { vm.refreshApi() }
         val askApiNotify = com.abrah.nightmare.ui.rememberNotifyAsk()
+        val bgPicker = rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+        ) { uri -> if (uri != null) vm.processAndSetBackground(appCtx, uri) }
         com.abrah.nightmare.ui.SettingsScreen(
             theme = vm.theme,
             onTheme = vm::chooseTheme,
             accent = vm.accent,
             onAccent = vm::chooseAccent,
+            customColor = vm.customAccentColor,
+            onCustomColor = vm::chooseCustomAccent,
+            onResetCustomColor = vm::resetCustomAccent,
+            customBackgroundPath = vm.customBackgroundPath,
+            backgroundDim = vm.backgroundDim,
+            onPickBackground = { bgPicker.launch("image/*") },
+            onClearBackground = { vm.clearCustomBackground(appCtx) },
+            onBackgroundDim = vm::setBackgroundDim,
             batteryUnrestricted = batteryUnrestricted,
             onRequestBatteryUnrestricted = {
                 // ⚠⚠ The DIRECT request, not just a link to the settings list —

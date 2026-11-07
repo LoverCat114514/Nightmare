@@ -20,6 +20,9 @@ object Prefs {
     private const val KEY_THEME = "theme"
     private const val KEY_ACCENT = "accent"
     private const val KEY_MIRROR = "download_base"
+    private const val KEY_CUSTOM_ACCENT = "custom_accent_color"
+    private const val KEY_CUSTOM_BG = "custom_bg_path"
+    private const val KEY_BG_DIM = "bg_dim"
 
     /**
      * ⚠⚠ THREE values, not a boolean. "Follow the system" is the default and
@@ -46,6 +49,15 @@ object Prefs {
     @Volatile var theme: Theme = Theme.SYSTEM
         private set
 
+    @Volatile var customAccentColor: Long = 0L
+        private set
+
+    @Volatile var customBackgroundPath: String? = null
+        private set
+
+    @Volatile var backgroundDim: Float = 0.40f
+        private set
+
     fun load(context: Context) {
         val raw = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .getString(KEY_THEME, null)
@@ -62,6 +74,9 @@ object Prefs {
         matureContent = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .getBoolean(KEY_MATURE, false)
         val p = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+        customAccentColor = p.getLong(KEY_CUSTOM_ACCENT, 0L)
+        customBackgroundPath = p.getString(KEY_CUSTOM_BG, null)
+        backgroundDim = p.getFloat(KEY_BG_DIM, 0.40f)
         defaultView = MainView.entries.firstOrNull { it.name == p.getString(KEY_VIEW, null) }
         // ⭐ Top to bottom for NEW users (the user, 2026-10-13); someone who has already been asked
         // which view to open on keeps the side-to-side pages they had. Written once either way, so
@@ -224,6 +239,24 @@ object Prefs {
         accent = value
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
             .putString(KEY_ACCENT, value.name).apply()
+    }
+
+    fun setCustomAccentColor(context: Context, color: Long) {
+        customAccentColor = color
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .putLong(KEY_CUSTOM_ACCENT, color).apply()
+    }
+
+    fun setCustomBackground(context: Context, path: String?) {
+        customBackgroundPath = path
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .putString(KEY_CUSTOM_BG, path).apply()
+    }
+
+    fun setBackgroundDim(context: Context, dim: Float) {
+        backgroundDim = dim
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .putFloat(KEY_BG_DIM, dim).apply()
     }
 
     fun setTheme(context: Context, value: Theme) {

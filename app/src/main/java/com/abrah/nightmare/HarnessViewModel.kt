@@ -1,4 +1,9 @@
 package com.abrah.nightmare
+import android.graphics.BitmapFactory
+import android.net.Uri
+import java.io.File
+import java.io.FileOutputStream
+import androidx.compose.ui.graphics.Color
 
 import com.abrah.nightmare.canvas.asCtlParams
 import com.abrah.nightmare.canvas.asRefParams
@@ -159,8 +164,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     /** ⭐ The bar's Settings slot: open the list, over the canvas. */
     fun openSettingsMenu() {
-        closeLibrary()
-        showCanvas = true
+        // ⭐ Keep current view intact, float capsules over active page
         settingsMenuOpen = true
     }
 
@@ -169,15 +173,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * ⭐ A row of the menu was tapped: the sheet opens on THAT page (the user's
      * `悬浮方卡`), or — for null — on the whole screen with its pills.
-     *
-     * ⚠ The page index is Settings' FIXED page order (Appearance, Prompts,
-     * Models, Performance, Advanced), which is what `SettingsScreen`'s
-     * `onlyPage` reads; the MENU's own order is the user's and differs.
      */
     fun openSettingsPage(page: Int?) {
         settingsMenuOpen = false
         settingsPage = page
-        showCanvas = false
     }
 
     // ---- app settings ----------------------------------------------------
@@ -190,6 +189,103 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     /** ⭐ The accent colour, mirrored like [theme]. */
     var accent by mutableStateOf(Prefs.accent)
+
+    var customAccentColor by mutableStateOf(Prefs.customAccentColor)
+        private set
+
+    fun chooseCustomAccent(color: Color) {
+        val argb = (color.value.toLong() and 0xFFFFFFFFL)
+        customAccentColor = argb
+        Prefs.setCustomAccentColor(getApplication(), argb)
+    }
+
+    fun resetCustomAccent() {
+        customAccentColor = 0L
+        Prefs.setCustomAccentColor(getApplication(), 0L)
+    }
+
+    var customBackgroundPath by mutableStateOf(Prefs.customBackgroundPath)
+        private set
+
+    var backgroundDim by mutableStateOf(Prefs.backgroundDim)
+        private set
+
+    @JvmName("setCustomBackgroundPref")
+    fun setCustomBackground(path: String?) {
+        customBackgroundPath = path
+        Prefs.setCustomBackground(getApplication(), path)
+    }
+
+    @JvmName("setBackgroundDimPref")
+    fun setBackgroundDim(dim: Float) {
+        backgroundDim = dim
+        Prefs.setBackgroundDim(getApplication(), dim)
+    }
+
+    fun processAndSetBackground(context: Context, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val inputStream = context.contentResolver.openInputStream(uri) ?: return@launch
+                val rawBitmap = BitmapFactory.decodeStream(inputStream) ?: return@launch
+                inputStream.close()
+
+                val displayMetrics = context.resources.displayMetrics
+                val screenW = displayMetrics.widthPixels
+                val screenH = displayMetrics.heightPixels
+
+                val targetAspect = screenW.toFloat() / screenH.toFloat()
+                val imageAspect = rawBitmap.width.toFloat() / rawBitmap.height.toFloat()
+
+                val cropW: Int
+                val cropH: Int
+                val cropX: Int
+                val cropY: Int
+
+                if (imageAspect > targetAspect) {
+                    cropH = rawBitmap.height
+                    cropW = (cropH * targetAspect).toInt().coerceAtMost(rawBitmap.width)
+                    cropX = (rawBitmap.width - cropW) / 2
+                    cropY = 0
+                } else {
+                    cropW = rawBitmap.width
+                    cropH = (cropW / targetAspect).toInt().coerceAtMost(rawBitmap.height)
+                    cropX = 0
+                    cropY = (rawBitmap.height - cropH) / 2
+                }
+
+                val cropped = Bitmap.createBitmap(rawBitmap, cropX, cropY, cropW, cropH)
+                val maxDim = 2400
+                val scaled = if (cropped.height > maxDim || cropped.width > maxDim) {
+                    val scaleFactor = maxDim.toFloat() / maxOf(cropped.width, cropped.height)
+                    Bitmap.createScaledBitmap(
+                        cropped,
+                        (cropped.width * scaleFactor).toInt(),
+                        (cropped.height * scaleFactor).toInt(),
+                        true
+                    )
+                } else {
+                    cropped
+                }
+
+                val bgFile = File(context.filesDir, "custom_background.jpg")
+                FileOutputStream(bgFile).use { out ->
+                    scaled.compress(Bitmap.CompressFormat.JPEG, 92, out)
+                }
+
+                withContext(Dispatchers.Main) {
+                    setCustomBackground(bgFile.absolutePath)
+                }
+            }
+        }
+    }
+
+    fun clearCustomBackground(context: Context) {
+        runCatching {
+            val bgFile = File(context.filesDir, "custom_background.jpg")
+            if (bgFile.exists()) bgFile.delete()
+        }
+        setCustomBackground(null)
+    }
 
     /**
      * ⭐⭐ Where model files are fetched from — **an observable copy of

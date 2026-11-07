@@ -1,11 +1,15 @@
 package com.abrah.nightmare.ui
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
 
 import android.os.Build
-import androidx.activity.compose.BackHandler
 import androidx.compose.ui.graphics.asComposeRenderEffect
 
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.Animatable
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -19,10 +23,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.widthIn
@@ -349,22 +349,16 @@ internal fun SettingsCardSheet(
             val targetHeight = totalH * 0.62f
             val targetTop = targetBottom - targetHeight
 
-            // ⭐ Water-droplet split to the left:
-            // At v = 0: a compact round droplet sitting at (capsuleLeftX - 24.dp, capsuleCenterY - 18.dp)
-            // As v -> 1: expands leftward across the screen to targetLeft (16.dp), blooming into the card!
-            val currentLeft = androidx.compose.ui.unit.lerp(capsuleLeftX - 24.dp, targetLeft, v)
-            val currentRight = androidx.compose.ui.unit.lerp(capsuleLeftX + 16.dp, targetRight, v)
-            val currentTop = androidx.compose.ui.unit.lerp(capsuleCenterY - 18.dp, targetTop, v)
-            val currentBottom = androidx.compose.ui.unit.lerp(capsuleCenterY + 18.dp, targetBottom, v)
+            val targetWidth = targetRight - targetLeft
+            val targetHeightVal = targetHeight
 
-            val currentWidth = (currentRight - currentLeft).coerceAtLeast(36.dp)
-            val currentHeight = (currentBottom - currentTop).coerceAtLeast(36.dp)
+            // Pivot point is anchored on the tapped capsule (right edge)
+            val pivotY = ((capsuleCenterY - targetTop) / targetHeightVal).coerceIn(0.1f, 0.9f)
 
-            // Corner radius morphs from a droplet circle (28dp) to the floating card (20dp)
-            val cornerRadius = androidx.compose.ui.unit.lerp(28.dp, 20.dp, v)
-
+            // ⭐ Stable layout: dimensions are constant, animation runs 100% on GPU graphicsLayer!
+            // No main thread layout thrashing, zero frame drop!
             Surface(
-                shape = RoundedCornerShape(cornerRadius),
+                shape = RoundedCornerShape(20.dp),
                 color = Color.White.copy(alpha = 0.95f),
                 tonalElevation = 0.dp,
                 shadowElevation = 14.dp,
@@ -373,23 +367,29 @@ internal fun SettingsCardSheet(
                     Color.White.copy(alpha = 0.90f),
                 ),
                 modifier = Modifier
-                    .offset(x = currentLeft, y = currentTop)
-                    .width(currentWidth)
-                    .height(currentHeight)
+                    .offset(x = targetLeft, y = targetTop)
+                    .width(targetWidth)
+                    .height(targetHeightVal)
                     .then(
                         if (interactive) Modifier.pointerInput(Unit) { detectTapGestures { } }
                         else Modifier,
                     )
                     .graphicsLayer {
                         alpha = v.coerceIn(0f, 1f)
+                        // GPU-accelerated water-droplet split from capsule anchor:
+                        scaleX = 0.72f + 0.28f * v
+                        scaleY = 0.72f + 0.28f * v
+                        translationX = (1f - v) * (totalW - targetLeft - 72.dp).toPx()
+                        translationY = (1f - v) * (capsuleCenterY - (targetTop + targetHeightVal * pivotY)).toPx() * 0.35f
+                        transformOrigin = TransformOrigin(1f, pivotY)
                     },
             ) {
-                // Content smoothly blooms in as the droplet card reaches full size
+                // Content smoothly blooms in as the card reaches full size
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            alpha = ((v - 0.45f) / 0.55f).coerceIn(0f, 1f)
+                            alpha = ((v - 0.25f) / 0.75f).coerceIn(0f, 1f)
                         },
                 ) {
                     content()

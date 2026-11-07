@@ -1,4 +1,18 @@
 package com.abrah.nightmare.ui
+import androidx.compose.material3.Slider
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import android.graphics.BitmapFactory
+import java.io.File
 
 import com.abrah.nightmare.ui.StudioOutlinedButton
 import androidx.compose.foundation.clickable
@@ -90,6 +104,14 @@ fun SettingsScreen(
     /** ⭐ The accent colour, apart from the theme (`ui/Accents.kt`). */
     accent: Prefs.Accent = Prefs.Accent.VIOLET,
     onAccent: (Prefs.Accent) -> Unit = {},
+    customColor: Long = 0L,
+    onCustomColor: (androidx.compose.ui.graphics.Color) -> Unit = {},
+    onResetCustomColor: () -> Unit = {},
+    customBackgroundPath: String? = null,
+    backgroundDim: Float = 0.40f,
+    onPickBackground: () -> Unit = {},
+    onClearBackground: () -> Unit = {},
+    onBackgroundDim: (Float) -> Unit = {},
     /**
      * ⭐ Whether this app is currently exempt from Doze/App Standby battery
      * optimisation. Read fresh from `PowerManager` by the caller — this
@@ -314,10 +336,20 @@ fun SettingsScreen(
                 }
                 // ⭐ The app's language apart from the phone's (a tester on a Russian phone wanted English, Saved #7158).
                 AppLanguageCard()
-                StudioCard {
-                    SectionHeading(stringResource(R.string.accent_title), stringResource(R.string.accent_note))
-                    AccentSwatches(accent, onAccent)
-                }
+                ThemePaletteCard(
+                    accent = accent,
+                    onAccent = onAccent,
+                    customColor = customColor,
+                    onCustomColor = onCustomColor,
+                    onResetCustomColor = onResetCustomColor,
+                )
+                CustomBackgroundCard(
+                    customBackgroundPath = customBackgroundPath,
+                    backgroundDim = backgroundDim,
+                    onPickBackground = onPickBackground,
+                    onClearBackground = onClearBackground,
+                    onBackgroundDim = onBackgroundDim,
+                )
                 // [LOCAL-NEWUI 2026-11-05] Interface mode: the SAME choice the top-left toggle makes
                 // (the flow views of MainView), now also in Settings — the three original views
                 // stay, the fourth (newui) is the web workbench. It writes through
@@ -1183,4 +1215,275 @@ private fun accentName(a: Prefs.Accent): Int = when (a) {
     Prefs.Accent.TEAL -> R.string.accent_teal
     Prefs.Accent.ORANGE -> R.string.accent_orange
     Prefs.Accent.PINK -> R.string.accent_pink
+}
+
+@Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+private fun ThemePaletteCard(
+    accent: Prefs.Accent,
+    onAccent: (Prefs.Accent) -> Unit,
+    customColor: Long,
+    onCustomColor: (androidx.compose.ui.graphics.Color) -> Unit,
+    onResetCustomColor: () -> Unit,
+) {
+    var hue by remember { mutableStateOf(if (customColor != 0L) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(customColor.toInt(), hsv)
+        hsv[0]
+    } else 270f) }
+    var sat by remember { mutableStateOf(if (customColor != 0L) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(customColor.toInt(), hsv)
+        hsv[1]
+    } else 0.75f) }
+    var value by remember { mutableStateOf(if (customColor != 0L) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(customColor.toInt(), hsv)
+        hsv[2]
+    } else 0.90f) }
+
+    val activeColor = remember(hue, sat, value, customColor) {
+        if (customColor != 0L) androidx.compose.ui.graphics.Color(customColor)
+        else androidx.compose.ui.graphics.Color.hsv(hue, sat, value)
+    }
+
+    StudioCard {
+        SectionHeading("主题配色预设", "选择经典预设或使用下方调色盘自定义")
+
+        androidx.compose.foundation.layout.FlowRow(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            for (preset in PRESET_THEME_COLORS) {
+                val isSelected = (customColor != 0L && customColor == preset.argb) ||
+                    (customColor == 0L && accent.name.equals(preset.name, ignoreCase = true)) ||
+                    (customColor == 0L && preset.argb == 0xFF8B4DEEL && accent == Prefs.Accent.VIOLET)
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            onCustomColor(preset.color)
+                            val hsv = FloatArray(3)
+                            android.graphics.Color.colorToHSV(preset.argb.toInt(), hsv)
+                            hue = hsv[0]
+                            sat = hsv[1]
+                            value = hsv[2]
+                        }
+                        .padding(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .then(
+                                if (isSelected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
+                                else Modifier.border(1.dp, androidx.compose.ui.graphics.Color.White.copy(alpha = 0.4f), CircleShape)
+                            )
+                            .padding(if (isSelected) 3.5.dp else 0.dp)
+                            .clip(CircleShape)
+                            .background(preset.color),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isSelected) {
+                            androidx.compose.material3.Icon(
+                                androidx.compose.material.icons.Icons.Filled.Check,
+                                contentDescription = null,
+                                tint = androidx.compose.ui.graphics.Color.White,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(preset.name, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        SectionHeading("调色盘 (自定义主题色)", "滑动光谱调色盘，实时同步全局主色彩")
+
+        val rainbowBrush = Brush.horizontalGradient(
+            listOf(
+                androidx.compose.ui.graphics.Color.Red,
+                androidx.compose.ui.graphics.Color.Yellow,
+                androidx.compose.ui.graphics.Color.Green,
+                androidx.compose.ui.graphics.Color.Cyan,
+                androidx.compose.ui.graphics.Color.Blue,
+                androidx.compose.ui.graphics.Color.Magenta,
+                androidx.compose.ui.graphics.Color.Red
+            )
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(16.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(rainbowBrush)
+        )
+        Slider(
+            value = hue,
+            onValueChange = {
+                hue = it
+                val newColor = androidx.compose.ui.graphics.Color.hsv(hue, sat, value)
+                onCustomColor(newColor)
+            },
+            valueRange = 0f..360f,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("饱和度", style = MaterialTheme.typography.bodyMedium)
+            Text("${(sat * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+        }
+        Slider(
+            value = sat,
+            onValueChange = {
+                sat = it
+                val newColor = androidx.compose.ui.graphics.Color.hsv(hue, sat, value)
+                onCustomColor(newColor)
+            },
+            valueRange = 0.15f..1f,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("明度", style = MaterialTheme.typography.bodyMedium)
+            Text("${(value * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+        }
+        Slider(
+            value = value,
+            onValueChange = {
+                value = it
+                val newColor = androidx.compose.ui.graphics.Color.hsv(hue, sat, value)
+                onCustomColor(newColor)
+            },
+            valueRange = 0.3f..1f,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(8.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(activeColor)
+                    .border(1.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
+            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "HEX: #" + Integer.toHexString((activeColor.value.toLong() and 0xFFFFFFFFL).toInt()).uppercase(),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text("当前主色调", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (customColor != 0L) {
+                com.abrah.nightmare.ui.StudioOutlinedButton(onClick = onResetCustomColor) {
+                    Text("重置预设")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+private fun CustomBackgroundCard(
+    customBackgroundPath: String?,
+    backgroundDim: Float,
+    onPickBackground: () -> Unit,
+    onClearBackground: () -> Unit,
+    onBackgroundDim: (Float) -> Unit,
+) {
+    StudioCard {
+        SectionHeading("背景图片", "选择自定义图片作为全屏背景，系统将自动按屏幕比例居中裁切")
+
+        if (customBackgroundPath != null) {
+            val bgFile = remember(customBackgroundPath) { File(customBackgroundPath) }
+            val bitmap = remember(customBackgroundPath) {
+                if (bgFile.exists()) BitmapFactory.decodeFile(bgFile.absolutePath)?.asImageBitmap() else null
+            }
+
+            if (bitmap != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(130.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.25f))
+                    )
+                    Text("当前背景预览 (已自动裁切)", color = androidx.compose.ui.graphics.Color.White, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                com.abrah.nightmare.ui.StudioButton(
+                    onClick = onPickBackground,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("更换背景")
+                }
+                com.abrah.nightmare.ui.StudioOutlinedButton(
+                    onClick = onClearBackground,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("清除背景")
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("背景半透遮罩浓度", style = MaterialTheme.typography.bodyMedium)
+                Text("${(backgroundDim * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+            }
+            Slider(
+                value = backgroundDim,
+                onValueChange = onBackgroundDim,
+                valueRange = 0.1f..0.85f,
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            com.abrah.nightmare.ui.StudioButton(
+                onClick = onPickBackground,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("🖼️ 选择图片作为背景")
+            }
+        }
+    }
 }
