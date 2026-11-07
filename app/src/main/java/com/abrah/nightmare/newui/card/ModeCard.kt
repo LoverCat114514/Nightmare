@@ -3,6 +3,13 @@ package com.abrah.nightmare.newui.card
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,27 +34,8 @@ import com.abrah.nightmare.newui.theme.Nm
 /**
  * ⭐⭐ fix34 (2026-11-06) — Card 2: the mode.
  *
- * The txt2img/img2img pill, the denoise slider (img2img only), and the MOSS
- * layout block with its canvas launcher.
- *
- * ## What changed under it, and what did not
- *
- * **Nothing visual changed.** Same pill, same order, same MOSS block, same
- * button. The only edits are the ones a refactor is allowed to make:
- *
- * - The card frame comes from [NmCard] instead of being re-typed here. Three
- *   cards used to repeat the identical `Card(...)` incantation — white fill,
- *   16 dp radius, 1 dp hairline, `elevation = 0`. Three copies means three
- *   places to drift.
- * - **No `remember { mutableStateOf(s.mode) }` mirror.** The old version had
- *   one in the eighth round and removed it in fix30; this file simply never
- *   reintroduces it. `s.mode` is compose state, so reading it here subscribes
- *   this card directly.
- * - `s.mode` writes are plain writes. There is no `modelVer++` beside them —
- *   [WbParams] has no version counter to bump.
- *
- * ⚠ **One gesture target per row.** The MOSS switch is the only handler on its
- * row; the title column carries none.
+ * Full multi-flow support (txt2img, img2img, inpaint, upscale) directly within NewUI,
+ * smooth sliding indicator mode picker, denoise slider, and animated MOSS layout block.
  */
 @Composable
 fun ModeCard(
@@ -57,30 +45,40 @@ fun ModeCard(
     onDraftSize: (Int, Int) -> Unit,
 ) {
     NmCard {
-        SegmentedRow(
-            selLeft = s.mode != WbParams.MODE_IMG2IMG,
-            left = "✦ " + stringResource(R.string.newui_txt2img),
-            right = "🖼 " + stringResource(R.string.newui_img2img),
-            onLeft = { s.mode = WbParams.MODE_TXT2IMG },
-            onRight = { s.mode = WbParams.MODE_IMG2IMG },
+        // ⭐ 4 modes supported smoothly: 文生图, 图生图, 局部重绘, 超分放大
+        ModeSegmentedRow(
+            selectedMode = s.mode,
+            onSelect = { s.mode = it },
         )
 
-        // ⭐ img2img only: txt2img has no denoise to speak of. The slider is the
-        // stateless one from [Controls], so the thumb IS the wire value.
-        if (s.mode == WbParams.MODE_IMG2IMG) {
+        // ⭐ img2img / inpaint: Denoise slider
+        if (s.mode == WbParams.MODE_IMG2IMG || s.mode == WbParams.MODE_INPAINT) {
             PostSlider(
-                label = stringResource(R.string.newui_denoise),
+                label = if (s.mode == WbParams.MODE_INPAINT) "重绘重度 (Denoise)" else stringResource(R.string.newui_denoise),
                 value = s.denoise,
-                range = 0.05f..0.95f,
+                range = if (s.mode == WbParams.MODE_INPAINT) 0.05f..1.00f else 0.05f..0.95f,
                 fmt = { String.format(java.util.Locale.US, "%.2f", it) },
                 onSet = { s.denoise = it },
             )
         }
 
-        // ⭐ The MOSS layout block exists only for the MOSS family — it is a
-        // layout instruction the MOSS sampler reads, and any other family would
-        // ignore the flag entirely.
-        if (family == Family.MOSS) {
+        // ⭐ Mode hints
+        if (s.mode == WbParams.MODE_INPAINT) {
+            Text(
+                "🎨 局部重绘模式：请在上方加载待重绘的源图片，在提示词输入需要重绘生成的画面内容。",
+                style = MaterialTheme.typography.bodySmall,
+                color = Nm.sub,
+            )
+        } else if (s.mode == WbParams.MODE_UPSCALE) {
+            Text(
+                "🔍 超分放大模式：利用内置 4x 独立超分模型将图片无损放大 4 倍（无需加载主模型 Checkpoint）。",
+                style = MaterialTheme.typography.bodySmall,
+                color = Nm.sub,
+            )
+        }
+
+        // ⭐ The MOSS layout block exists only for the MOSS family
+        if (family == Family.MOSS && s.mode != WbParams.MODE_UPSCALE) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -93,11 +91,29 @@ fun ModeCard(
                         color = Nm.sub,
                     )
                 }
-                // ⚠ The switch owns the row's only handler. No clickable wrapper.
                 Switch(checked = s.mossOn, onCheckedChange = { s.mossOn = it })
             }
 
-            if (s.mossOn) {
+            // ⭐ AnimatedVisibility with 280ms cubic bezier curve for smooth expand/shrink
+            AnimatedVisibility(
+                visible = s.mossOn,
+                enter = expandVertically(
+                    animationSpec = tween(
+                        durationMillis = 280,
+                        easing = CubicBezierEasing(0.2f, 0f, 0f, 1f),
+                    ),
+                ) + fadeIn(
+                    animationSpec = tween(durationMillis = 220),
+                ),
+                exit = shrinkVertically(
+                    animationSpec = tween(
+                        durationMillis = 200,
+                        easing = CubicBezierEasing(0.2f, 0f, 0f, 1f),
+                    ),
+                ) + fadeOut(
+                    animationSpec = tween(durationMillis = 150),
+                ),
+            ) {
                 val ctx = LocalContext.current
                 val launcher = rememberLauncherForActivityResult(
                     ActivityResultContracts.StartActivityForResult(),
@@ -118,7 +134,7 @@ fun ModeCard(
                                 .putExtra(MossCanvasActivity.EXTRA_HEIGHT, s.h.toString()),
                         )
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 ) { Text(stringResource(R.string.moss_open_canvas)) }
             }
         }

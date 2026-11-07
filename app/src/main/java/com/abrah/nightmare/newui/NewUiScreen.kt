@@ -161,6 +161,14 @@ fun NewUiScreen(
         }
     }
 
+    LaunchedEffect(WbParams.lastPickedMode) {
+        val picked = WbParams.lastPickedMode
+        if (picked != null) {
+            s.mode = picked
+            WbParams.lastPickedMode = null
+        }
+    }
+
     // ── LoRA import ───────────────────────────────────────────────────────
     var loraEpoch by remember { mutableIntStateOf(0) }
     val loraImport = rememberLauncherForActivityResult(

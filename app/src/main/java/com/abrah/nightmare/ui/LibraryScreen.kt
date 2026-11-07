@@ -537,14 +537,16 @@ fun SwipeTabs(
                     onClick = { scope.launch { state.animateScrollToPage(i) } },
                     shape = RoundedCornerShape(20.dp),
                     color = if (on) {
-                        MaterialTheme.colorScheme.secondaryContainer
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                     } else {
                         // ⚠ Transparent rather than `surfaceVariant`: an unselected
                         // pill with its own fill makes the group look like two
                         // buttons, and the selected one stops standing out.
                         Color.Transparent
                     },
-                    border = if (on) null else BorderStroke(
+                    border = if (on) {
+                        BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+                    } else BorderStroke(
                         1.dp,
                         MaterialTheme.colorScheme.outlineVariant,
                     ),
@@ -552,9 +554,9 @@ fun SwipeTabs(
                     Text(
                         label,
                         style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
                         color = if (on) {
-                            MaterialTheme.colorScheme.onSecondaryContainer
+                            MaterialTheme.colorScheme.primary
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },

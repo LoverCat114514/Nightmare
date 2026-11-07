@@ -98,6 +98,10 @@ class WbParams(
     companion object {
         const val MODE_TXT2IMG = "txt2img"
         const val MODE_IMG2IMG = "img2img"
+        const val MODE_INPAINT = "inpaint"
+        const val MODE_UPSCALE = "upscale"
+
+        var lastPickedMode: String? by mutableStateOf<String?>(null)
 
         private const val PREFS = "newui_wb"
 

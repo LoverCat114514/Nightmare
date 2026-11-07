@@ -204,6 +204,88 @@ fun SegmentedRow(
     }
 }
 
+
+/**
+ * ⭐ Four-mode segmented pill (txt2img, img2img, inpaint, upscale) with smooth sliding indicator pill.
+ */
+@Composable
+fun ModeSegmentedRow(
+    selectedMode: String,
+    onSelect: (String) -> Unit,
+) {
+    val items = listOf(
+        com.abrah.nightmare.newui.core.WbParams.MODE_TXT2IMG to "✦ 文生图",
+        com.abrah.nightmare.newui.core.WbParams.MODE_IMG2IMG to "🖼 图生图",
+        com.abrah.nightmare.newui.core.WbParams.MODE_INPAINT to "🎨 重绘",
+        com.abrah.nightmare.newui.core.WbParams.MODE_UPSCALE to "🔍 超分",
+    )
+    val selIndex = items.indexOfFirst { it.first == selectedMode }.let { if (it >= 0) it else 0 }
+
+    BoxWithConstraints(
+        Modifier
+            .fillMaxWidth()
+            .height(46.dp)
+            .background(Nm.card, RoundedCornerShape(999.dp))
+            .border(1.dp, Nm.fld, RoundedCornerShape(999.dp))
+            .padding(4.dp),
+    ) {
+        val count = items.size
+        val totalSpacing = 2.dp * (count - 1)
+        val itemW = (maxWidth - totalSpacing) / count
+        val pillX by animateDpAsState(
+            targetValue = (itemW + 2.dp) * selIndex,
+            animationSpec = spring(
+                dampingRatio = 0.85f,
+                stiffness = 500f,
+            ),
+            label = "modePillX",
+        )
+
+        // ⭐ The sliding indicator pill (smooth gliding translation matching BottomBar)
+        Box(
+            modifier = Modifier
+                .offset(x = pillX)
+                .width(itemW)
+                .fillMaxHeight()
+                .background(Nm.priSoft, RoundedCornerShape(999.dp))
+                .border(1.dp, Nm.priLine, RoundedCornerShape(999.dp)),
+        )
+
+        Row(
+            Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            items.forEachIndexed { idx, item ->
+                val isSel = idx == selIndex
+                val textColor by animateColorAsState(
+                    targetValue = if (isSel) Nm.pri else Nm.sub,
+                    animationSpec = tween(150),
+                    label = "modeTextCol_$idx",
+                )
+
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(999.dp))
+                        .clickable(onClick = { onSelect(item.first) }),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        item.second,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                        color = textColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
 // ── The slider row ─────────────────────────────────────────────────────────
 
 /**
@@ -239,7 +321,7 @@ fun PostSlider(
             colors = SliderDefaults.colors(
                 thumbColor = Nm.pri,
                 activeTrackColor = Nm.pri,
-                inactiveTrackColor = Nm.line,
+                inactiveTrackColor = if (Nm.customBgActive) Color.White.copy(alpha = 0.35f) else Nm.pri.copy(alpha = 0.16f),
             ),
         )
     }

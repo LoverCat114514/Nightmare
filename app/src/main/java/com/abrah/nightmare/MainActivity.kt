@@ -1025,7 +1025,17 @@ fun HarnessScreen(
                         saved = vm.savedWorkflows,
                         error = vm.workflowError,
                         onDismissError = vm::dismissWorkflowError,
-                        onOpenRecipe = vm::openRecipe,
+                        onOpenRecipe = { r ->
+                            vm.openRecipe(r)
+                            val targetMode = when (r.id) {
+                                "img2img" -> com.abrah.nightmare.newui.core.WbParams.MODE_IMG2IMG
+                                "inpaint" -> com.abrah.nightmare.newui.core.WbParams.MODE_INPAINT
+                                "upscale" -> com.abrah.nightmare.newui.core.WbParams.MODE_UPSCALE
+                                else -> com.abrah.nightmare.newui.core.WbParams.MODE_TXT2IMG
+                            }
+                            com.abrah.nightmare.newui.core.WbParams.lastPickedMode = targetMode
+                            vm.setWorkflowsVisible(false)
+                        },
                         onOpenSaved = vm::openSaved,
                         onDeleteSaved = vm::deleteSaved,
                         onRenameSaved = vm::renameWorkflow,

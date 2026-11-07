@@ -49,13 +49,13 @@ object Nm {
     val card: Color get() = if (customBgActive) Color.White.copy(alpha = cardOpacity) else Color(0xFFFFFFFF)
 
     /** --line, the hairline stroke. */
-    val line: Color get() = if (customBgActive) Color.White.copy(alpha = 0.60f) else Color(0xFFE5E1EF)
+    val line: Color get() = if (customBgActive) Color.White.copy(alpha = 0.60f) else customPri?.let { Color((0.92f + it.red * 0.08f).coerceIn(0f, 1f), (0.92f + it.green * 0.08f).coerceIn(0f, 1f), (0.92f + it.blue * 0.08f).coerceIn(0f, 1f)) } ?: Color(0xFFE5E1EF)
 
     /** #canvasBox — the result frame's empty state: translucent on wallpaper! */
     val canvas: Color get() = if (customBgActive) Color.White.copy(alpha = (cardOpacity * 0.45f).coerceAtLeast(0.08f)) else Color(0xFFFBFAFE)
 
     /** The field stroke. */
-    val fld: Color get() = if (customBgActive) Color.White.copy(alpha = 0.70f) else Color(0xFFD9D4E8)
+    val fld: Color get() = if (customBgActive) Color.White.copy(alpha = 0.70f) else customPri?.let { Color((0.88f + it.red * 0.12f).coerceIn(0f, 1f), (0.88f + it.green * 0.12f).coerceIn(0f, 1f), (0.88f + it.blue * 0.12f).coerceIn(0f, 1f)) } ?: Color(0xFFD9D4E8)
 
     // ── Text ───────────────────────────────────────────────────────────────
 

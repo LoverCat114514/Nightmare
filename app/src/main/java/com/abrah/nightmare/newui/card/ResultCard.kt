@@ -197,8 +197,9 @@ fun ResultCard(
         val pickParamImage = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) onImportImageParams?.invoke(uri)
         }
+        val needsSource = mode in listOf(WbParams.MODE_IMG2IMG, WbParams.MODE_INPAINT, WbParams.MODE_UPSCALE)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (mode == WbParams.MODE_IMG2IMG) {
+            if (needsSource) {
                 OutlinedButton(onClick = { pickSrc.launch(arrayOf("image/*")) }) {
                     Text(stringResource(R.string.newui_load))
                 }
@@ -273,9 +274,14 @@ fun ResultCard(
         }
 
         // ── The source line ────────────────────────────────────────────────
+        val sourceLabel = when (mode) {
+            WbParams.MODE_INPAINT -> "重绘源图"
+            WbParams.MODE_UPSCALE -> "放大原图"
+            else -> stringResource(R.string.newui_src)
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                stringResource(R.string.newui_src) + ": ",
+                "$sourceLabel: ",
                 style = MaterialTheme.typography.labelMedium,
                 color = Nm.sub,
             )
@@ -322,13 +328,23 @@ fun ResultCard(
                 color = Nm.sub,
                 modifier = Modifier.weight(1f),
             )
-            Text(
-                stringResource(R.string.newui_model, modelLabel),
-                style = MaterialTheme.typography.labelMedium,
-                color = Nm.sub,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (mode == WbParams.MODE_UPSCALE) {
+                Text(
+                    "超分模型: 4x 独立模型",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Nm.sub,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                Text(
+                    stringResource(R.string.newui_model, modelLabel),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Nm.sub,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
 
         // ── Generate / Cancel ──────────────────────────────────────────────
@@ -359,8 +375,13 @@ fun ResultCard(
                         tint = Color.White,
                     )
                     Spacer(Modifier.width(8.dp))
+                    val actionLabel = when (mode) {
+                        WbParams.MODE_UPSCALE -> "开始超分放大"
+                        WbParams.MODE_INPAINT -> "开始局部重绘"
+                        else -> stringResource(R.string.newui_generate)
+                    }
                     Text(
-                        stringResource(R.string.newui_generate),
+                        actionLabel,
                         fontWeight = FontWeight.ExtraBold,
                         style = MaterialTheme.typography.titleMedium,
                     )
