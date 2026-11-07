@@ -23,15 +23,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -41,6 +40,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
@@ -56,7 +56,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -85,14 +84,9 @@ import com.abrah.nightmare.newui.theme.nmScheme
 import kotlinx.coroutines.launch
 
 /**
- * ⭐⭐⭐ (2026-11-07) **The workbench's LoRA picker** — completely redesigned for
- * fluid physical animation, modern acrylic glass aesthetics, and seamless theme support.
- *
- * Visual & Motion Upgrades:
- *  - **优雅升降入场/退场动画**：自屏幕底部带有微妙缩放与自然平滑曲线的升起 (360ms) 与收拢 (240ms)。
- *  - **磨砂亚克力玻璃质感**：22dp 大圆角悬浮卡片、高透微晶边框，完美透出自定义背景。
- *  - **滑块平滑展开与折叠**：开启 LoRA 时滑块带物理动画平滑滚出（AnimatedVisibility），彻底消除布局突跳。
- *  - **触控开关物理反馈**：丝滑弹簧位移动效（animateDpAsState + spring）。
+ * ⭐⭐⭐ (2026-11-07) **The workbench's LoRA picker** — redesigned as a spacious,
+ * modern bottom sheet drawer with fluid physics animations, active model chips,
+ * and quick-snap weight adjustment.
  */
 @Composable
 internal fun NewUiLoraPicker(
@@ -216,7 +210,7 @@ internal fun NewUiLoraPicker(
         arranged.map { it.name }.filter { n -> chosen.none { it.name == n } }
     }
 
-    // ⭐ Smooth physical entrance and exit animation
+    // ⭐ Fluid bottom sheet entrance and exit animation
     val animProgress = remember { Animatable(0f) }
     var dismissing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -250,50 +244,68 @@ internal fun NewUiLoraPicker(
             Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) { detectTapGestures { animateDismiss() } },
-            contentAlignment = Alignment.Center,
+            contentAlignment = Alignment.BottomCenter,
         ) {
             // Ambient Backdrop Dim
             Box(
                 Modifier
                     .fillMaxSize()
                     .graphicsLayer { alpha = p }
-                    .background(Color.Black.copy(alpha = 0.40f))
+                    .background(Color.Black.copy(alpha = 0.45f))
             )
 
-            // ⭐ Modern Glassmorphic Modal Card
+            // ⭐ Spacious Modern Bottom Sheet Drawer
             Surface(
-                shape = RoundedCornerShape(22.dp),
-                color = if (Nm.customBgActive) Color.White.copy(alpha = (Nm.cardOpacity + 0.10f).coerceAtMost(0.98f)) else Color.White,
+                shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+                color = if (Nm.customBgActive) Color.White.copy(alpha = (Nm.cardOpacity + 0.12f).coerceAtMost(0.98f)) else Color.White,
                 tonalElevation = 0.dp,
-                shadowElevation = 18.dp,
+                shadowElevation = 24.dp,
                 border = BorderStroke(
                     1.2.dp,
-                    if (Nm.customBgActive) Color.White.copy(alpha = 0.85f) else Nm.line,
+                    if (Nm.customBgActive) Color.White.copy(alpha = 0.85f) else Color(0xFFE8E6EE),
                 ),
                 modifier = Modifier
-                    .fillMaxWidth(0.92f)
-                    .wrapContentHeight()
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.85f)
                     .pointerInput(Unit) { detectTapGestures { } }
                     .graphicsLayer {
                         alpha = p.coerceIn(0f, 1f)
-                        scaleX = 0.88f + 0.12f * p
-                        scaleY = 0.88f + 0.12f * p
-                        translationY = (1f - p) * 56.dp.toPx()
+                        translationY = (1f - p) * 200.dp.toPx()
                     },
             ) {
                 Column(
-                    Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+                    Modifier
+                        .fillMaxSize()
+                        .navigationBarsPadding(),
                 ) {
+                    // Drag handle pill at top
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp, bottom = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier
+                                .width(42.dp)
+                                .height(4.5.dp)
+                                .clip(CircleShape)
+                                .background(Color.Gray.copy(alpha = 0.25f))
+                        )
+                    }
+
                     // ── Header ─────────────────────────────────────────────
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 8.dp),
                     ) {
                         Column(Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    stringResource(R.string.newui_lora_sheet_title),
-                                    style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = Nm.ink),
+                                    "LoRA 模型库",
+                                    style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Nm.ink),
                                 )
                                 if (chosen.isNotEmpty()) {
                                     Spacer(Modifier.width(8.dp))
@@ -304,15 +316,16 @@ internal fun NewUiLoraPicker(
                                             .padding(horizontal = 8.dp, vertical = 2.dp),
                                     ) {
                                         Text(
-                                            "已选 ${chosen.size}",
+                                            "已加载 ${chosen.size} 项",
                                             style = TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Nm.pri),
                                         )
                                     }
                                 }
                             }
                             Text(
-                                "微调各模型权重，点击数值可精准输入",
-                                style = TextStyle(fontSize = 11.5.sp, color = Nm.sub),
+                                if (chosen.isEmpty()) "勾选需要加载的 LoRA 特效并自由调节权重"
+                                else "权重已实时同步至渲染流水线，点击数值可精准微调",
+                                style = TextStyle(fontSize = 12.sp, color = Nm.sub),
                                 modifier = Modifier.padding(top = 2.dp),
                             )
                         }
@@ -320,37 +333,37 @@ internal fun NewUiLoraPicker(
                         // Help button
                         Box(
                             Modifier
-                                .size(28.dp)
+                                .size(30.dp)
                                 .clip(CircleShape)
-                                .background(if (showHint) Nm.priSoft else Color.Transparent)
+                                .background(if (showHint) Nm.priSoft else Color.Black.copy(alpha = 0.04f))
                                 .clickable { showHint = !showHint },
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
                                 "?",
                                 style = TextStyle(
-                                    fontSize = 13.sp,
+                                    fontSize = 13.5.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (showHint) Nm.pri else Nm.sub,
                                 ),
                             )
                         }
 
-                        Spacer(Modifier.width(6.dp))
+                        Spacer(Modifier.width(8.dp))
 
                         // Close button
                         Box(
                             Modifier
                                 .size(32.dp)
                                 .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.04f))
+                                .background(Color.Black.copy(alpha = 0.05f))
                                 .clickable { animateDismiss() },
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 Icons.Filled.Close,
                                 contentDescription = stringResource(R.string.close),
-                                tint = Nm.ink.copy(alpha = 0.7f),
+                                tint = Nm.ink.copy(alpha = 0.75f),
                                 modifier = Modifier.size(18.dp),
                             )
                         }
@@ -365,15 +378,64 @@ internal fun NewUiLoraPicker(
                         Box(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(top = 8.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Nm.priSoft.copy(alpha = 0.5f))
-                                .padding(10.dp),
+                                .padding(horizontal = 20.dp, vertical = 4.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Nm.priSoft.copy(alpha = 0.6f))
+                                .padding(12.dp),
                         ) {
                             Text(
                                 stringResource(R.string.newui_lora_pick_hint),
-                                style = TextStyle(fontSize = 11.5.sp, color = Nm.sub, lineHeight = 16.sp),
+                                style = TextStyle(fontSize = 12.sp, color = Nm.sub, lineHeight = 17.sp),
                             )
+                        }
+                    }
+
+                    // ⭐ Active Selected LoRAs Quick Carousel
+                    if (chosen.isNotEmpty()) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            for (entry in chosen) {
+                                Row(
+                                    Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(Nm.priSoft)
+                                        .border(1.dp, Nm.pri.copy(alpha = 0.4f), RoundedCornerShape(999.dp))
+                                        .padding(start = 10.dp, top = 4.dp, bottom = 4.dp, end = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        entry.name,
+                                        style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Nm.ink),
+                                        maxLines = 1,
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        com.abrah.nightmare.LoraSpec.number(entry.strength),
+                                        style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = Nm.pri),
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Box(
+                                        Modifier
+                                            .size(18.dp)
+                                            .clip(CircleShape)
+                                            .background(Nm.pri.copy(alpha = 0.15f))
+                                            .clickable { commit(chosen.filterNot { it.name == entry.name }) },
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Close,
+                                            contentDescription = null,
+                                            tint = Nm.pri,
+                                            modifier = Modifier.size(11.dp),
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -381,21 +443,21 @@ internal fun NewUiLoraPicker(
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .padding(top = 12.dp)
-                            .height(42.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .padding(horizontal = 20.dp, vertical = 6.dp)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(14.dp))
                             .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.65f) else Color(0xFFF6F5FA))
-                            .border(1.dp, Nm.line, RoundedCornerShape(12.dp))
-                            .padding(horizontal = 12.dp),
+                            .border(1.dp, Nm.line, RoundedCornerShape(14.dp))
+                            .padding(horizontal = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
                             Icons.Filled.Search,
                             contentDescription = null,
                             tint = Nm.sub,
-                            modifier = Modifier.size(17.dp),
+                            modifier = Modifier.size(18.dp),
                         )
-                        Box(Modifier.weight(1f).padding(start = 8.dp)) {
+                        Box(Modifier.weight(1f).padding(start = 10.dp)) {
                             if (query.isEmpty()) {
                                 Text(
                                     stringResource(R.string.newui_lora_search),
@@ -433,9 +495,9 @@ internal fun NewUiLoraPicker(
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .padding(top = 10.dp),
+                            .padding(horizontal = 20.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         var sortOpen by remember { mutableStateOf(false) }
                         Box {
@@ -447,7 +509,7 @@ internal fun NewUiLoraPicker(
                                     .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.7f) else Color(0xFFF6F5FA))
                                     .border(1.dp, Nm.line, RoundedCornerShape(10.dp))
                                     .clickable { sortOpen = true }
-                                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                                    .padding(horizontal = 11.dp, vertical = 7.dp),
                             )
                             DropdownMenu(expanded = sortOpen, onDismissRequest = { sortOpen = false }) {
                                 for (s in com.abrah.nightmare.LoraLibrary.Sort.entries) {
@@ -471,9 +533,9 @@ internal fun NewUiLoraPicker(
                     LazyColumn(
                         Modifier
                             .fillMaxWidth()
-                            .padding(top = 10.dp)
-                            .heightIn(max = 380.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                            .weight(1f)
+                            .padding(horizontal = 20.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         if (experimental) {
                             item(key = "note") {
@@ -484,9 +546,9 @@ internal fun NewUiLoraPicker(
                             item(key = "empty") {
                                 Text(
                                     stringResource(R.string.newui_lora_empty),
-                                    style = TextStyle(fontSize = 13.sp, color = Nm.sub),
+                                    style = TextStyle(fontSize = 13.5.sp, color = Nm.sub),
                                     textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp),
                                 )
                             }
                         }
@@ -531,11 +593,11 @@ internal fun NewUiLoraPicker(
                                 Row(
                                     Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
+                                        .clip(RoundedCornerShape(10.dp))
                                         .clickable {
                                             openFolders = if (isOpen) openFolders - folder else openFolders + folder
                                         }
-                                        .padding(vertical = 4.dp, horizontal = 2.dp),
+                                        .padding(vertical = 6.dp, horizontal = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Icon(
@@ -543,12 +605,12 @@ internal fun NewUiLoraPicker(
                                         else Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                         contentDescription = stringResource(R.string.lora_cd_folder, folder),
                                         tint = Nm.sub,
-                                        modifier = Modifier.size(18.dp),
+                                        modifier = Modifier.size(20.dp),
                                     )
                                     Text(
                                         stringResource(R.string.lora_folder_count, folder, names.size),
-                                        style = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Nm.ink),
-                                        modifier = Modifier.padding(start = 4.dp),
+                                        style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Nm.ink),
+                                        modifier = Modifier.padding(start = 6.dp),
                                     )
                                 }
                             }
@@ -557,57 +619,62 @@ internal fun NewUiLoraPicker(
                         items(loose, key = { "lora:$it" }) { name -> draw(name) }
                     }
 
-                    // ── Bottom Action Bar ───────────────────────────────────
-                    Row(
-                        Modifier
+                    // ── Sticky Bottom Action Bar ────────────────────────────
+                    Surface(
+                        color = Color.Transparent,
+                        modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
                     ) {
-                        onImport?.let { act ->
-                            Row(
-                                Modifier
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(Nm.priSoft)
-                                    .clickable { act() }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    Icons.Filled.Add,
-                                    contentDescription = null,
-                                    tint = Nm.pri,
-                                    modifier = Modifier.size(15.dp),
-                                )
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            onImport?.let { act ->
+                                Row(
+                                    Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Nm.priSoft)
+                                        .clickable { act() }
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Add,
+                                        contentDescription = null,
+                                        tint = Nm.pri,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Text(
+                                        stringResource(R.string.newui_lora_import),
+                                        style = TextStyle(fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = Nm.pri),
+                                        modifier = Modifier.padding(start = 4.dp),
+                                    )
+                                }
+                            }
+                            onBrowse?.let { act ->
                                 Text(
-                                    stringResource(R.string.newui_lora_import),
-                                    style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Nm.pri),
-                                    modifier = Modifier.padding(start = 4.dp),
+                                    stringResource(R.string.lb_open),
+                                    style = TextStyle(fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = Nm.sub),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.6f) else Color(0xFFF2F0F7))
+                                        .clickable { act() }
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
                                 )
                             }
-                        }
-                        onBrowse?.let { act ->
+                            Spacer(Modifier.weight(1f))
                             Text(
-                                stringResource(R.string.lb_open),
-                                style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Nm.sub),
+                                if (chosen.isEmpty()) "完成" else "应用 (${chosen.size})",
+                                style = TextStyle(fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = Color.White),
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.6f) else Color(0xFFF2F0F7))
-                                    .clickable { act() }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Nm.pri)
+                                    .clickable { animateDismiss() }
+                                    .padding(horizontal = 28.dp, vertical = 11.dp),
                             )
                         }
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            stringResource(R.string.crop_done),
-                            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Nm.pri)
-                                .clickable { animateDismiss() }
-                                .padding(horizontal = 26.dp, vertical = 10.dp),
-                        )
                     }
                 }
             }
@@ -633,55 +700,10 @@ private fun NmChip(label: String, on: Boolean, onClick: () -> Unit) {
     )
 }
 
-/** ⭐ Smooth Animated Switch: spring translation knob and smooth color transition */
-@Composable
-private fun NmSwitch(on: Boolean, onToggle: (Boolean) -> Unit) {
-    val knobOffset by animateDpAsState(
-        targetValue = if (on) 18.dp else 2.dp,
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = 450f),
-        label = "switchKnob",
-    )
-    val trackColor by animateColorAsState(
-        targetValue = if (on) Nm.pri else Color(0xFFDDD9E6),
-        animationSpec = tween(180),
-        label = "switchTrack",
-    )
-
-    Box(
-        Modifier
-            .size(48.dp)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = {
-                    TouchProbe.uiToggle("lora_switch", on, !on)
-                    onToggle(!on)
-                },
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            Modifier
-                .size(width = 40.dp, height = 24.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .background(trackColor),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Box(
-                Modifier
-                    .offset(x = knobOffset)
-                    .size(20.dp)
-                    .clip(CircleShape)
-                    .background(Color.White),
-            )
-        }
-    }
-}
-
 /**
  * ⭐⭐ One LoRA Card:
- * - Selected: accented border and subtle soft tint
- * - Slider: rolls in/out smoothly with AnimatedVisibility (zero layout jank)
+ * - Round checkbox toggle button on the left with tactile response
+ * - Animated weight slider with quick adjustment chips ([-0.1], [0.8], [1.0], [+0.1])
  */
 @Composable
 private fun NmCard(
@@ -699,32 +721,58 @@ private fun NmCard(
 ) {
     val on = entry != null
     val cardBg by animateColorAsState(
-        targetValue = if (on) Nm.priSoft.copy(alpha = if (Nm.customBgActive) 0.80f else 0.88f)
+        targetValue = if (on) Nm.priSoft.copy(alpha = if (Nm.customBgActive) 0.82f else 0.92f)
                       else if (Nm.customBgActive) Color.White.copy(alpha = 0.65f)
-                      else Color(0xFFF9F9FC),
-        animationSpec = tween(200),
+                      else Color(0xFFFAF9FD),
+        animationSpec = tween(220),
         label = "loraCardBg",
     )
     val borderColor by animateColorAsState(
-        targetValue = if (on) Nm.pri.copy(alpha = 0.55f) else Color(0xFFEDEBF2),
-        animationSpec = tween(200),
+        targetValue = if (on) Nm.pri.copy(alpha = 0.55f) else Color(0xFFECEAF0),
+        animationSpec = tween(220),
         label = "loraBorder",
     )
 
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(cardBg)
-            .border(1.dp, borderColor, RoundedCornerShape(14.dp))
-            .padding(horizontal = 14.dp, vertical = 11.dp),
+            .border(1.2.dp, borderColor, RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
+            // Touch friendly Checkbox Indicator
+            Box(
+                Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(if (on) Nm.pri else Color.White)
+                    .border(1.5.dp, if (on) Nm.pri else Nm.fld, CircleShape)
+                    .clickable { onToggle(!on) },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (on) {
+                    Icon(
+                        Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+            }
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(
+                Modifier
+                    .weight(1f)
+                    .clickable { onToggle(!on) },
+            ) {
                 Text(
                     name,
                     style = TextStyle(
-                        fontSize = 14.sp,
+                        fontSize = 14.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (on) Nm.ink else Nm.sub,
                     ),
@@ -763,10 +811,32 @@ private fun NmCard(
                 }
             }
 
+            // Quick weight badge when ON
+            if (on && entry != null) {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Nm.pri.copy(alpha = 0.12f))
+                        .border(1.dp, Nm.pri.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                        .clickable { onType() }
+                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        com.abrah.nightmare.LoraSpec.number(entry.strength),
+                        style = TextStyle(
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Nm.pri,
+                        ),
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
+            }
+
             onMore?.let { act ->
                 Box(
                     Modifier
-                        .padding(end = 6.dp)
                         .size(30.dp)
                         .clip(CircleShape)
                         .clickable { act() },
@@ -790,22 +860,16 @@ private fun NmCard(
                     }
                 }
             }
-            NmSwitch(on, onToggle)
         }
 
-        // ⭐ Animated expansion for slider row: smooth roll out/in without layout snap!
+        // ⭐ Animated expansion for slider row with quick snap chips
         AnimatedVisibility(
             visible = on,
-            enter = expandVertically(tween(240, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f))) + fadeIn(tween(180)),
-            exit = shrinkVertically(tween(180, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f))) + fadeOut(tween(140)),
+            enter = expandVertically(tween(260, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f))) + fadeIn(tween(200)),
+            exit = shrinkVertically(tween(200, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f))) + fadeOut(tween(160)),
         ) {
             if (entry != null) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                Column(Modifier.padding(top = 8.dp)) {
                     Slider(
                         value = entry.strength.toFloat(),
                         onValueChange = { onWeight(it.toDouble()) },
@@ -818,28 +882,44 @@ private fun NmCard(
                             inactiveTrackColor = Color(0xFFDDD9E6),
                         ),
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .height(30.dp),
                     )
-                    Spacer(Modifier.width(8.dp))
-                    Box(
+
+                    // Quick Snap Preset Chips (e.g. -0.1, 0.6, 0.8, 1.0, +0.1)
+                    Row(
                         Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Nm.priSoft)
-                            .border(1.dp, Nm.pri.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
-                            .clickable { onType() }
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        contentAlignment = Alignment.Center,
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            com.abrah.nightmare.LoraSpec.number(entry.strength),
-                            style = TextStyle(
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Nm.pri,
-                            ),
-                            textAlign = TextAlign.Center,
+                        val currentW = entry.strength
+                        val quickChips = listOf(
+                            "-0.1" to (currentW - 0.1),
+                            "0.6" to 0.6,
+                            "0.8" to 0.8,
+                            "1.0" to 1.0,
+                            "+0.1" to (currentW + 0.1),
                         )
+                        for ((label, targetVal) in quickChips) {
+                            Box(
+                                Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color.White.copy(alpha = 0.8f))
+                                    .border(0.8.dp, Color(0xFFE2E0E8), RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        val clamped = targetVal.coerceIn(if (allowNegative) -2.0 else 0.0, 2.0)
+                                        onWeight(clamped)
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                            ) {
+                                Text(
+                                    label,
+                                    style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Nm.sub),
+                                )
+                            }
+                        }
                     }
                 }
             }

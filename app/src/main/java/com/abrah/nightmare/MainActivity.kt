@@ -183,6 +183,26 @@ class MainActivity : ComponentActivity() {
             com.abrah.nightmare.newui.TouchProbe.ensureFrameProbe()
         }
         enableEdgeToEdge()
+        // ⭐ Enable High Refresh Rate (120Hz / 144Hz high refresh rates)
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                val disp = display
+                if (disp != null) {
+                    val maxMode = disp.supportedModes
+                        .filter { it.refreshRate >= 89f }
+                        .maxByOrNull { it.refreshRate }
+                    if (maxMode != null) {
+                        window.attributes = window.attributes.apply {
+                            preferredDisplayModeId = maxMode.modeId
+                        }
+                    }
+                }
+            } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                window.attributes = window.attributes.apply {
+                    preferredRefreshRate = 120f
+                }
+            }
+        }
         // ⚠ Before anything composes or any op runs: NODE_TYPES reads
         // SelectedModel for its `model` default, and the backend launches
         // against it. Loading late would render the first graph against the
