@@ -207,6 +207,14 @@ class ResultsStore(private val dir: File) {
         auto: Boolean = false,
         /** ⭐ The run's times by node id (and the whole flow's). See [Result.times]. */
         times: Map<String, Long> = emptyMap(),
+        /**
+         * ⭐ fix35i — the generation's parameter JSON, spliced into the stored
+         * PNG as a tEXt chunk. The gallery save streams this file out verbatim
+         * ([ImageSaver.savePngFile]), so a picture saved from Results carries
+         * its parameters the same way a workbench save does — and import
+         * params reads it back. Null (the default) injects nothing.
+         */
+        metaJson: String? = null,
     ): Result {
         synchronized(KEEP_LOCK) {
             dir.mkdirs()
@@ -250,6 +258,21 @@ class ResultsStore(private val dir: File) {
             try {
                 if (!tmpPng.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }) {
                     throw java.io.IOException("the picture could not be encoded")
+                }
+                // ⭐ fix35i: splice the parameter chunk in BEFORE the rename, on
+                // a swap file — a failed injection leaves the plain PNG, never a
+                // half-written one under the real name.
+                if (metaJson != null) {
+                    val swapped = File(dir, "$id.png.meta.tmp")
+                    try {
+                        swapped.outputStream().use { fo ->
+                            com.abrah.nightmare.newui.core.PngMetadata
+                                .injectMetadata(tmpPng, metaJson, fo)
+                        }
+                        if (!swapped.renameTo(tmpPng)) swapped.delete()
+                    } catch (_: Throwable) {
+                        swapped.delete()
+                    }
                 }
                 if (!tmpPng.renameTo(png(id))) {
                     tmpPng.copyTo(png(id), overwrite = true); tmpPng.delete()

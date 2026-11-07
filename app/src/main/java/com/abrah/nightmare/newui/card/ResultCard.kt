@@ -49,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.ContentScale
@@ -167,6 +168,32 @@ fun ResultCard(
                     }
                     // ⭐ Page dots: with two nearly identical pictures the only
                     // tell is the position, so the dots carry it.
+                    // ⭐ fix35i: page LABELS above the dots — with an x8 upscale
+                    // the two pages look IDENTICAL inside a Fit frame (same
+                    // picture, one is just smoother), so each page names itself.
+                    // The multiplier is only computed while the processed page
+                    // is shown, where the raw bitmap is already on screen —
+                    // asking on page 0 would decode the raw render and defeat
+                    // the lazy load.
+                    val mult = if (pager.currentPage == 1) {
+                        val rw = curShot.rawBitmap.asAndroidBitmap().width.coerceAtLeast(1)
+                        val pw = curShot.bitmap.asAndroidBitmap().width
+                        val m = (pw.toFloat() / rw * 10).toInt() / 10.0
+                        m.takeIf { it > 1.0 }
+                    } else null
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 28.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        PageLabel("原图", pager.currentPage == 0)
+                        PageLabel(
+                            mult?.let { "放大 ×" + if (it == it.toInt().toDouble()) "${it.toInt()}" else "$it" }
+                                ?: "成品",
+                            pager.currentPage == 1,
+                        )
+                    }
                     Row(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -231,7 +258,26 @@ fun ResultCard(
                         Row(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .padding(bottom = 24.dp),
+                                .padding(bottom = 40.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            PageLabel("原图", fsPager.currentPage == 0)
+                            val m = if (fsPager.currentPage == 1) {
+                                val rw = fsShot.rawBitmap.asAndroidBitmap().width.coerceAtLeast(1)
+                                val pw = fsShot.bitmap.asAndroidBitmap().width
+                                (pw.toFloat() / rw * 10).toInt() / 10.0
+                            } else null
+                            PageLabel(
+                                m?.takeIf { it > 1.0 }
+                                    ?.let { "放大 ×" + if (it == it.toInt().toDouble()) "${it.toInt()}" else "$it" }
+                                    ?: "成品",
+                                fsPager.currentPage == 1,
+                            )
+                        }
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 22.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             repeat(2) { i ->
@@ -488,6 +534,30 @@ private fun queryDisplayName(ctx: Context, uri: Uri): String? = try {
     null
 }
 
+/**
+ * ⭐ fix35i — a pill naming which page of the raw/processed pager is showing.
+ * An upscale keeps the PICTURE identical and only the pixels finer, so inside
+ * a Fit frame the two pages are indistinguishable without a name.
+ */
+@Composable
+private fun PageLabel(text: String, active: Boolean) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (active) Nm.pri.copy(alpha = 0.85f)
+                else Color.Black.copy(alpha = 0.45f),
+            )
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+            color = if (active) Color.White else Color.White.copy(alpha = 0.75f),
+        )
+    }
+}
 /**
  * ⭐ Isolated status header: only this leaf recomposes on step updates during generation,
  * preventing expensive recomposition of the preview box and entire card hierarchy.

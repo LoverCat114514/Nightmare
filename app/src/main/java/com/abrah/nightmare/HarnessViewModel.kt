@@ -6535,6 +6535,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     bitmap, null, canvas.workflow, nodeTypes,
                     seed = seed.toString(), model = modelLabel, prompt = meta,
                     auto = true,
+                    // ⭐ fix35i: the parameter JSON rides INSIDE the stored PNG
+                    // (tEXt), so a copy out of Results — gallery save, share —
+                    // still reads back with its parameters.
+                    metaJson = meta,
                 )
             }
             withContext(kotlinx.coroutines.Dispatchers.Main) { refreshResults() }
@@ -7788,7 +7792,32 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun detailsOf(r: com.abrah.nightmare.canvas.Result): List<Pair<String, String>> {
-        val g = results.flow(r.id)?.workflow?.graph ?: return emptyList()
+        val g = results.flow(r.id)?.workflow?.graph
+        if (g == null) {
+            // ⭐ fix35i: a NewUI-kept result has no canvas flow behind it (the
+            // workbench is its own pipeline), so the graph walk below used to
+            // fall through to the sampler-less branch and show nothing but
+            // Size + Nodes — while the seed, the model and the whole parameter
+            // JSON sat in the result's own fields. Read them directly.
+            val out = mutableListOf<Pair<String, String>>()
+            out += "Size" to "${r.width}x${r.height}"
+            r.model?.takeIf { it.isNotBlank() }?.let {
+                out += "Model" to (ModelCatalog.byId(it)?.label ?: it)
+            }
+            r.seed?.takeIf { it.isNotBlank() && it != "0" }?.let { out += "Seed" to it }
+            r.prompt?.takeIf { it.isNotBlank() }?.let { p ->
+                runCatching {
+                    val o = org.json.JSONObject(p)
+                    o.optString("positive").takeIf { it.isNotBlank() }?.let { out += "Prompt" to it }
+                    o.optString("negative").takeIf { it.isNotBlank() }?.let { out += "Negative" to it }
+                    o.optString("steps").takeIf { it.isNotBlank() }?.let { out += "Steps" to it }
+                    o.optString("cfg").takeIf { it.isNotBlank() }?.let { out += "CFG" to it }
+                    o.optString("scheduler").takeIf { it.isNotBlank() }?.let { out += "Scheduler" to it }
+                }
+            }
+            out += "Nodes" to "1"
+            return out
+        }
         // ⭐ The same Time rows as the canvas's info ([detailsOfNode]), from the run that made it.
         return detailsOfGraph(g, null, r.width, r.height, times = { id: String -> r.times[id] }.takeIf { r.times.isNotEmpty() }) { r.seed }
     }
