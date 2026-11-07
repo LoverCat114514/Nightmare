@@ -6516,6 +6516,30 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         android.util.Log.w("Harness", "result $id: $what decode failed (${results.imageFile(id).length()} bytes)")
     }
 
+    /**
+     * ⭐ fix35g — register a NewUI generation into the global Results store, so
+     * the bottom-bar Results tab shows every picture the workbench makes.
+     *
+     * The NewUI is its own pipeline (WbParams + Engine) and used to touch
+     * nothing here: its pictures existed only as `Shot` state on the screen,
+     * and the Results tab stayed empty however much was generated. The canvas
+     * keeps its own registration path (`keepResultFromCanvas`); this is the
+     * NewUI-side twin — same store, same `auto` flag, a null graph (the
+     * snapshot story is WbSnapshots), and the shot's embedded meta JSON as the
+     * prompt line.
+     */
+    fun keepResultFromNewUi(bitmap: android.graphics.Bitmap, seed: Long, meta: String?) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                results.keep(
+                    bitmap, null, canvas.workflow, nodeTypes,
+                    seed = seed.toString(), model = modelLabel, prompt = meta,
+                    auto = true,
+                )
+            }
+            withContext(kotlinx.coroutines.Dispatchers.Main) { refreshResults() }
+        }
+    }
     fun refreshResults() {
         // ⚠ ONE listing: `grouped()` used to list and parse every result's JSON a second time.
         kept = results.all()

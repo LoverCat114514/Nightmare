@@ -103,6 +103,12 @@ fun NewUiScreen(
     onSaveWorkflow: (() -> Unit)? = null,
     onOpenSavedWorkflows: (() -> Unit)? = null,
     onImportWorkflow: (() -> Unit)? = null,
+    /**
+     * ⭐ fix35g: called with every finished (post-processed) picture so the host
+     * can register it into the global Results store. Defaults to a no-op so the
+     * signature stays backward-compatible.
+     */
+    onKept: ((android.graphics.Bitmap, Long, String?) -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
 
@@ -393,8 +399,24 @@ fun NewUiScreen(
                         }
                     }
                     val metaJson = buildMetaJson(s, positive, negative, s.seed)
-                    val made = Shot(out.asImageBitmap(), System.currentTimeMillis(), s.seed, f, meta = metaJson)
+                    val made = Shot(
+                        out.asImageBitmap(), System.currentTimeMillis(), s.seed, f,
+                        meta = metaJson,
+                        // ⭐ fix35g: remember which post tools produced `out`, so
+                        // the gallery save can re-apply them to the raw render.
+                        postColor = s.pColor,
+                        postAdj = s.adjOn,
+                        postUps4x = s.pUps,
+                        postUps2x = s.pUps2,
+                    )
                     shot = made
+                    // ⭐ fix35g: the picture enters the global Results store, so the
+                    // bottom-bar Results tab lists it like every canvas render.
+                    // The POST-PROCESSED bitmap is what gets kept — the saved
+                    // gallery copy used to be the raw render (see saveShot).
+                    if (!isVideo) {
+                        onKept?.invoke(out, s.seed, metaJson)
+                    }
                     if (s.autosave) {
                         history = (listOf(made) + history).take(12)
                     }
@@ -521,11 +543,30 @@ fun NewUiScreen(
             s.driverVideoName = name
         }
     }
-    val onSaveCallback = remember(ctx, run) {
+val onSaveCallback = remember(ctx, run, shot) {
         {
             shot?.let { currentShot ->
                 run.runSideWork {
-                    saveShot(ctx, currentShot)
+                    // ⭐ fix35g: re-apply the post chain the shot was made with,
+                    // so the gallery copy matches the on-screen (post-processed)
+                    // picture. Order matches the generation path: colour →
+                    // adjust → 4x → 2x.
+                    saveShot(ctx, currentShot) { raw ->
+                        var out = raw
+                        if (currentShot.postColor) out = autoColour(out)
+                        if (currentShot.postAdj) out = applyAdjust(out, s)
+                        if (currentShot.postUps4x) {
+                            out = android.graphics.Bitmap.createScaledBitmap(
+                                out, out.width * 4, out.height * 4, true,
+                            )
+                        }
+                        if (currentShot.postUps2x) {
+                            out = android.graphics.Bitmap.createScaledBitmap(
+                                out, out.width * 2, out.height * 2, true,
+                            )
+                        }
+                        out
+                    }
                 }
             }
             Unit

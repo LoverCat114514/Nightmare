@@ -671,6 +671,7 @@ fun HarnessScreen(
                     onBrowseLoras = vm::openLoraBrowser,
                     onDeleteLora = vm::deleteLora,
                     onSaveWorkflow = { saveRequest++ },
+                    onKept = { bmp, seed, meta -> vm.keepResultFromNewUi(bmp, seed, meta) },
                     onOpenSavedWorkflows = {
                         vm.closeSettingsMenu()
                         vm.setCanvasVisible(true)

@@ -32,6 +32,17 @@ class Shot(
     val seed: Long,
     val file: File,
     val meta: String? = null,
+    /**
+     * ⭐ fix35g — the post-processing chain that produced [bitmap], as flags.
+     * The on-screen bitmap is post-processed but [file] is the RAW render, so
+     * the gallery save used to lose every toggle. The save path re-applies this
+     * chain to the raw file; [com.abrah.nightmare.newui.core.saveShot] receives
+     * it via its `post` lambda.
+     */
+    val postColor: Boolean = false,
+    val postAdj: Boolean = false,
+    val postUps4x: Boolean = false,
+    val postUps2x: Boolean = false,
 ) {
     val key: String get() = file.absolutePath
 

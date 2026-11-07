@@ -340,7 +340,12 @@ fun buildRequest(
                 knobs["denoise"] = s.denoise.toString()
             }
             if (s.fixedSeed && s.seed > 0L) knobs["seed"] = s.seed.toString()
-            if (model.family !in DETAIL_EXCLUDED) {
+            // ⭐ fix35g: the detail widgets only exist on the sampler when it is NOT the
+            // inpaint variant (SdSampler.offersDetail excludes inpaint). Sending
+            // fix_faces/fix_hands for an inpaint flow used to 400 with
+            // "no sampler in this flow takes \"fix_faces\"" — the switch looked
+            // dead. The widgets' own visibility matches this condition.
+            if (mode != WbParams.MODE_INPAINT && model.family !in DETAIL_EXCLUDED) {
                 if (s.pFace) knobs[Detailer.FIX_FACES] = "true"
                 if (s.pHands) knobs[Detailer.FIX_HANDS] = "true"
             }
@@ -500,7 +505,7 @@ object PngMetadata {
 }
 
 /** Finished PNG → Pictures/Nightmare via MediaStore; with embedded ComfyUI-like parameter metadata. */
-fun saveShot(ctx: Context, shot: Shot) {
+fun saveShot(ctx: Context, shot: Shot, post: ((android.graphics.Bitmap) -> android.graphics.Bitmap)? = null) {
     // ⚠ fix35f: this runs on RunController's sideWork lane — a plain background
     // thread with NO Looper. Every Toast here used to be constructed on that
     // thread and died with "Can't toast on a thread that has not called
@@ -537,7 +542,15 @@ fun saveShot(ctx: Context, shot: Shot) {
             val uri = ctx.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
                 ?: throw IllegalStateException("MediaStore insert failed")
             ctx.contentResolver.openOutputStream(uri)?.use { out ->
-                if (shot.meta != null) {
+                if (post != null) {
+                    // ⭐ fix35g: the shot on screen is POST-PROCESSED (colour /
+                    // adjust / upscale) but [file] is the raw render. Re-apply
+                    // the chain so the gallery copy matches what was on screen.
+                    val raw = android.graphics.BitmapFactory.decodeFile(shot.file.absolutePath)
+                        ?: throw IllegalStateException("the render file could not be decoded")
+                    val processed = post(raw)
+                    processed.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                } else if (shot.meta != null) {
                     PngMetadata.injectMetadata(shot.file, shot.meta, out)
                 } else {
                     java.io.FileInputStream(shot.file).use { it.copyTo(out) }
