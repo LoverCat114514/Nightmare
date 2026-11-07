@@ -16,6 +16,8 @@ captures/
 
 # Big or generated
 *.apk
+# release APKs are intentional (LFS-tracked)
+!releases/*.apk
 *.aab
 *.bin
 *.onnx
