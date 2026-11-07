@@ -19,10 +19,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -103,12 +107,51 @@ fun ModeCard(
     family: Family,
     onDraft: (String) -> Unit,
     onDraftSize: (Int, Int) -> Unit,
+    onOpenSavedWorkflows: (() -> Unit)? = null,
+    onImportWorkflow: (() -> Unit)? = null,
 ) {
     // Current category automatically follows s.mode
     var activeCategory by remember(s.mode) { mutableStateOf(categoryForMode(s.mode)) }
 
     NmCard {
-        CardTitle("流程模式")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CardTitle("流程")
+            Spacer(Modifier.weight(1f))
+            if (onOpenSavedWorkflows != null) {
+                OutlinedButton(
+                    onClick = onOpenSavedWorkflows,
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    shape = RoundedCornerShape(999.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Nm.priLine),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = Nm.priSoft.copy(alpha = 0.45f),
+                        contentColor = Nm.pri,
+                    ),
+                ) {
+                    Text("📁 已保存", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                }
+            }
+            if (onImportWorkflow != null) {
+                Spacer(Modifier.width(6.dp))
+                OutlinedButton(
+                    onClick = onImportWorkflow,
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    shape = RoundedCornerShape(999.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Nm.fld),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = Nm.card,
+                        contentColor = Nm.ink,
+                    ),
+                ) {
+                    Text("📥 导入", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
 
         // ── 1. Top Category Pills ──────────────────────────────────────────
         LazyRow(

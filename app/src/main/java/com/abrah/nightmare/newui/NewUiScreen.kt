@@ -94,6 +94,8 @@ fun NewUiScreen(
     onBrowseLoras: ((LoraSources.Target) -> Unit)? = null,
     onDeleteLora: ((String) -> Unit)? = null,
     onSaveWorkflow: (() -> Unit)? = null,
+    onOpenSavedWorkflows: (() -> Unit)? = null,
+    onImportWorkflow: (() -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
 
@@ -462,6 +464,8 @@ fun NewUiScreen(
                 family = family,
                 onDraft = onDraftCallback,
                 onDraftSize = onDraftSizeCallback,
+                onOpenSavedWorkflows = onOpenSavedWorkflows,
+                onImportWorkflow = onImportWorkflow,
             )
         }
 

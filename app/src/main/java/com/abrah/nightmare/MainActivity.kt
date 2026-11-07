@@ -664,12 +664,21 @@ fun HarnessScreen(
             // ⭐ (2026-11-05, ninth round, re-re-marking) The top bar is gone on
             // NEWUI; the Results entry moved into the workbench's source row.
             newUiContent = {
+                val flowImporter = rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+                ) { uri -> if (uri != null) vm.importWorkflow(uri) }
                 com.abrah.nightmare.newui.NewUiScreen(
-                    // ⭐ (2026-11-05, eleventh round) The LoRA sheet's ⋮ and browse —
-                    // the very actions the Default UI's inspector binds (lines above).
                     onBrowseLoras = vm::openLoraBrowser,
                     onDeleteLora = vm::deleteLora,
                     onSaveWorkflow = { saveRequest++ },
+                    onOpenSavedWorkflows = {
+                        vm.closeSettingsMenu()
+                        vm.setCanvasVisible(true)
+                        vm.setWorkflowsVisible(true)
+                    },
+                    onImportWorkflow = {
+                        flowImporter.launch(arrayOf("application/json", "application/octet-stream", "*/*"))
+                    },
                 )
             },
             // [LOCAL-NEWUI 2026-11-05, ninth round] the workbench's flows entry.
@@ -839,6 +848,7 @@ fun HarnessScreen(
             // ⭐ The card unfolds out of the tapped slot (2026-11-06).
             onAnchor = { vm.noteBarAnchor(it) },
             modelsBusy = vm.importing != null,
+            hideFlows = (vm.canvasView == com.abrah.nightmare.MainView.NEWUI),
         )
         // ⭐⭐ The list itself, over the bar's Settings slot and clear of it.
         com.abrah.nightmare.ui.SettingsMenu(

@@ -127,18 +127,17 @@ fun NightmareBottomBar(
      * a destination card unfolds out of this point (2026-11-06). */
     onAnchor: (Float) -> Unit = {},
     modelsBusy: Boolean,
+    hideFlows: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    // ⭐ Strings are resolved HERE, in composition, once — the semantics and the
-    // text both read the plain values. A lambda calling `stringResource` would be
-    // a composable call from a non-composable context and does not compile.
-    val slots = listOf(
+    val allSlots = listOf(
         Triple(BottomDest.CANVAS, CanvasIcon, stringResource(R.string.nav_canvas)),
         Triple(BottomDest.MODELS, ModelsIcon, stringResource(R.string.nav_models)),
         Triple(BottomDest.FLOWS, FlowsIcon, stringResource(R.string.nav_flows)),
         Triple(BottomDest.RESULTS, ResultsIcon, stringResource(R.string.nav_results)),
         Triple(BottomDest.SETTINGS, SettingsIcon, stringResource(R.string.nav_settings)),
     )
+    val slots = if (hideFlows) allSlots.filterNot { it.first == BottomDest.FLOWS } else allSlots
     // ⭐⭐⭐ fillMaxSize + BottomCenter: the bar is composed as a plain child of a
     // Box (the canvas's root, or a sheet's full-window overlay), and a Box child
     // without an alignment modifier sits TOP-START — which is exactly where the

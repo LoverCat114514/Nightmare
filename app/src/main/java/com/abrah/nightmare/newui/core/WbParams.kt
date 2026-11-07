@@ -104,6 +104,7 @@ class WbParams(
     var faceYaw by mutableStateOf(0.0f)
     var faceRoll by mutableStateOf(0.0f)
 
+    var videoModel by mutableStateOf("wan22_turbo")
     var videoSeconds by mutableStateOf(2)
     var driverVideoPath by mutableStateOf<String?>(null)
     var driverVideoName by mutableStateOf("")
