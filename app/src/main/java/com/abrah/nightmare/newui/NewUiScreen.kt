@@ -174,6 +174,10 @@ fun NewUiScreen(
     var showSaveSnapshot by remember { mutableStateOf(false) }
     var showSnapshotList by remember { mutableStateOf(false) }
     var snapshotError by remember { mutableStateOf<String?>(null) }
+    // ⭐ fix35h — the "enlarge finished" notice. Set from the render lane when
+    // an auto upscale completes; the dialog below is the app-in notice the
+    // user asked for (2026-11-08), instead of nothing but a silent wait.
+    var upscDone by remember { mutableStateOf(false) }
 
     if (showSaveSnapshot) {
         var name by remember { mutableStateOf("") }
@@ -281,7 +285,24 @@ fun NewUiScreen(
             },
         )
     }
-
+    // ⭐ fix35h — the enlarge-finished dialog itself. Auto-dismiss on tap;
+    // nothing else changes state — the picture is already on screen.
+    if (upscDone) {
+        AlertDialog(
+            onDismissRequest = { upscDone = false },
+            title = { Text("放大完成", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "自动放大已完成，成品图已在上方结果区。左滑可查看放大前的原图；点图片可全屏放大观看。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Nm.ink,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { upscDone = false }) { Text("知道了") }
+            },
+        )
+    }
     // The global follows the workbench's restored pick (symmetric with the
     // picker's double write), so the engine and the Default UI agree.
     // Also warm up installed catalog cache in the background IO thread.
@@ -390,12 +411,19 @@ fun NewUiScreen(
                             out = android.graphics.Bitmap.createScaledBitmap(
                                 out, out.width * 4, out.height * 4, true,
                             )
+                            // ⭐ fix35h: the in-app "enlarge finished" notice.
+                            // [upscDone] is a screen state; the AlertDialog at the
+                            // top of this file watches it. Handler-post because
+                            // this lane is a plain background thread — the same
+                            // reason saveShot's toasts hop (fix35f).
+                            android.os.Handler(ctx.mainLooper).post { upscDone = true }
                         }
                         if (s.pUps2) {
                             run.note("post-processing…")
                             out = android.graphics.Bitmap.createScaledBitmap(
                                 out, out.width * 2, out.height * 2, true,
                             )
+                            android.os.Handler(ctx.mainLooper).post { upscDone = true }
                         }
                     }
                     val metaJson = buildMetaJson(s, positive, negative, s.seed)

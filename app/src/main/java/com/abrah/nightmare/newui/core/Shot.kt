@@ -47,6 +47,25 @@ class Shot(
     val key: String get() = file.absolutePath
 
     /**
+     * ⭐ fix35h — whether ANY post tool touched [bitmap]. The workbench pager
+     * then offers two pages: the RAW render and the post-processed picture.
+     * [file] is always the raw render — the engine writes it once and never
+     * rewrites it — so the original needs no extra storage.
+     */
+    val hasPost: Boolean
+        get() = postColor || postAdj || postUps4x || postUps2x
+
+    /**
+     * ⭐ fix35h — the raw render, decoded lazily on first page swipe so an
+     * upscaled x8 session never holds two giant bitmaps from the start.
+     */
+    val rawBitmap: ImageBitmap by lazy {
+        val bmp = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+            ?: bitmap.asAndroidBitmap()
+        bmp.asImageBitmap()
+    }
+
+    /**
      * ⭐ Cached 256 px thumbnail for the 84 dp history strip.
      * Evaluated lazily once on demand, avoiding main-thread bitmap scaling during list scroll.
      */

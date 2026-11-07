@@ -546,10 +546,28 @@ fun saveShot(ctx: Context, shot: Shot, post: ((android.graphics.Bitmap) -> andro
                     // ⭐ fix35g: the shot on screen is POST-PROCESSED (colour /
                     // adjust / upscale) but [file] is the raw render. Re-apply
                     // the chain so the gallery copy matches what was on screen.
+                    // ⭐ fix35h: compress() re-encodes the PNG from pixels and
+                    // DROPS the tEXt parameter chunk — the gallery copy then
+                    // reads back with no parameters (the import-params
+                    // regression, reported 2026-11-08). Encode to a cache file
+                    // first, then splice the metadata in byte-wise exactly like
+                    // the plain path below.
                     val raw = android.graphics.BitmapFactory.decodeFile(shot.file.absolutePath)
                         ?: throw IllegalStateException("the render file could not be decoded")
                     val processed = post(raw)
-                    processed.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                    val tmp = java.io.File(ctx.cacheDir, "nm-save-" + System.currentTimeMillis() + ".png")
+                    try {
+                        java.io.FileOutputStream(tmp).use { fo ->
+                            processed.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, fo)
+                        }
+                        if (shot.meta != null) {
+                            PngMetadata.injectMetadata(tmp, shot.meta, out)
+                        } else {
+                            tmp.inputStream().use { it.copyTo(out) }
+                        }
+                    } finally {
+                        tmp.delete()
+                    }
                 } else if (shot.meta != null) {
                     PngMetadata.injectMetadata(shot.file, shot.meta, out)
                 } else {

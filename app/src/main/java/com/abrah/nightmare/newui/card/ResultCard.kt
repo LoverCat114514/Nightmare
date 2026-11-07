@@ -7,6 +7,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,6 +40,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,6 +52,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -106,6 +115,9 @@ fun ResultCard(
         // ── The square frame ───────────────────────────────────────────────
         // Fixed 1:1 ratio box with smooth crossfade on new render arrival.
         // Causes zero layout re-measurement because container dimensions are strictly invariant.
+        // ⭐ fix35h: full-screen viewer state — tap the picture to open it big.
+        var viewerOpen by remember { mutableStateOf(false) }
+
         Box(
             Modifier.fillMaxWidth()
                 .aspectRatio(1f)
@@ -119,25 +131,127 @@ fun ResultCard(
                 animationSpec = tween(240),
                 label = "resultCrossfade",
             ) { curShot ->
-                if (curShot != null) {
-                    if (curShot.file.name.endsWith(".mp4", ignoreCase = true)) {
-                        com.abrah.nightmare.ui.ClipPlayer(
-                            path = curShot.file.absolutePath,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else {
-                        Image(
-                            bitmap = curShot.bitmap,
-                            contentDescription = null,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                } else {
+                if (curShot == null) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
                             stringResource(R.string.newui_results),
                             color = Nm.sub,
+                        )
+                    }
+                } else if (curShot.file.name.endsWith(".mp4", ignoreCase = true)) {
+                    com.abrah.nightmare.ui.ClipPlayer(
+                        path = curShot.file.absolutePath,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else if (curShot.hasPost) {
+                    // ⭐ fix35h: two pages — the RAW render ⇄ the post-processed
+                    // picture — swiped exactly like the canvas fullscreen viewer
+                    // (CanvasScreen's Received ⇄ Made pager). The raw bitmap is
+                    // decoded lazily on the first swipe, never up front.
+                    val pager = rememberPagerState(pageCount = { 2 })
+                    HorizontalPager(
+                        state = pager,
+                        modifier = Modifier.fillMaxSize(),
+                    ) { page ->
+                        Image(
+                            bitmap = if (page == 0) curShot.rawBitmap else curShot.bitmap,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { viewerOpen = true },
+                        )
+                    }
+                    // ⭐ Page dots: with two nearly identical pictures the only
+                    // tell is the position, so the dots carry it.
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        repeat(2) { i ->
+                            Box(
+                                Modifier
+                                    .size(7.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(
+                                        if (pager.currentPage == i) Nm.pri
+                                        else Nm.sub.copy(alpha = 0.35f),
+                                    ),
+                            )
+                        }
+                    }
+                } else {
+                    Image(
+                        bitmap = curShot.bitmap,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { viewerOpen = true },
+                    )
+                }
+            }
+        }
+
+        // ⭐ fix35h: the full-screen viewer. Same two-page pager inside, so the
+        // swipe continues in fullscreen; tap anywhere to close.
+        if (viewerOpen && shot != null && !shot.file.name.endsWith(".mp4", ignoreCase = true)) {
+            val fsShot = shot
+            Dialog(
+                onDismissRequest = { viewerOpen = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.92f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { viewerOpen = false },
+                ) {
+                    if (fsShot.hasPost) {
+                        val fsPager = rememberPagerState(pageCount = { 2 })
+                        HorizontalPager(state = fsPager, modifier = Modifier.fillMaxSize()) { page ->
+                            Image(
+                                bitmap = if (page == 0) fsShot.rawBitmap else fsShot.bitmap,
+                                contentDescription = null,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 24.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            repeat(2) { i ->
+                                Box(
+                                    Modifier
+                                        .size(8.dp)
+                                        .clip(RoundedCornerShape(50))
+                                        .background(
+                                            if (fsPager.currentPage == i) Nm.pri
+                                            else Color.White.copy(alpha = 0.4f),
+                                        ),
+                                )
+                            }
+                        }
+                    } else {
+                        Image(
+                            bitmap = fsShot.bitmap,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize(),
                         )
                     }
                 }
@@ -148,10 +262,13 @@ fun ResultCard(
         GenerationProgressSection(phase = phase, onCancel = onCancel)
 
         // ── Load source (img2img only) & Save rendered image ───────────────
+        // ⭐ fix35h: the stray `onImportImageParams?.invoke(uri)` that used to
+        // sit here was the package author's slip — loading an img2img source
+        // ALSO fired the import-params flow, so "加载图片" and "导入图参" were
+        // wired together. Loading a source loads the source, nothing else.
         val pickSrc = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) {
                 onPickSrc(uri, queryDisplayName(ctx, uri) ?: "image")
-                onImportImageParams?.invoke(uri)
             }
         }
         val pickParamImage = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
