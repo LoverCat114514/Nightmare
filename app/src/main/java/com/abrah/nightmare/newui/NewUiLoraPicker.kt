@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -151,33 +152,26 @@ internal fun NewUiLoraPicker(
     }
     noting?.let { name ->
         val item = items.firstOrNull { it.name == name }
-        MaterialTheme(
-            colorScheme = nmScheme(androidx.compose.foundation.isSystemInDarkTheme()),
-            shapes = NmSheetShapes,
-        ) {
-            com.abrah.nightmare.canvas.LoraNoteDialog(
-                name = name,
-                note = notes[name].orEmpty(),
-                base = item?.base,
-                detected = item?.detected,
-                onSetBase = { b ->
-                    com.abrah.nightmare.LoraLibrary.setBase(ctx, name, b)
-                    overrides = com.abrah.nightmare.LoraLibrary.baseOverrides(ctx)
-                },
-                folder = folders[name],
-                folderChoices = com.abrah.nightmare.LoraLibrary.foldersFor(items, folders, item?.base),
-                onSetFolder = { fo ->
-                    com.abrah.nightmare.LoraLibrary.setFolder(ctx, name, fo)
-                    folders = com.abrah.nightmare.LoraLibrary.folders(ctx)
-                    fo?.let { openFolders = openFolders + it.trim() }
-                },
-                onSave = { onSaveNote?.invoke(name, it) },
-                onAddToPrompt = null,
-                onReplacePrompt = null,
-                onDelete = onDelete?.let { { deleting = name } },
-                onDismiss = { noting = null },
-            )
-        }
+        NewUiLoraNoteDialog(
+            name = name,
+            note = notes[name].orEmpty(),
+            base = item?.base,
+            detected = item?.detected,
+            onSetBase = { b ->
+                com.abrah.nightmare.LoraLibrary.setBase(ctx, name, b)
+                overrides = com.abrah.nightmare.LoraLibrary.baseOverrides(ctx)
+            },
+            folder = folders[name],
+            folderChoices = com.abrah.nightmare.LoraLibrary.foldersFor(items, folders, item?.base),
+            onSetFolder = { fo ->
+                com.abrah.nightmare.LoraLibrary.setFolder(ctx, name, fo)
+                folders = com.abrah.nightmare.LoraLibrary.folders(ctx)
+                fo?.let { openFolders = openFolders + it.trim() }
+            },
+            onSave = { onSaveNote?.invoke(name, it) },
+            onDelete = onDelete?.let { { deleting = name } },
+            onDismiss = { noting = null },
+        )
     }
     deleting?.let { name ->
         MaterialTheme(
@@ -308,7 +302,7 @@ internal fun NewUiLoraPicker(
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                "LoRA 特效工坊",
+                                "LoRA 列表",
                                 style = TextStyle(
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Black,
@@ -1103,4 +1097,371 @@ private fun sortLabelRes(s: com.abrah.nightmare.LoraLibrary.Sort): Int = when (s
     com.abrah.nightmare.LoraLibrary.Sort.NEWEST -> R.string.lora_sort_newest
     com.abrah.nightmare.LoraLibrary.Sort.MOST_USED -> R.string.lora_sort_used
     com.abrah.nightmare.LoraLibrary.Sort.SIZE -> R.string.lora_sort_size
+}
+
+/**
+ * ⭐⭐⭐ (2026-11-07) **NewUI专属 LoRA 笔记与分类弹窗 (重构图二)**
+ * 完全保持图一的设计语言：22dp 大圆角、悬浮亚克力磨砂质感、平滑贝塞尔物理进出场，
+ * 同时 100% 完整保留原有笔记编辑、Base 架构切换、文件夹管理、复制与删除功能。
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun NewUiLoraNoteDialog(
+    name: String,
+    note: String,
+    base: com.abrah.nightmare.LoraLibrary.Base?,
+    detected: com.abrah.nightmare.LoraLibrary.Base?,
+    onSetBase: ((com.abrah.nightmare.LoraLibrary.Base?) -> Unit)?,
+    folder: String?,
+    folderChoices: List<String>,
+    onSetFolder: ((String?) -> Unit)?,
+    onSave: (String) -> Unit,
+    onDelete: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    var text by remember(name) { mutableStateOf(note) }
+    var newFolder by remember(name) { mutableStateOf<String?>(null) }
+    val ctx = LocalContext.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+
+    val animProgress = remember { Animatable(0f) }
+    var dismissing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    val animateDismiss: (Boolean) -> Unit = { save ->
+        if (!dismissing) {
+            dismissing = true
+            if (save && text != note) {
+                onSave(text)
+            }
+            scope.launch {
+                animProgress.animateTo(
+                    0f,
+                    tween(240, easing = CubicBezierEasing(0.35f, 0f, 0.75f, 0.15f)),
+                )
+                onDismiss()
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        animProgress.animateTo(
+            1f,
+            tween(320, easing = CubicBezierEasing(0.18f, 0.90f, 0.25f, 1.0f)),
+        )
+    }
+
+    Dialog(
+        onDismissRequest = { animateDismiss(true) },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        val p = animProgress.value
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) { detectTapGestures { animateDismiss(true) } },
+            contentAlignment = Alignment.Center,
+        ) {
+            // Ambient Backdrop Dim
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = p }
+                    .background(Color.Black.copy(alpha = 0.50f))
+            )
+
+            // Modern Floating Modal Surface
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = if (Nm.customBgActive) Color.White.copy(alpha = (Nm.cardOpacity + 0.12f).coerceAtMost(0.98f)) else Color.White,
+                tonalElevation = 0.dp,
+                shadowElevation = 24.dp,
+                border = BorderStroke(
+                    1.2.dp,
+                    if (Nm.customBgActive) Color.White.copy(alpha = 0.85f) else Color(0xFFE5E2EC),
+                ),
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .wrapContentHeight()
+                    .pointerInput(Unit) { detectTapGestures { } }
+                    .graphicsLayer {
+                        alpha = p.coerceIn(0f, 1f)
+                        scaleX = 0.90f + 0.10f * p
+                        scaleY = 0.90f + 0.10f * p
+                        translationY = (1f - p) * 44.dp.toPx()
+                    },
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    // Header: Title & Close Button
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                name,
+                                style = TextStyle(
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Nm.ink,
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                "编辑触发词笔记与分类属性",
+                                style = TextStyle(fontSize = 11.5.sp, color = Nm.sub),
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
+
+                        Spacer(Modifier.width(8.dp))
+
+                        Box(
+                            Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.05f))
+                                .clickable { animateDismiss(true) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.close),
+                                tint = Nm.ink.copy(alpha = 0.75f),
+                                modifier = Modifier.size(17.dp),
+                            )
+                        }
+                    }
+
+                    // Text Field for Note / Trigger Words
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.65f) else Color(0xFFF6F5FA))
+                            .border(1.dp, Nm.line, RoundedCornerShape(14.dp))
+                            .padding(14.dp),
+                    ) {
+                        if (text.isEmpty()) {
+                            Text(
+                                stringResource(R.string.lora_note_hint),
+                                style = TextStyle(fontSize = 13.5.sp, color = Nm.sub.copy(alpha = 0.7f), lineHeight = 19.sp),
+                            )
+                        }
+                        BasicTextField(
+                            value = text,
+                            onValueChange = { text = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 3,
+                            maxLines = 8,
+                            textStyle = TextStyle(fontSize = 14.sp, color = Nm.ink, lineHeight = 20.sp),
+                            cursorBrush = SolidColor(Nm.pri),
+                        )
+                    }
+
+                    // Model Architecture Section (模型架构)
+                    if (onSetBase != null && detected != null) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                stringResource(R.string.lora_model_family),
+                                style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Nm.sub),
+                            )
+                            androidx.compose.foundation.layout.FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                verticalArrangement = Arrangement.spacedBy(7.dp),
+                            ) {
+                                val manual = base != null && base != detected
+                                val autoSelected = !manual
+                                PillBadge(
+                                    label = stringResource(R.string.lora_base_auto, detected.label),
+                                    selected = autoSelected,
+                                    onClick = { onSetBase(null) },
+                                )
+                                for (b in com.abrah.nightmare.LoraLibrary.Base.entries) {
+                                    if (b == com.abrah.nightmare.LoraLibrary.Base.OTHER) continue
+                                    val isSelected = manual && base == b
+                                    PillBadge(
+                                        label = b.label,
+                                        selected = isSelected,
+                                        onClick = { onSetBase(b) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Folder Section (文件夹归类)
+                    if (onSetFolder != null) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                stringResource(R.string.lora_folder),
+                                style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Nm.sub),
+                            )
+                            androidx.compose.foundation.layout.FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                verticalArrangement = Arrangement.spacedBy(7.dp),
+                            ) {
+                                PillBadge(
+                                    label = stringResource(R.string.lora_folder_none),
+                                    selected = folder == null,
+                                    onClick = { onSetFolder(null) },
+                                )
+                                for (fo in (folderChoices + listOfNotNull(folder)).distinct()) {
+                                    PillBadge(
+                                        label = fo,
+                                        selected = folder == fo,
+                                        onClick = { onSetFolder(fo) },
+                                    )
+                                }
+                                PillBadge(
+                                    label = "+ " + stringResource(R.string.lora_folder_new),
+                                    selected = newFolder != null,
+                                    onClick = { newFolder = if (newFolder != null) null else "" },
+                                )
+                            }
+                            newFolder?.let { typed ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Row(
+                                        Modifier
+                                            .weight(1f)
+                                            .height(38.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.7f) else Color(0xFFF6F5FA))
+                                            .border(1.dp, Nm.line, RoundedCornerShape(10.dp))
+                                            .padding(horizontal = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        BasicTextField(
+                                            value = typed,
+                                            onValueChange = { newFolder = it },
+                                            singleLine = true,
+                                            textStyle = TextStyle(fontSize = 13.sp, color = Nm.ink),
+                                            cursorBrush = SolidColor(Nm.pri),
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                    }
+                                    Box(
+                                        Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (typed.isNotBlank()) Nm.pri else Color(0xFFDDD9E6))
+                                            .clickable(enabled = typed.isNotBlank()) {
+                                                onSetFolder(typed.trim())
+                                                newFolder = null
+                                            }
+                                            .padding(horizontal = 14.dp, vertical = 9.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(
+                                            stringResource(R.string.lora_folder_add),
+                                            style = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Color.White),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Copy action button
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Start,
+                    ) {
+                        Row(
+                            Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.6f) else Color(0xFFF2F0F7))
+                                .border(1.dp, Color(0xFFE2E0E8), RoundedCornerShape(10.dp))
+                                .clickable(enabled = text.isNotBlank()) {
+                                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(text.trim()))
+                                    android.widget.Toast.makeText(ctx, ctx.getString(R.string.lora_note_copied), android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "📋 " + stringResource(R.string.err_copy),
+                                style = TextStyle(
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (text.isNotBlank()) Nm.ink else Nm.sub.copy(alpha = 0.5f),
+                                ),
+                            )
+                        }
+                    }
+
+                    // Footer Action Buttons
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        if (onDelete != null) {
+                            Row(
+                                Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFFFDE8E8))
+                                    .border(1.dp, Color(0xFFF8B4B4), RoundedCornerShape(12.dp))
+                                    .clickable { onDelete() }
+                                    .padding(horizontal = 16.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    stringResource(R.string.delete),
+                                    style = TextStyle(fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE02424)),
+                                )
+                            }
+                        } else {
+                            Spacer(Modifier.width(1.dp))
+                        }
+
+                        Text(
+                            stringResource(R.string.crop_done),
+                            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Nm.pri)
+                                .clickable { animateDismiss(true) }
+                                .padding(horizontal = 26.dp, vertical = 9.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PillBadge(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Text(
+        label,
+        style = TextStyle(
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) Color.White else Nm.ink,
+        ),
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (selected) Nm.pri else if (Nm.customBgActive) Color.White.copy(alpha = 0.65f) else Color(0xFFF3F1F7))
+            .border(1.dp, if (selected) Nm.pri else Color(0xFFE4E1EB), RoundedCornerShape(999.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    )
 }
