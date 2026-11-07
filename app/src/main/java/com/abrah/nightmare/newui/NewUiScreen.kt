@@ -488,9 +488,6 @@ fun NewUiScreen(
         }
 
         if (cat == "video") {
-            item(key = "video_model_card") {
-                com.abrah.nightmare.newui.card.VideoModelCard(s = s)
-            }
             item(key = "video_params_card") {
                 com.abrah.nightmare.newui.card.VideoParamsCard(s = s)
             }
