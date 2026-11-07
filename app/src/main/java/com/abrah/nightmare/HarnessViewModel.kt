@@ -7792,13 +7792,15 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun detailsOf(r: com.abrah.nightmare.canvas.Result): List<Pair<String, String>> {
-        val g = results.flow(r.id)?.workflow?.graph
+        // ⭐ fix35j: the flow-less branch is NOT `g == null` — keep() always
+        // writes a `flow` (a NewUI keep stores the canvas's then-current graph),
+        // so that check was dead code and the sheet always walked the graph,
+        // found no sampler, and showed Size + Nodes only. A NewUI keep puts the
+        // PARAMETER JSON in `prompt` (a canvas keep puts a real prompt there),
+        // so that is the reliable tell.
+        val isWbKeep = r.prompt?.trimStart()?.startsWith("{") == true
+        val g = if (isWbKeep) null else results.flow(r.id)?.workflow?.graph
         if (g == null) {
-            // ⭐ fix35i: a NewUI-kept result has no canvas flow behind it (the
-            // workbench is its own pipeline), so the graph walk below used to
-            // fall through to the sampler-less branch and show nothing but
-            // Size + Nodes — while the seed, the model and the whole parameter
-            // JSON sat in the result's own fields. Read them directly.
             val out = mutableListOf<Pair<String, String>>()
             out += "Size" to "${r.width}x${r.height}"
             r.model?.takeIf { it.isNotBlank() }?.let {
