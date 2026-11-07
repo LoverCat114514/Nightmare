@@ -396,9 +396,13 @@ fun NewUiScreen(
             s.driverVideoName = name
         }
     }
-    val onSaveCallback = remember(ctx) {
+    val onSaveCallback = remember(ctx, run) {
         {
-            shot?.let { saveShot(ctx, it) }
+            shot?.let { currentShot ->
+                run.runSideWork {
+                    saveShot(ctx, currentShot)
+                }
+            }
             Unit
         }
     }
@@ -432,7 +436,7 @@ fun NewUiScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // ── Card 1: the result ────────────────────────────────────────────
-        item(key = "result") {
+        item(key = "result", contentType = "result") {
             ResultCard(
                 ctx = ctx,
                 phase = phase,
@@ -458,7 +462,7 @@ fun NewUiScreen(
         }
 
         // ── Card 2: the mode ──────────────────────────────────────────────
-        item(key = "mode") {
+        item(key = "mode", contentType = "mode") {
             ModeCard(
                 s = s,
                 family = family,
@@ -473,13 +477,13 @@ fun NewUiScreen(
 
         // ── Flow Specific Functional Cards ─────────────────────────────────
         if (s.mode == "face_edit") {
-            item(key = "face_edit_card") {
+            item(key = "face_edit_card", contentType = "face_edit") {
                 com.abrah.nightmare.newui.card.FaceEditCard(s = s)
             }
         }
 
         if (s.mode in setOf("animate_portrait", "motion")) {
-            item(key = "driver_video_card") {
+            item(key = "driver_video_card", contentType = "driver_video") {
                 com.abrah.nightmare.newui.card.DriverVideoCard(
                     s = s,
                     onPickVideo = onPickVideoCallback,
@@ -487,14 +491,14 @@ fun NewUiScreen(
             }
         }
 
-        if (cat == "video") {
-            item(key = "video_params_card") {
+        if (cat == "video" && s.mode != "motion") {
+            item(key = "video_params_card", contentType = "video_params") {
                 com.abrah.nightmare.newui.card.VideoParamsCard(s = s)
             }
         }
 
         if (cat == "advanced") {
-            item(key = "advanced_control_card") {
+            item(key = "advanced_control_card", contentType = "advanced_control") {
                 com.abrah.nightmare.newui.card.AdvancedControlCard(
                     s = s,
                     onPickControlNet = onPickControlNetCallback,
@@ -505,7 +509,7 @@ fun NewUiScreen(
 
         // ── Card 3: the prompts (for prompt-driven flows) ───────────────────
         if (cat in setOf("pictures", "advanced", "edit", "video") && s.mode !in setOf("upscale", "motion")) {
-            item(key = "prompts") {
+            item(key = "prompts", contentType = "prompts") {
                 PromptsCard(
                     positive = positive,
                     negative = negative,
@@ -517,7 +521,7 @@ fun NewUiScreen(
 
         // ── Card 4: the model (checkpoint + LoRA) ─────────────────────────
         if ((cat in setOf("pictures", "advanced", "edit") && s.mode != "upscale") || s.mode == "t2v14") {
-            item(key = "model") {
+            item(key = "model", contentType = "model") {
                 ModelCard(
                     ctx = ctx,
                     s = s,
@@ -534,7 +538,7 @@ fun NewUiScreen(
 
         // ── Card 5: the parameters (size, scheduler, steps, cfg) ───────────
         if (cat in setOf("pictures", "advanced") && s.mode != "upscale") {
-            item(key = "params") {
+            item(key = "params", contentType = "params") {
                 ParamsCard(
                     ctx = ctx,
                     s = s,

@@ -247,13 +247,18 @@ fun buildRequest(
             )
         }
         "motion" -> {
+            val motionParams = mutableMapOf(
+                com.abrah.nightmare.npu.WanFun.START to "0.0",
+                com.abrah.nightmare.npu.WanFun.END to s.videoSeconds.toString(),
+            )
+            if (s.fixedSeed && s.seed > 0L) motionParams["seed"] = s.seed.toString()
             return RunRequest(
                 flow = "motion",
                 model = null,
                 prompt = null,
                 negative = null,
                 knobs = emptyMap(),
-                params = emptyMap(),
+                params = mapOf("motion" to motionParams),
                 images = images,
                 videos = videos,
             )

@@ -100,35 +100,8 @@ fun ResultCard(
     onCancel: () -> Unit,
 ) {
     NmCard {
-        // ── The status line ────────────────────────────────────────────────
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            if (phase.running) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(13.dp),
-                    strokeWidth = 2.dp,
-                    color = Nm.pri,
-                )
-                val progressText = when {
-                    phase.total > 0 -> "生成中 ${phase.step}/${phase.total} (${(phase.fraction!! * 100).toInt()}%)"
-                    else -> phase.message.ifBlank { "正在生成…" }
-                }
-                Text(
-                    progressText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Nm.pri,
-                    fontWeight = FontWeight.Bold,
-                )
-            } else {
-                Text(
-                    statusText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Nm.sub,
-                )
-            }
-        }
+        // ── The status line (isolated recomposition) ──────────────────────
+        GenerationStatusHeader(phase = phase, statusText = statusText)
 
         // ── The square frame ───────────────────────────────────────────────
         // Fixed 1:1 ratio box with smooth crossfade on new render arrival.
@@ -171,28 +144,8 @@ fun ResultCard(
             }
         }
 
-        // ── Progress + cancel, only while a run is on ──────────────────────
-        if (phase.running) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    phase.message.ifBlank {
-                        if (phase.total > 0) "${phase.step} / ${phase.total}" else "…"
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Nm.ink,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = onCancel) {
-                    Text(stringResource(R.string.cancel_run))
-                }
-            }
-            LinearProgressIndicator(
-                progress = { phase.fraction ?: 0f },
-                modifier = Modifier.fillMaxWidth(),
-                color = Nm.pri,
-                trackColor = Nm.line,
-            )
-        }
+        // ── Progress + cancel (isolated recomposition) ────────────────────
+        GenerationProgressSection(phase = phase, onCancel = onCancel)
 
         // ── Load source (img2img only) & Save rendered image ───────────────
         val pickSrc = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -416,4 +369,76 @@ private fun queryDisplayName(ctx: Context, uri: Uri): String? = try {
     }
 } catch (_: Exception) {
     null
+}
+
+/**
+ * ⭐ Isolated status header: only this leaf recomposes on step updates during generation,
+ * preventing expensive recomposition of the preview box and entire card hierarchy.
+ */
+@Composable
+private fun GenerationStatusHeader(
+    phase: RunController.Phase,
+    statusText: String,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (phase.running) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(13.dp),
+                strokeWidth = 2.dp,
+                color = Nm.pri,
+            )
+            val progressText = when {
+                phase.total > 0 -> "生成中 ${phase.step}/${phase.total} (${(phase.fraction!! * 100).toInt()}%)"
+                else -> phase.message.ifBlank { "正在生成…" }
+            }
+            Text(
+                progressText,
+                style = MaterialTheme.typography.labelSmall,
+                color = Nm.pri,
+                fontWeight = FontWeight.Bold,
+            )
+        } else {
+            Text(
+                statusText,
+                style = MaterialTheme.typography.labelSmall,
+                color = Nm.sub,
+            )
+        }
+    }
+}
+
+/**
+ * ⭐ Isolated progress bar section: steps and fraction stay within this leaf composable.
+ */
+@Composable
+private fun GenerationProgressSection(
+    phase: RunController.Phase,
+    onCancel: () -> Unit,
+) {
+    if (phase.running) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    phase.message.ifBlank {
+                        if (phase.total > 0) "${phase.step} / ${phase.total}" else "…"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Nm.ink,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onCancel) {
+                    Text(stringResource(R.string.cancel_run))
+                }
+            }
+            LinearProgressIndicator(
+                progress = { phase.fraction ?: 0f },
+                modifier = Modifier.fillMaxWidth(),
+                color = Nm.pri,
+                trackColor = Nm.line,
+            )
+        }
+    }
 }

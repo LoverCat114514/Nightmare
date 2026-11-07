@@ -163,9 +163,19 @@ fun DriverVideoCard(
     }
 
     NmCard {
-        CardTitle("🎬 动作驱动视频")
+        CardTitle(if (s.mode == "motion") "🕺 动作迁移设置" else "🎬 动作驱动视频")
+        if (s.mode == "motion") {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("视频模型: ", style = MaterialTheme.typography.labelMedium, color = Nm.sub)
+                Text("Wan 2.2 Fun Control (推荐专属模型)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Nm.ink)
+            }
+        }
         Text(
-            "选择一段包含面部动作或身体姿态的 MP4 视频，模型将提取其中的动态并迁移到源人像上。",
+            if (s.mode == "motion") "选择包含目标动作姿态的驱动视频 (MP4)，模型将把姿态精确迁移到上方人物底图中。"
+            else "选择一段包含面部动作的 MP4 视频，模型将提取其中的面部表情动态并迁移到源人像上。",
             style = MaterialTheme.typography.bodySmall,
             color = Nm.sub,
         )
@@ -203,13 +213,65 @@ fun DriverVideoCard(
             }
         }
 
+        // 时长预设胶囊
+        Text("生成片段时长", style = MaterialTheme.typography.labelMedium, color = Nm.sub)
+        val durations = listOf(1 to "1 秒", 2 to "2 秒", 3 to "3 秒", 5 to "5 秒", 10 to "10 秒")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            durations.forEach { (sec, label) ->
+                val isSel = s.videoSeconds == sec
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (isSel) Nm.priSoft else Color.Transparent)
+                        .border(1.dp, if (isSel) Nm.priLine else Nm.fld, RoundedCornerShape(10.dp))
+                        .clickable { s.videoSeconds = sec }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isSel) Nm.pri else Nm.sub,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+
+        // 仅此一个精确微调滑块
         PostSlider(
-            label = "动画时长 (Seconds)",
+            label = "自定义精确时长 (秒)",
             value = s.videoSeconds.toFloat(),
             range = 1f..30f,
             fmt = { "${it.toInt()} 秒" },
             onSet = { s.videoSeconds = it.toInt() },
         )
+
+        // 随机种子控制 (动作迁移)
+        if (s.mode == "motion") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("固定随机种子 (Seed)", style = MaterialTheme.typography.titleSmall, color = Nm.ink)
+                    Text(
+                        if (s.fixedSeed) "当前锁定为: ${s.seed}" else "随机生成全新种子",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Nm.sub,
+                    )
+                }
+                Switch(
+                    checked = s.fixedSeed,
+                    onCheckedChange = {
+                        s.fixedSeed = it
+                        if (it && s.seed == 0L) s.seed = (1L..999999999L).random()
+                    },
+                )
+            }
+        }
     }
 }
 
