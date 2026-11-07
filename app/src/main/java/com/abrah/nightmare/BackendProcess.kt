@@ -114,6 +114,46 @@ object BackendProcess {
      * ⚠ Null when nothing looks like an error — the caller then says only that
      * it would not start, rather than inventing a reason.
      */
+    @Volatile
+    var lastStartError: String? = null
+
+    /**
+     * Detailed failure reason for people to act on when backend fails or crashes before/during serving.
+     */
+    fun failureDetail(): String {
+        assertReason()?.let { return it }
+        failureReason()?.let { return it }
+        lastStartError?.let { return it }
+        synchronized(output) {
+            val lines = newestLaunch()
+            val err = lines.asReversed().firstOrNull { line ->
+                val l = line.lowercase()
+                (l.contains("file not found") ||
+                 l.contains("cannot open") ||
+                 l.contains("terminate called") ||
+                 l.contains("what():") ||
+                 l.contains("dlopen failed") ||
+                 l.contains("cannot link") ||
+                 l.contains("address already in use") ||
+                 l.contains("failed to") ||
+                 l.contains("fatal") ||
+                 l.contains("abort")) && HARMLESS_ERRORS.none { h -> h in line }
+            }
+            if (err != null) {
+                val clean = if (" - " in err) err.substringAfter(" - ") else err
+                return clean.removePrefix("ERROR:").trim()
+            }
+        }
+        exitMeaning()?.let { return it }
+        val lastLine = synchronized(output) {
+            newestLaunch().asReversed().firstOrNull { it.isNotBlank() && !it.startsWith(EXEC_PREFIX) }
+        }
+        if (lastLine != null) {
+            return lastLine.trim()
+        }
+        return "后台进程启动失败或意外退出"
+    }
+
     fun failureReason(): String? = synchronized(output) {
         // ⚠⚠ Only the NEWEST launch's lines (everything after its `exec:`). The
         // buffer holds 400 lines across launches, and "the oldest error" taken
@@ -864,6 +904,7 @@ object BackendProcess {
             if (isRunning) return@withContext Start.Failed("already running")
             // ⚠ A self-test line from a previous launch must not relaunch this one.
             hmxFailedThisLaunch = false
+            lastStartError = null
             // ⚠ Nor its arch / hwinfo / HMX lines reach this launch's error report.
             engineNpu = emptyMap()
             try {
@@ -956,6 +997,55 @@ object BackendProcess {
                         "${te.name} in ${spec.label} uses ${bad.sorted().joinToString()}, which the NPU cannot run. " +
                             "Use a Q4_0 or Q8_0 text encoder (the one this model downloads is Q4_0)"
                     )
+                }
+                if (!upscalerOnly && spec != null) {
+                    val missingParts = spec.missing(context)
+                    if (missingParts.isNotEmpty()) {
+                        val msg = "${spec.label} 缺少必要组件: ${missingParts.joinToString()}，请前往模型页面重新下载或补全"
+                        lastStartError = msg
+                        return@withContext Start.Failed(msg)
+                    }
+                    if (dit) {
+                        val ditWeights = File(model, "dit.gguf").takeIf { it.isFile }
+                            ?: File(model, "dit.safetensors").takeIf { it.isFile }
+                        if (ditWeights == null) {
+                            val msg = "模型目录缺少核心权重文件 (dit.gguf 或 dit.safetensors)"
+                            lastStartError = msg
+                            return@withContext Start.Failed(msg)
+                        }
+                    }
+                    if (spec.family == Family.MOSS) {
+                        val tok = File(model, "tokenizer.json").takeIf { it.isFile }
+                            ?: spec.donorDir(model)?.let { File(it, "tokenizer.json") }?.takeIf { it.isFile }
+                            ?: File(model.parentFile, "moss_image/tokenizer.json").takeIf { it.isFile }
+                            ?: File(model.parentFile, "moss_image_base/tokenizer.json").takeIf { it.isFile }
+                            ?: File(model.parentFile, "moss_image_turbo/tokenizer.json").takeIf { it.isFile }
+                        if (tok == null) {
+                            val msg = "MOSS 模型缺少 tokenizer.json，请先下载官方 MOSS-Image 基础模型或在模型目录中放入 tokenizer.json"
+                            lastStartError = msg
+                            return@withContext Start.Failed(msg)
+                        }
+                        val llm = File(model, "llm.gguf").takeIf { it.isFile }
+                            ?: spec.donorDir(model)?.let { File(it, "llm.gguf") }?.takeIf { it.isFile }
+                            ?: File(model.parentFile, "moss_image/llm.gguf").takeIf { it.isFile }
+                            ?: File(model.parentFile, "moss_image_base/llm.gguf").takeIf { it.isFile }
+                            ?: File(model.parentFile, "moss_image_turbo/llm.gguf").takeIf { it.isFile }
+                        if (llm == null) {
+                            val msg = "MOSS 模型缺少文本编码器 (llm.gguf)，请先安装官方 MOSS-Image 基础模型借用或补齐文件"
+                            lastStartError = msg
+                            return@withContext Start.Failed(msg)
+                        }
+                        val vae = File(model, "vae.safetensors").takeIf { it.isFile }
+                            ?: spec.donorDir(model)?.let { File(it, "vae.safetensors") }?.takeIf { it.isFile }
+                            ?: File(model.parentFile, "moss_image/vae.safetensors").takeIf { it.isFile }
+                            ?: File(model.parentFile, "moss_image_base/vae.safetensors").takeIf { it.isFile }
+                            ?: File(model.parentFile, "moss_image_turbo/vae.safetensors").takeIf { it.isFile }
+                        if (vae == null) {
+                            val msg = "MOSS 模型缺少 VAE 解码器 (vae.safetensors)，请先安装官方 MOSS-Image 基础模型借用或补齐文件"
+                            lastStartError = msg
+                            return@withContext Start.Failed(msg)
+                        }
+                    }
                 }
                 val patch = spec?.patchFor(context, res)
 
@@ -1131,11 +1221,16 @@ object BackendProcess {
                         // ⭐ MOSS-Image's Qwen3.5 is not Qwen2's vocabulary: the engine reads its tokenizer.json from here
                         // (`dit/028`), and refuses to start without it.
                         // ⭐ Its own tokenizer, else its donor's ([ModelSpec.partsFrom]: MOSS Base borrows SFT's, backend 040).
-                        if (spec?.family == Family.MOSS) put(
-                            "SD_QWEN35_TOKENIZER",
-                            (File(model, "tokenizer.json").takeIf { it.isFile } ?: spec.donorDir(model)?.let { File(it, "tokenizer.json") }
-                                ?: File(model, "tokenizer.json")).absolutePath,
-                        )
+                        if (spec?.family == Family.MOSS) {
+                            val tok = File(model, "tokenizer.json").takeIf { it.isFile }
+                                ?: spec.donorDir(model)?.let { File(it, "tokenizer.json") }?.takeIf { it.isFile }
+                                ?: File(model.parentFile, "moss_image/tokenizer.json").takeIf { it.isFile }
+                                ?: File(model.parentFile, "moss_image_base/tokenizer.json").takeIf { it.isFile }
+                                ?: File(model.parentFile, "moss_image_turbo/tokenizer.json").takeIf { it.isFile }
+                                ?: File(model.parentFile, "${CustomModels.DIT_SHARED}/tokenizer.json").takeIf { it.isFile }
+                                ?: File(model, "tokenizer.json")
+                            put("SD_QWEN35_TOKENIZER", tok.absolutePath)
+                        }
                         // ⭐ Wan 2.2 A14B (engine `dit/044`): its high-noise expert and Lightning's two halves, one per
                         // expert, read by the engine from here so the `--type wan` launch stays the 5B's.
                         putAll(wanA14Env(model, DeviceProbe.caps().let { if (it.known) it.arch else 0 }))
@@ -1341,7 +1436,10 @@ object BackendProcess {
     @Volatile
     private var hmxFailedThisLaunch = false
 
-    fun takeHmxFailure(): Boolean = hmxFailedThisLaunch.also { hmxFailedThisLaunch = false }
+    fun takeHmxFailure(): Boolean = hmxFailedThisLaunch.also {
+        hmxFailedThisLaunch = false
+        lastStartError = null
+    }
 
     private fun say(line: String) {
         Log.i(TAG, line)

@@ -223,7 +223,10 @@ class ApiCore(internal val ctx: Context, val ops: HarnessOps, private val holder
             val answer = JSONObject().put("run", p.runId)
             var images = emptyList<Pair<String, String>>()
             when (outcome) {
-                null -> answer.put("error", "the backend did not start for this flow")
+                null -> {
+                    val why = ops.lastError ?: com.abrah.nightmare.BackendProcess.failureDetail()
+                    answer.put("error", why)
+                }
                 "cancelled" -> answer.put("error", "cancelled")
                 is GraphRun -> {
                     answer.put("ms", outcome.totalMs).put("warnings", warnings)
@@ -251,6 +254,12 @@ class ApiCore(internal val ctx: Context, val ops: HarnessOps, private val holder
             val spec = ModelCatalog.byId(id)
             if (spec == null || !spec.installed(ctx)) return "node \"${n.id}\" needs model \"$id\", which is not installed"
             if (spec.isDit && !DitEngine.isInstalled(ctx)) return "${spec.label} needs the DiT engine. Download it in the app first"
+        }
+        // ⭐ Neodragon video model check
+        if (graph.nodes.any { it.type == "nd.sample" }) {
+            val vi = com.abrah.nightmare.npu.VideoInstaller
+            val missing = vi.missing(ctx) + vi.missingAssets(ctx)
+            if (missing.isNotEmpty()) return "node \"video\" needs Neodragon components (${missing.joinToString()}), which are not installed"
         }
         // ⭐ Wan names no `model` param: its node is its model, as in `modelsPresentOrAsk`.
         for (n in graph.nodes) {

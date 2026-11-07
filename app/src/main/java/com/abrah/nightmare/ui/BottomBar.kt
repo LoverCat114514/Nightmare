@@ -172,7 +172,7 @@ fun NightmareBottomBar(
         ) {
         Surface(
             shape = RoundedCornerShape(percent = 50),
-            color = Color.White.copy(alpha = 0.48f),
+            color = if (com.abrah.nightmare.canvas.CanvasColors.customBackgroundActive) Color.White.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.95f),
             tonalElevation = 0.dp,
             shadowElevation = 8.dp,
             border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.75f)),

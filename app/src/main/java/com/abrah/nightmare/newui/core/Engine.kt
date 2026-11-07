@@ -354,8 +354,9 @@ fun buildRequest(
                     "$fn@${LoraPick.formatWeight(pick.weight)}"
                 }
             }
+            val samplerNodeId = if (mode == WbParams.MODE_INPAINT) "inpaint" else if (mode == "flux_edit") "edit" else "generate"
             val params = if (s.mossOn && model.family == Family.MOSS) {
-                mapOf("generate" to mapOf(SdSampler.MOSS_LAYOUT to "true"))
+                mapOf(samplerNodeId to mapOf(SdSampler.MOSS_LAYOUT to "true"))
             } else {
                 emptyMap()
             }

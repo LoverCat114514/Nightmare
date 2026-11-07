@@ -121,10 +121,32 @@ fun applyOverrides(
         if (takers.isEmpty()) throw ApiError(400, "no sampler in this flow takes \"$k\"")
         for (n in takers) g = g.withParam(n.id, k, checked(types.getValue(n.type), n.id, k, v))
     }
+    // ⭐ Retarget video node type if specified in params["video"]["model"] (e.g. nd.sample, h3.sample, wan_nsfw13)
+    val videoTarget = req.params["video"]?.get("model")
+    if (videoTarget != null && videoTarget in com.abrah.nightmare.VIDEO_MODEL_TYPES) {
+        val node = g.byId["video"]
+        if (node != null && node.type != videoTarget) {
+            val targetType = videoTarget
+            val ports = types[targetType]?.inputs?.map { it.name }?.toSet().orEmpty()
+            val outs = types[targetType]?.outputs?.map { it.name }?.toSet().orEmpty()
+            val keep = node.params.filterKeys { it in setOf("seed", "x", "y", "w", "h") }
+            g = Graph(
+                g.nodes.map { n ->
+                    when (n.id) {
+                        "video" -> n.copy(type = targetType, params = keep, inputs = n.inputs.filterKeys { it in ports })
+                        else -> n.copy(inputs = n.inputs.filterValues { s -> s.node != "video" || s.port == null || s.port in outs })
+                    }
+                }
+            )
+        }
+    }
     for ((id, p) in req.params) {
         val n = g.byId[id] ?: throw ApiError(400, "params: no node \"$id\" in this flow")
         val t = types[n.type] ?: throw ApiError(400, "params: node \"$id\" has an unknown type ${n.type}")
-        g = g.withParams(id, p.mapValues { (k, v) -> checked(t, id, k, v) })
+        val filtered = if (id == "video" && n.type in com.abrah.nightmare.VIDEO_MODEL_TYPES) {
+            p.filterKeys { it != "model" }
+        } else p
+        g = g.withParams(id, filtered.mapValues { (k, v) -> checked(t, id, k, v) })
     }
     for ((id, b64) in req.images) {
         val n = g.byId[id] ?: throw ApiError(400, "images: no node \"$id\" in this flow")

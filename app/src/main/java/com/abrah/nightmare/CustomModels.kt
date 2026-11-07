@@ -153,10 +153,12 @@ object CustomModels {
     const val MOSS_NO_SPEED_MARK = "MOSSNOSPEED"
 
     /** ⭐ Whether [dir] (a MOSS import) can take the speed-up: not few-step already, and its donor holds the LoRA. */
-    fun mossSpeedAvailable(dir: File): Boolean =
-        File(dir, MOSS_MARK).isFile && !File(dir, MOSS_FEW_STEP_MARK).isFile &&
-            runCatching { File(dir, PARTS_FROM_FILE).readText().trim() }.getOrNull()
-                ?.let { File(File(dir.parentFile, it), ModelCatalog.MOSS_LORA).isFile } == true
+    fun mossSpeedAvailable(dir: File): Boolean {
+        if (!File(dir, MOSS_MARK).isFile || File(dir, MOSS_FEW_STEP_MARK).isFile) return false
+        val donorName = runCatching { File(dir, PARTS_FROM_FILE).readText().trim() }.getOrNull()
+            ?: ModelCatalog.builtIn.firstOrNull { it.family == Family.MOSS && it.id != dir.name && File(dir.parentFile, it.id).isDirectory }?.id
+        return donorName?.let { File(File(dir.parentFile, it), ModelCatalog.MOSS_LORA).isFile } == true
+    }
 
     fun mossSpeedOn(dir: File): Boolean = mossSpeedAvailable(dir) && !File(dir, MOSS_NO_SPEED_MARK).isFile
 
@@ -510,7 +512,8 @@ object CustomModels {
         ownDitParts = klein9b || family == Family.QWEN21 || family == Family.KREA2 || family == Family.ANIMA_DIT ||
             family == Family.MOSS || family == Family.FLUX3 || family == Family.FIBO2,
         // ⭐ An import that borrows an installed model's parts ([PARTS_FROM_FILE]): MOSS beside the built-in.
-        partsFrom = runCatching { File(dir, PARTS_FROM_FILE).readText().trim() }.getOrNull()?.takeIf { isValidName(it) },
+        partsFrom = runCatching { File(dir, PARTS_FROM_FILE).readText().trim() }.getOrNull()?.takeIf { isValidName(it) }
+            ?: ModelCatalog.builtIn.firstOrNull { it.family == family && it.id != dir.name && File(dir.parentFile, it.id).isDirectory }?.id,
         // ⭐ The donor's 8-step LoRA ([mossSpeedOn]), found through [ModelSpec.ownLoraFile].
         ownLora = if (family == Family.MOSS && mossSpeedOn(dir)) ModelCatalog.MOSS_LORA else null,
         id = dir.name,

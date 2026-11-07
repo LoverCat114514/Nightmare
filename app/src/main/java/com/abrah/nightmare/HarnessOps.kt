@@ -32,6 +32,9 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         fun backend(state: BackendState) {}
     }
 
+        var lastError: String? = null
+        internal set
+
     private fun say(text: String, bad: Boolean = false) = sink.say(text, bad)
 
     /** Bumped per decode so successive runs differ, and visibly so. */
@@ -2913,7 +2916,9 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         }
         val spec = ModelCatalog.byId(target.model)
         if (spec == null || !spec.installed(ctx)) {
-            say("no model installed. Open Models and download one", bad = true)
+            val why = if (spec == null) "未找到模型 \"${target.model}\"" else "${spec.label} 缺少必要模型文件，请重新下载或补全"
+            lastError = why
+            say(why, bad = true)
             return false
         }
         // ⚠ A DiT engine takes the size per request, so a launch size there is a fixed placeholder; a
@@ -2939,13 +2944,20 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         /** ⚠ The caller's registry — the VM avoids building the plugin host for a plugin-free graph. */
         types: Map<String, NodeType> = nodeTypes(),
     ): Boolean {
+        lastError = null
         // ⚠⚠ The prompt's describe models hold up to ~2 GB at their peak and their
         // idle window is a minute, and "describe, then Run" is the flow they exist
         // for — a checkpoint load must not meet them (`PictureModels`' lmkd note).
         DescribeMode.models.forEach { it.trim() }
         val namesNoKey = runCatching { contextKeyModels(graph, types).isEmpty() }.getOrDefault(false)
-        if (namesNoKey) return ensureBackend(noModel = true)
-        return ensureBackend(launchKeyFor(graph, types, BackendProcess.launchedKey))
+        if (namesNoKey) {
+            val ok = ensureBackend(noModel = true)
+            if (!ok && lastError == null) lastError = BackendProcess.failureDetail()
+            return ok
+        }
+        val ok = ensureBackend(launchKeyFor(graph, types, BackendProcess.launchedKey))
+        if (!ok && lastError == null) lastError = BackendProcess.failureDetail()
+        return ok
     }
 
     suspend fun canvasRun() {
@@ -5567,6 +5579,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             upscalerOnly = upscalerOnly, memoryBudget = want?.memoryBudget,
         )) {
             is BackendProcess.Start.Failed -> {
+                lastError = r.why
                 say("start failed. ${r.why}", bad = true)
                 drainBackendLog()
                 return false
@@ -5595,9 +5608,11 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                         BackendProcess.awaitExit(1_500)
                     }
                     sink.backend(BackendState.DOWN)
+                    val detail = BackendProcess.failureDetail()
+                    lastError = detail
                     say(
-                        if (died) "the backend exited before serving. Its output follows"
-                        else "no /health after 45s. Backend output follows",
+                        if (died) "the backend exited before serving: $detail"
+                        else "no /health after 45s. Backend output follows: $detail",
                         bad = true,
                     )
                     drainBackendLog()

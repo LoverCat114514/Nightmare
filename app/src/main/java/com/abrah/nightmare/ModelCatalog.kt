@@ -728,8 +728,18 @@ data class ModelSpec(
     val active: List<RemoteFile>
         get() = buildFor(DeviceProbe.caps())?.files?.takeIf { it.isNotEmpty() } ?: files
 
-    /** ⭐ [partsFrom]'s folder beside [modelDir], or null. */
-    fun donorDir(modelDir: File): File? = partsFrom?.let { File(modelDir.parentFile, it) }
+    /** ⭐ [partsFrom]'s folder beside [modelDir], or an installed donor of the same family, or null. */
+    fun donorDir(modelDir: File): File? {
+        val named = partsFrom?.let { File(modelDir.parentFile, it) }
+        if (named != null && named.isDirectory) return named
+        if (family == Family.MOSS || family == Family.FLUX3 || family == Family.FIBO2 || family == Family.WAN) {
+            val candidate = ModelCatalog.builtIn.firstOrNull { b ->
+                b.family == family && b.id != id && File(modelDir.parentFile, b.id).isDirectory
+            }
+            if (candidate != null) return File(modelDir.parentFile, candidate.id)
+        }
+        return named
+    }
 
     /** ⭐ [ownLora] on disk: this model's own copy, else its donor's (a MOSS import's speed-up). Null when neither. */
     fun ownLoraFile(modelDir: File): File? = ownLora?.let { name ->
