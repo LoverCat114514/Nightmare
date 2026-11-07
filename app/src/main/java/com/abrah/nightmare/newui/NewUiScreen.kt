@@ -239,34 +239,36 @@ fun NewUiScreen(
             )
             if (result is RunController.Result.Success) {
                 val f = result.file
-                val bmp = android.graphics.BitmapFactory.decodeFile(f.absolutePath)
+                val isVideo = f.name.endsWith(".mp4", ignoreCase = true)
+                val bmp = if (isVideo) {
+                    com.abrah.nightmare.npu.FilmJoin.firstFrame(f)
+                } else {
+                    android.graphics.BitmapFactory.decodeFile(f.absolutePath)
+                }
                 if (bmp == null) {
                     RunController.Result.Failure("the result could not be decoded")
                 } else {
                     var out = bmp
-                    if (s.pColor) out = autoColour(out)
-                    if (s.adjOn) out = applyAdjust(out, s)
-                    // ⭐ The upscale switches: the main row's x4 and the
-                    // More-options x2. Both may be on — they stack; each hint
-                    // says what it does.
-                    if (s.pUps) {
-                        run.note("post-processing…")
-                        out = android.graphics.Bitmap.createScaledBitmap(
-                            out, out.width * 4, out.height * 4, true,
-                        )
-                    }
-                    if (s.pUps2) {
-                        run.note("post-processing…")
-                        out = android.graphics.Bitmap.createScaledBitmap(
-                            out, out.width * 2, out.height * 2, true,
-                        )
+                    if (!isVideo) {
+                        if (s.pColor) out = autoColour(out)
+                        if (s.adjOn) out = applyAdjust(out, s)
+                        if (s.pUps) {
+                            run.note("post-processing…")
+                            out = android.graphics.Bitmap.createScaledBitmap(
+                                out, out.width * 4, out.height * 4, true,
+                            )
+                        }
+                        if (s.pUps2) {
+                            run.note("post-processing…")
+                            out = android.graphics.Bitmap.createScaledBitmap(
+                                out, out.width * 2, out.height * 2, true,
+                            )
+                        }
                     }
                     val metaJson = buildMetaJson(s, positive, negative, s.seed)
                     val made = Shot(out.asImageBitmap(), System.currentTimeMillis(), s.seed, f, meta = metaJson)
                     shot = made
                     if (s.autosave) {
-                        // ⭐ A NEW list, capped at 12 like the app's own result
-                        // pages. Never an in-place mutation of a state list.
                         history = (listOf(made) + history).take(12)
                     }
                     result
@@ -368,6 +370,30 @@ fun NewUiScreen(
             srcName = name
         }
     }
+    val onPickControlNetCallback = remember(ctx) {
+        { uri: android.net.Uri?, name: String ->
+            s.controlNetImagePath = uri?.let { uriToDataUrl(ctx, it) }
+            s.controlNetImageName = name
+        }
+    }
+    val onPickIpAdapterCallback = remember(ctx) {
+        { uri: android.net.Uri?, name: String ->
+            s.ipAdapterImagePath = uri?.let { uriToDataUrl(ctx, it) }
+            s.ipAdapterImageName = name
+        }
+    }
+    val onPickVideoCallback = remember(ctx) {
+        { uri: android.net.Uri?, name: String ->
+            s.driverVideoPath = uri?.let { u ->
+                val cacheFile = java.io.File(ctx.cacheDir, "driver_video.mp4")
+                ctx.contentResolver.openInputStream(u)?.use { inp ->
+                    cacheFile.outputStream().use { inp.copyTo(it) }
+                }
+                cacheFile.absolutePath
+            }
+            s.driverVideoName = name
+        }
+    }
     val onSaveCallback = remember(ctx) {
         {
             shot?.let { saveShot(ctx, it) }
@@ -439,40 +465,80 @@ fun NewUiScreen(
             )
         }
 
-        // ── Card 3: the prompts ───────────────────────────────────────────
-        item(key = "prompts") {
-            PromptsCard(
-                positive = positive,
-                negative = negative,
-                onPositiveChange = { positive = it },
-                onNegativeChange = { negative = it },
-            )
+        val cat = com.abrah.nightmare.newui.card.categoryForMode(s.mode)
+
+        // ── Flow Specific Functional Cards ─────────────────────────────────
+        if (s.mode == "face_edit") {
+            item(key = "face_edit_card") {
+                com.abrah.nightmare.newui.card.FaceEditCard(s = s)
+            }
         }
 
-        // ── Card 4: the model ─────────────────────────────────────────────
-        item(key = "model") {
-            ModelCard(
-                ctx = ctx,
-                s = s,
-                modelId = s.modelId,
-                family = family,
-                loraEpoch = loraEpoch,
-                onPicked = onPickedModelCallback,
-                onImportLora = onImportLoraCallback,
-                onBrowseLoras = onBrowseLoras,
-                onDeleteLora = onDeleteLora,
-            )
+        if (s.mode in setOf("animate_portrait", "motion")) {
+            item(key = "driver_video_card") {
+                com.abrah.nightmare.newui.card.DriverVideoCard(
+                    s = s,
+                    onPickVideo = onPickVideoCallback,
+                )
+            }
         }
 
-        // ── Card 5: the parameters ────────────────────────────────────────
-        item(key = "params") {
-            ParamsCard(
-                ctx = ctx,
-                s = s,
-                family = family,
-                onPicked = {},
-                onApply = applyPost,
-            )
+        if (cat == "video") {
+            item(key = "video_params_card") {
+                com.abrah.nightmare.newui.card.VideoParamsCard(s = s)
+            }
+        }
+
+        if (cat == "advanced") {
+            item(key = "advanced_control_card") {
+                com.abrah.nightmare.newui.card.AdvancedControlCard(
+                    s = s,
+                    onPickControlNet = onPickControlNetCallback,
+                    onPickIpAdapter = onPickIpAdapterCallback,
+                )
+            }
+        }
+
+        // ── Card 3: the prompts (for prompt-driven flows) ───────────────────
+        if (cat in setOf("pictures", "advanced", "edit", "video") && s.mode !in setOf("upscale", "motion")) {
+            item(key = "prompts") {
+                PromptsCard(
+                    positive = positive,
+                    negative = negative,
+                    onPositiveChange = { positive = it },
+                    onNegativeChange = { negative = it },
+                )
+            }
+        }
+
+        // ── Card 4: the model (checkpoint + LoRA) ─────────────────────────
+        if ((cat in setOf("pictures", "advanced", "edit") && s.mode != "upscale") || s.mode == "t2v14") {
+            item(key = "model") {
+                ModelCard(
+                    ctx = ctx,
+                    s = s,
+                    modelId = s.modelId,
+                    family = family,
+                    loraEpoch = loraEpoch,
+                    onPicked = onPickedModelCallback,
+                    onImportLora = onImportLoraCallback,
+                    onBrowseLoras = onBrowseLoras,
+                    onDeleteLora = onDeleteLora,
+                )
+            }
+        }
+
+        // ── Card 5: the parameters (size, scheduler, steps, cfg) ───────────
+        if (cat in setOf("pictures", "advanced") && s.mode != "upscale") {
+            item(key = "params") {
+                ParamsCard(
+                    ctx = ctx,
+                    s = s,
+                    family = family,
+                    onPicked = {},
+                    onApply = applyPost,
+                )
+            }
         }
     }
 }

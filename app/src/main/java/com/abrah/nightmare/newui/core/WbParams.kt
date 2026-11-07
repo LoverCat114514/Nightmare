@@ -95,6 +95,29 @@ class WbParams(
     var adjSa by mutableStateOf(adjSa)
     var warm by mutableStateOf(warm)
 
+    // ⭐ Flow specific parameters
+    var faceSmile by mutableStateOf(0.6f)
+    var faceEyes by mutableStateOf(0.0f)
+    var faceLipOpen by mutableStateOf(0.0f)
+    var faceMouthPout by mutableStateOf(0.0f)
+    var facePitch by mutableStateOf(0.0f)
+    var faceYaw by mutableStateOf(0.0f)
+    var faceRoll by mutableStateOf(0.0f)
+
+    var videoSeconds by mutableStateOf(2)
+    var driverVideoPath by mutableStateOf<String?>(null)
+    var driverVideoName by mutableStateOf("")
+
+    var controlNetOn by mutableStateOf(false)
+    var controlNetStrength by mutableStateOf(1.0f)
+    var controlNetImagePath by mutableStateOf<String?>(null)
+    var controlNetImageName by mutableStateOf("")
+
+    var ipAdapterOn by mutableStateOf(false)
+    var ipAdapterWeight by mutableStateOf(0.8f)
+    var ipAdapterImagePath by mutableStateOf<String?>(null)
+    var ipAdapterImageName by mutableStateOf("")
+
     companion object {
         const val MODE_TXT2IMG = "txt2img"
         const val MODE_IMG2IMG = "img2img"

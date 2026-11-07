@@ -147,12 +147,19 @@ fun ResultCard(
                 label = "resultCrossfade",
             ) { curShot ->
                 if (curShot != null) {
-                    Image(
-                        bitmap = curShot.bitmap,
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    if (curShot.file.name.endsWith(".mp4", ignoreCase = true)) {
+                        com.abrah.nightmare.ui.ClipPlayer(
+                            path = curShot.file.absolutePath,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Image(
+                            bitmap = curShot.bitmap,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(

@@ -133,9 +133,8 @@ class Engine(ctx: Context) {
             val err = js.optString("error")
             if (err.isNotEmpty()) return RunController.Result.Failure(err)
 
-            val first = res.images.firstOrNull()
-                ?: return RunController.Result.Empty("no picture came out of this run")
             val url = js.optJSONArray("results")?.optJSONObject(0)?.optString("url").orEmpty()
+            if (url.isEmpty()) return RunController.Result.Empty("no result came out of this run")
             val file = core.resultFileOf(url)
             return RunController.Result.Success(file, System.currentTimeMillis() - t0)
         } catch (e: ApiError) {
@@ -186,18 +185,27 @@ fun buildRequest(
         "i2v",
         "motion",
     )
-    val images = if (takesImage) {
+    val images = mutableMapOf<String, String>()
+    if (takesImage) {
         val b64 = srcDataUrl
             ?: throw ApiError(400, "当前流程需要先加载一张源图片")
-        mapOf("image" to b64)
-    } else {
-        emptyMap()
+        images["image"] = b64
+    }
+
+    val videos = mutableMapOf<String, String>()
+    if (mode == "animate_portrait" || mode == "motion") {
+        val vpath = s.driverVideoPath
+            ?: throw ApiError(400, "当前流程需要先选择一段驱动视频 (MP4)")
+        val f = java.io.File(vpath)
+        if (!f.exists()) throw ApiError(400, "驱动视频文件不存在")
+        val b64 = android.util.Base64.encodeToString(f.readBytes(), android.util.Base64.NO_WRAP)
+        videos["clip"] = b64
     }
 
     when (mode) {
-        "upscale", "face_edit", "animate_portrait", "motion" -> {
+        "upscale" -> {
             return RunRequest(
-                flow = mode,
+                flow = "upscale",
                 model = null,
                 prompt = null,
                 negative = null,
@@ -206,31 +214,88 @@ fun buildRequest(
                 images = images,
             )
         }
-        "t2v", "i2v" -> {
-            val knobs = mutableMapOf<String, String>()
-            if (s.fixedSeed && s.seed > 0L) knobs["seed"] = s.seed.toString()
+        "face_edit" -> {
+            val faceParams = mapOf(
+                "mouth_smile" to s.faceSmile.toString(),
+                "eye_open_ratio" to s.faceEyes.toString(),
+                "lip_open_ratio" to s.faceLipOpen.toString(),
+                "mouth_pout" to s.faceMouthPout.toString(),
+                "head_pitch" to s.facePitch.toString(),
+                "head_yaw" to s.faceYaw.toString(),
+                "head_roll" to s.faceRoll.toString(),
+            )
             return RunRequest(
-                flow = mode,
+                flow = "face_edit",
+                model = null,
+                prompt = null,
+                negative = null,
+                knobs = emptyMap(),
+                params = mapOf("face" to faceParams),
+                images = images,
+            )
+        }
+        "animate_portrait" -> {
+            return RunRequest(
+                flow = "animate_portrait",
+                model = null,
+                prompt = null,
+                negative = null,
+                knobs = emptyMap(),
+                params = mapOf("animate" to mapOf("seconds" to s.videoSeconds.toString())),
+                images = images,
+                videos = videos,
+            )
+        }
+        "motion" -> {
+            return RunRequest(
+                flow = "motion",
+                model = null,
+                prompt = null,
+                negative = null,
+                knobs = emptyMap(),
+                params = emptyMap(),
+                images = images,
+                videos = videos,
+            )
+        }
+        "t2v" -> {
+            val videoParams = mutableMapOf("seconds" to s.videoSeconds.toString())
+            if (s.fixedSeed && s.seed > 0L) videoParams["seed"] = s.seed.toString()
+            return RunRequest(
+                flow = "t2v",
                 model = null,
                 prompt = prompt,
                 negative = negative,
-                knobs = knobs,
-                params = emptyMap(),
+                knobs = emptyMap(),
+                params = mapOf("video" to videoParams),
+                images = emptyMap(),
+            )
+        }
+        "i2v" -> {
+            val videoParams = mutableMapOf("seconds" to s.videoSeconds.toString())
+            if (s.fixedSeed && s.seed > 0L) videoParams["seed"] = s.seed.toString()
+            return RunRequest(
+                flow = "i2v",
+                model = null,
+                prompt = prompt,
+                negative = negative,
+                knobs = emptyMap(),
+                params = mapOf("video" to videoParams),
                 images = images,
             )
         }
         "t2v14" -> {
-            val model = ModelCatalog.byId(s.modelId) ?: throw ApiError(400, "no model selected")
-            val knobs = mutableMapOf<String, String>()
-            if (s.fixedSeed && s.seed > 0L) knobs["seed"] = s.seed.toString()
+            val model = ModelCatalog.byId(s.modelId) ?: throw ApiError(400, "14B顶级视频需要先选择第一帧生成模型")
+            val videoParams = mutableMapOf("seconds" to s.videoSeconds.toString())
+            if (s.fixedSeed && s.seed > 0L) videoParams["seed"] = s.seed.toString()
             return RunRequest(
-                flow = mode,
+                flow = "t2v14",
                 model = model.id,
                 prompt = prompt,
                 negative = negative,
-                knobs = knobs,
-                params = emptyMap(),
-                images = images,
+                knobs = emptyMap(),
+                params = mapOf("video" to videoParams),
+                images = emptyMap(),
             )
         }
         else -> {
@@ -406,26 +471,42 @@ object PngMetadata {
 /** Finished PNG → Pictures/Nightmare via MediaStore; with embedded ComfyUI-like parameter metadata. */
 fun saveShot(ctx: Context, shot: Shot) {
     try {
-        val name = "nm-" + System.currentTimeMillis() + ".png"
-        val cv = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, name)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Nightmare")
-        }
-        val uri = ctx.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
-            ?: throw IllegalStateException("MediaStore insert failed")
-        ctx.contentResolver.openOutputStream(uri)?.use { out ->
-            if (shot.meta != null) {
-                PngMetadata.injectMetadata(shot.file, shot.meta, out)
-            } else {
+        val isVideo = shot.file.name.endsWith(".mp4", ignoreCase = true)
+        if (isVideo) {
+            val name = "nm-" + System.currentTimeMillis() + ".mp4"
+            val cv = ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, name)
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/Nightmare")
+            }
+            val uri = ctx.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cv)
+                ?: throw IllegalStateException("MediaStore insert failed")
+            ctx.contentResolver.openOutputStream(uri)?.use { out ->
                 java.io.FileInputStream(shot.file).use { it.copyTo(out) }
             }
+            Toast.makeText(ctx, "视频已保存至相册: Movies/Nightmare/$name", Toast.LENGTH_SHORT).show()
+        } else {
+            val name = "nm-" + System.currentTimeMillis() + ".png"
+            val cv = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Nightmare")
+            }
+            val uri = ctx.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+                ?: throw IllegalStateException("MediaStore insert failed")
+            ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                if (shot.meta != null) {
+                    PngMetadata.injectMetadata(shot.file, shot.meta, out)
+                } else {
+                    java.io.FileInputStream(shot.file).use { it.copyTo(out) }
+                }
+            }
+            Toast.makeText(
+                ctx,
+                ctx.getString(R.string.newui_saved, "Pictures/Nightmare/$name"),
+                Toast.LENGTH_SHORT,
+            ).show()
         }
-        Toast.makeText(
-            ctx,
-            ctx.getString(R.string.newui_saved, "Pictures/Nightmare/$name"),
-            Toast.LENGTH_SHORT,
-        ).show()
     } catch (e: Exception) {
         Toast.makeText(ctx, "save: " + e.message, Toast.LENGTH_SHORT).show()
     }
