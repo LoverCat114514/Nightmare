@@ -1,17 +1,33 @@
 package com.abrah.nightmare.newui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,7 +38,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
@@ -36,17 +51,23 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -61,34 +82,17 @@ import com.abrah.nightmare.R
 import com.abrah.nightmare.newui.theme.Nm
 import com.abrah.nightmare.newui.theme.NmSheetShapes
 import com.abrah.nightmare.newui.theme.nmScheme
+import kotlinx.coroutines.launch
 
 /**
- * ⭐⭐⭐ (2026-11-05, fourteenth round) **The workbench's LoRA sheet**, to the
- * user's own mock-up. A rewrite of the thirteenth round's sheet, whose rows
- * crowded a switch, a slider and a ⋮ into one line and whose weight column read
- * as a minus sign.
+ * ⭐⭐⭐ (2026-11-07) **The workbench's LoRA picker** — completely redesigned for
+ * fluid physical animation, modern acrylic glass aesthetics, and seamless theme support.
  *
- * What the mock-up asked for, and what is drawn here:
- *
- *  - **顶部** — the how-to line folded behind a `?` (it is reference, not
- *    instruction); a **X** at the top right, because "only Done or the
- *    backdrop closes it" is not a way out.
- *  - **每一条 a CARD** — a faint ground and a corner, air between the rows, the
- *    file name as the title and `MOSS · 141 MB` as the grey subtitle.
- *  - **开关与滑块联动** — a row that is OFF has NO slider at all (the old
- *    disabled bar plus its `—` was the "减号" that confused the user) and reads
- *    grey throughout; a row that is ON shows the slider with its figure to the
- *    right of it.
- *  - **筛选** — the selected chip is FILLED with the accent and set in white,
- *    not a pale tint; the sort button says `↑↓ 名称` rather than looking like
- *    one more filter.
- *  - **搜索** — a magnifier and `搜索 LoRA…`, not a bare `过滤…`.
- *  - **底部** — `+ 导入` as a light text button (a secondary act), `完成` as the
- *    one filled button.
- *
- * ⚠⚠ The four functions the user kept are all still here: grouping (family
- * chips, the per-row family line, the ⋮'s folders), search, import, and the ⋮
- * menu (note, family, folder, delete).
+ * Visual & Motion Upgrades:
+ *  - **优雅升降入场/退场动画**：自屏幕底部带有微妙缩放与自然平滑曲线的升起 (360ms) 与收拢 (240ms)。
+ *  - **磨砂亚克力玻璃质感**：22dp 大圆角悬浮卡片、高透微晶边框，完美透出自定义背景。
+ *  - **滑块平滑展开与折叠**：开启 LoRA 时滑块带物理动画平滑滚出（AnimatedVisibility），彻底消除布局突跳。
+ *  - **触控开关物理反馈**：丝滑弹簧位移动效（animateDpAsState + spring）。
  */
 @Composable
 internal fun NewUiLoraPicker(
@@ -106,16 +110,8 @@ internal fun NewUiLoraPicker(
     experimental: Boolean = false,
     allowNegative: Boolean = false,
 ) {
-    // ⚠ Seeded from the param and re-seeded when it changes, so the sheet shows
-    // what the node actually carries rather than a copy that drifted.
     var chosen by remember(spec) { mutableStateOf(com.abrah.nightmare.LoraSpec.parse(spec)) }
     fun commit(next: List<com.abrah.nightmare.LoraSpec.Entry>) {
-        // ⭐ probe v4 (review report 1 §6): log every selection write with its
-        // outcome — distinguishes "callback ran, list unchanged" (the dead-tap
-        // signature) from a real flip, and shows the count the UI should draw.
-        // The name is the DIFF against the old list: the added entry on a
-        // select, the removed one on a deselect (`next.lastOrNull()` alone
-        // logged "?" for the last-item removal).
         val removed = next.size < chosen.size
         val name = if (removed) chosen.firstOrNull { e -> next.none { it.name == e.name } }?.name ?: "?"
                    else next.lastOrNull()?.name ?: "?"
@@ -124,10 +120,6 @@ internal fun NewUiLoraPicker(
         onSet(com.abrah.nightmare.LoraSpec.format(next))
     }
     val ctx = LocalContext.current
-    // ⭐ fix30 (audit): all four derived snapshots re-key on [library] — the file
-    // list changes behind the sheet (import/delete bump the caller's loraEpoch),
-    // and an unkeyed remember kept the OLD grouping/folders/favourites/uses
-    // until the sheet was fully torn down and re-composed.
     var overrides by remember(library) { mutableStateOf(com.abrah.nightmare.LoraLibrary.baseOverrides(ctx)) }
     var folders by remember(library) { mutableStateOf(com.abrah.nightmare.LoraLibrary.folders(ctx)) }
     var openFolders by remember { mutableStateOf(emptySet<String>()) }
@@ -140,13 +132,9 @@ internal fun NewUiLoraPicker(
     var noting by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf<String?>(null) }
     var typing by remember { mutableStateOf<String?>(null) }
-    // ⭐ The how-to line starts folded: a first-time reader needs the range, a
-    // regular one needs the list.
     var showHint by remember { mutableStateOf(false) }
 
-    // ── ⭐ 更多: the note editor, the typed weight, the delete confirm. Wrapped
-    // in the workbench palette so the three inherit it too (they are the app's
-    // own dialogs, not redrawn here).
+    // Sub-dialogs
     typing?.let { name ->
         val entry = chosen.firstOrNull { it.name == name }
         if (entry == null) typing = null
@@ -185,8 +173,6 @@ internal fun NewUiLoraPicker(
                     fo?.let { openFolders = openFolders + it.trim() }
                 },
                 onSave = { onSaveNote?.invoke(name, it) },
-                // ⚠ No prompt node on this screen: null keeps the two prompt
-                // buttons DIMMED and saying why, rather than removed.
                 onAddToPrompt = null,
                 onReplacePrompt = null,
                 onDelete = onDelete?.let { { deleting = name } },
@@ -203,9 +189,6 @@ internal fun NewUiLoraPicker(
                 name,
                 onConfirm = {
                     noting = null
-                    // ⚠ Unticked on THIS screen too: deleting a LoRA that is on
-                    // means "not this one", and leaving it named would only make
-                    // the next Run refuse.
                     if (chosen.any { it.name == name }) commit(chosen.filterNot { it.name == name })
                     onDelete?.invoke(name)
                 },
@@ -219,10 +202,6 @@ internal fun NewUiLoraPicker(
     var query by remember { mutableStateOf("") }
     var favourites by remember(library) { mutableStateOf(com.abrah.nightmare.LoraLibrary.favourites(ctx)) }
     val uses = remember(library) { com.abrah.nightmare.LoraLibrary.uses(ctx) }
-    // ⭐ fix31 (friend's audit P0-2): the derived collections ran BARE in
-    // composition — every recomposition of the sheet (every slider drag, every
-    // folder flip) re-sorted `arrange` and rebuilt three O(n) maps/sets. All
-    // keyed on what they actually read.
     val bases = remember(items) {
         items.map { it.base }.distinct().sortedBy { if (it == nodeBase) -1 else it.ordinal }
     }
@@ -232,299 +211,410 @@ internal fun NewUiLoraPicker(
     val installedNames = remember(items) { items.map { it.name }.toSet() }
     val sizes = remember(items) { items.associate { it.name to it.bytes } }
     val baseOf = remember(items) { items.associate { it.name to it.base } }
-    // ⚠⚠ Chosen ones FIRST and in their own order, then everything else: the
-    // order in the param is the order the engine applies them in, so re-sorting
-    // the list would silently re-sort the stack.
     val rows = remember(chosen, arranged) {
         chosen.map { it.name }.distinct() +
         arranged.map { it.name }.filter { n -> chosen.none { it.name == n } }
     }
 
+    // ⭐ Smooth physical entrance and exit animation
+    val animProgress = remember { Animatable(0f) }
+    var dismissing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    val animateDismiss: () -> Unit = {
+        if (!dismissing) {
+            dismissing = true
+            scope.launch {
+                animProgress.animateTo(
+                    0f,
+                    tween(240, easing = CubicBezierEasing(0.35f, 0f, 0.75f, 0.15f)),
+                )
+                onDismiss()
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        animProgress.animateTo(
+            1f,
+            tween(360, easing = CubicBezierEasing(0.18f, 0.90f, 0.25f, 1.0f)),
+        )
+    }
+
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { animateDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Column(
-            Modifier.fillMaxWidth(0.92f).wrapContentHeight()
-                .clip(RoundedCornerShape(14.dp))
-                .background(Nm.card)
-                .border(1.dp, Nm.line, RoundedCornerShape(14.dp))
-                .padding(16.dp),
+        val p = animProgress.value
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) { detectTapGestures { animateDismiss() } },
+            contentAlignment = Alignment.Center,
         ) {
-            // ── ⭐ The title row: the name, then `?` and `X`. Both are ways out
-            // of a line that used to take three lines of dialog to read.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    stringResource(R.string.newui_lora_sheet_title),
-                    style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Nm.ink),
-                    modifier = Modifier.weight(1f),
-                )
-                Box(
-                    Modifier.size(28.dp).clip(CircleShape).clickable { showHint = !showHint },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "?",
-                        style = TextStyle(
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (showHint) Nm.pri else Nm.sub,
-                        ),
-                    )
-                }
-                Box(
-                    Modifier.size(32.dp).clip(CircleShape).clickable { onDismiss() },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Filled.Close,
-                        contentDescription = stringResource(R.string.close),
-                        tint = Nm.sub,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-            // ⭐ The how-to, folded: reference, not instruction.
-            if (showHint) {
-                Text(
-                    stringResource(R.string.newui_lora_pick_hint),
-                    style = TextStyle(fontSize = 11.5.sp, color = Nm.sub),
-                    modifier = Modifier.padding(top = 2.dp, bottom = 2.dp),
-                )
-            }
-            // ── ⭐ 搜索: a magnifier and a name, not a bare `过滤…`.
-            Row(
-                Modifier.fillMaxWidth()
-                    .padding(top = 10.dp)
-                    .heightIn(min = 42.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color.White)
-                    .border(1.dp, Nm.fld, RoundedCornerShape(10.dp))
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            // Ambient Backdrop Dim
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = p }
+                    .background(Color.Black.copy(alpha = 0.40f))
+            )
+
+            // ⭐ Modern Glassmorphic Modal Card
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = if (Nm.customBgActive) Color.White.copy(alpha = (Nm.cardOpacity + 0.10f).coerceAtMost(0.98f)) else Color.White,
+                tonalElevation = 0.dp,
+                shadowElevation = 18.dp,
+                border = BorderStroke(
+                    1.2.dp,
+                    if (Nm.customBgActive) Color.White.copy(alpha = 0.85f) else Nm.line,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .wrapContentHeight()
+                    .pointerInput(Unit) { detectTapGestures { } }
+                    .graphicsLayer {
+                        alpha = p.coerceIn(0f, 1f)
+                        scaleX = 0.88f + 0.12f * p
+                        scaleY = 0.88f + 0.12f * p
+                        translationY = (1f - p) * 56.dp.toPx()
+                    },
             ) {
-                Icon(
-                    Icons.Filled.Search,
-                    contentDescription = null,
-                    tint = Nm.sub,
-                    modifier = Modifier.size(17.dp),
-                )
-                Box(Modifier.weight(1f).padding(start = 8.dp)) {
-                    if (query.isEmpty()) {
-                        Text(
-                            stringResource(R.string.newui_lora_search),
-                            style = TextStyle(fontSize = 13.5.sp, color = Nm.sub),
-                        )
-                    }
-                    BasicTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        singleLine = true,
-                        textStyle = TextStyle(fontSize = 13.5.sp, color = Nm.ink),
-                        cursorBrush = SolidColor(Nm.pri),
+                Column(
+                    Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+                ) {
+                    // ── Header ─────────────────────────────────────────────
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                if (query.isNotEmpty()) {
-                    Box(
-                        Modifier.size(24.dp).clip(CircleShape).clickable { query = "" },
-                        contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            Icons.Filled.Close,
-                            contentDescription = stringResource(R.string.close),
-                            tint = Nm.sub,
-                            modifier = Modifier.size(15.dp),
-                        )
-                    }
-                }
-            }
-            // ── ⭐ 筛选: the sort says what it is, the chosen chip is FILLED.
-            Row(
-                Modifier.fillMaxWidth().padding(top = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                var sortOpen by remember { mutableStateOf(false) }
-                Box {
-                    // ⚠ The arrows are text, not a vector: `SwapVert` is NOT in
-                    // material-icons-core, and the extended set is 55 MB of dex
-                    // this build deliberately does not carry.
-                    Text(
-                        "↑↓ " + stringResource(sortLabelRes(sort)),
-                        style = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Nm.sub),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.White)
-                            .border(1.dp, Nm.line, RoundedCornerShape(10.dp))
-                            .clickable { sortOpen = true }
-                            .padding(horizontal = 10.dp, vertical = 7.dp),
-                    )
-                    DropdownMenu(expanded = sortOpen, onDismissRequest = { sortOpen = false }) {
-                        for (s in com.abrah.nightmare.LoraLibrary.Sort.entries) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(sortLabelRes(s))) },
-                                onClick = { sort = s; sortOpen = false },
+                        Column(Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    stringResource(R.string.newui_lora_sheet_title),
+                                    style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = Nm.ink),
+                                )
+                                if (chosen.isNotEmpty()) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Box(
+                                        Modifier
+                                            .clip(RoundedCornerShape(999.dp))
+                                            .background(Nm.priSoft)
+                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                    ) {
+                                        Text(
+                                            "已选 ${chosen.size}",
+                                            style = TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Nm.pri),
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                "微调各模型权重，点击数值可精准输入",
+                                style = TextStyle(fontSize = 11.5.sp, color = Nm.sub),
+                                modifier = Modifier.padding(top = 2.dp),
                             )
                         }
-                    }
-                }
-                Row(
-                    Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    NmChip(stringResource(R.string.lora_base_all), base == null) { base = null }
-                    for (b in bases) NmChip(b.label, base == b) { base = if (base == b) null else b }
-                }
-            }
-            // ── The list. ⚠ heightIn(max) so the sheet stops growing at the
-            // phone's height and scrolls instead.
-            // ⭐ fix30 (audit): LazyColumn — the old Column.verticalScroll composed
-            // EVERY row on first show and on every folder flip, so a big library
-            // paid for all of it up front. Keys keep each row identified across
-            // reorders (chosen-first reshuffles on every toggle).
-            LazyColumn(
-                Modifier.fillMaxWidth().padding(top = 10.dp)
-                    .heightIn(max = 380.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (experimental) {
-                    item(key = "note") {
-                        com.abrah.nightmare.canvas.ExperimentalLoraNote(Modifier.fillMaxWidth())
-                    }
-                }
-                if (rows.isEmpty()) {
-                    item(key = "empty") {
-                        Text(
-                            stringResource(R.string.newui_lora_empty),
-                            style = TextStyle(fontSize = 13.sp, color = Nm.sub),
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
-                        )
-                    }
-                }
-                // ⭐⭐ The chosen ones first, then the folders, then the rest.
-                // ⚠ Flat while filtering: a match inside a closed folder must show.
-                val chosenRows = rows.filter { n -> chosen.any { it.name == n } }
-                val rest = rows.filter { n -> chosen.none { it.name == n } }
-                val (groups, loose) = if (query.isBlank())
-                    com.abrah.nightmare.LoraLibrary.grouped(rest, folders)
-                else emptyList<Pair<String, List<String>>>() to rest
 
-                val draw: @Composable (String) -> Unit = { name ->
-                    val entry = chosen.firstOrNull { it.name == name }
-                    val missing = name !in installedNames
-                    NmCard(
-                        name = name,
-                        entry = entry,
-                        base = baseOf[name],
-                        bytes = sizes[name] ?: 0L,
-                        missing = missing,
-                        hasNote = !notes[name].isNullOrBlank(),
-                        allowNegative = allowNegative,
-                        onToggle = { on ->
-                            if (on) com.abrah.nightmare.LoraLibrary.markUsed(ctx, name)
-                            commit(
-                                if (on) chosen + com.abrah.nightmare.LoraSpec.Entry(name, com.abrah.nightmare.LoraSpec.FULL)
-                                else chosen.filterNot { it.name == name },
+                        // Help button
+                        Box(
+                            Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(if (showHint) Nm.priSoft else Color.Transparent)
+                                .clickable { showHint = !showHint },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "?",
+                                style = TextStyle(
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (showHint) Nm.pri else Nm.sub,
+                                ),
                             )
-                        },
-                        onWeight = { v ->
-                            // ⚠ Snapped before it is stored: `0.8500001` is not a
-                            // strength anyone typed.
-                            val snapped = com.abrah.nightmare.LoraSpec.snapped(v, allowNegative)
-                            commit(chosen.map { if (it.name == name) it.copy(strength = snapped) else it })
-                        },
-                        onType = { typing = name },
-                        onMore = if (onSaveNote != null && !missing) {
-                            { noting = name }
-                        } else null,
-                    )
-                }
-                items(chosenRows, key = { "lora:$it" }) { name -> draw(name) }
-                for ((folder, names) in groups) {
-                    val isOpen = folder in openFolders
-                    item(key = "hdr:$folder") {
-                        Row(
-                            Modifier.fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    openFolders = if (isOpen) openFolders - folder else openFolders + folder
-                                }
-                                .padding(vertical = 4.dp, horizontal = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                        }
+
+                        Spacer(Modifier.width(6.dp))
+
+                        // Close button
+                        Box(
+                            Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.04f))
+                                .clickable { animateDismiss() },
+                            contentAlignment = Alignment.Center,
                         ) {
                             Icon(
-                                if (isOpen) Icons.Filled.KeyboardArrowDown
-                                else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = stringResource(R.string.lora_cd_folder, folder),
-                                tint = Nm.sub,
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.close),
+                                tint = Nm.ink.copy(alpha = 0.7f),
                                 modifier = Modifier.size(18.dp),
-                            )
-                            Text(
-                                stringResource(R.string.lora_folder_count, folder, names.size),
-                                style = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Nm.ink),
-                                modifier = Modifier.padding(start = 4.dp),
                             )
                         }
                     }
-                    if (isOpen) items(names, key = { "lora:$it" }) { name -> draw(name) }
-                }
-                items(loose, key = { "lora:$it" }) { name -> draw(name) }
-            }
-            // ── ⭐ 底部: the two ways to get a LoRA in are LIGHT (secondary),
-            // `完成` is the one filled button (primary).
-            Row(
-                Modifier.fillMaxWidth().padding(top = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                onImport?.let { act ->
+
+                    // Collapsible Hint
+                    AnimatedVisibility(
+                        visible = showHint,
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut(),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Nm.priSoft.copy(alpha = 0.5f))
+                                .padding(10.dp),
+                        ) {
+                            Text(
+                                stringResource(R.string.newui_lora_pick_hint),
+                                style = TextStyle(fontSize = 11.5.sp, color = Nm.sub, lineHeight = 16.sp),
+                            )
+                        }
+                    }
+
+                    // ── Search Bar ──────────────────────────────────────────
                     Row(
-                        Modifier.clip(RoundedCornerShape(8.dp)).clickable { act() }
-                            .padding(vertical = 4.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.65f) else Color(0xFFF6F5FA))
+                            .border(1.dp, Nm.line, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
-                            Icons.Filled.Add,
+                            Icons.Filled.Search,
                             contentDescription = null,
-                            tint = Nm.pri,
-                            modifier = Modifier.size(15.dp),
+                            tint = Nm.sub,
+                            modifier = Modifier.size(17.dp),
                         )
+                        Box(Modifier.weight(1f).padding(start = 8.dp)) {
+                            if (query.isEmpty()) {
+                                Text(
+                                    stringResource(R.string.newui_lora_search),
+                                    style = TextStyle(fontSize = 13.5.sp, color = Nm.sub),
+                                )
+                            }
+                            BasicTextField(
+                                value = query,
+                                onValueChange = { query = it },
+                                singleLine = true,
+                                textStyle = TextStyle(fontSize = 13.5.sp, color = Nm.ink),
+                                cursorBrush = SolidColor(Nm.pri),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        if (query.isNotEmpty()) {
+                            Box(
+                                Modifier
+                                    .size(24.dp)
+                                    .clip(CircleShape)
+                                    .clickable { query = "" },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = stringResource(R.string.close),
+                                    tint = Nm.sub,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                            }
+                        }
+                    }
+
+                    // ── Filter & Sort Chips ────────────────────────────────
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        var sortOpen by remember { mutableStateOf(false) }
+                        Box {
+                            Text(
+                                "↑↓ " + stringResource(sortLabelRes(sort)),
+                                style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Nm.sub),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.7f) else Color(0xFFF6F5FA))
+                                    .border(1.dp, Nm.line, RoundedCornerShape(10.dp))
+                                    .clickable { sortOpen = true }
+                                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                            )
+                            DropdownMenu(expanded = sortOpen, onDismissRequest = { sortOpen = false }) {
+                                for (s in com.abrah.nightmare.LoraLibrary.Sort.entries) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(sortLabelRes(s))) },
+                                        onClick = { sort = s; sortOpen = false },
+                                    )
+                                }
+                            }
+                        }
+                        Row(
+                            Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            NmChip(stringResource(R.string.lora_base_all), base == null) { base = null }
+                            for (b in bases) NmChip(b.label, base == b) { base = if (base == b) null else b }
+                        }
+                    }
+
+                    // ── LoRA List ───────────────────────────────────────────
+                    LazyColumn(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp)
+                            .heightIn(max = 380.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (experimental) {
+                            item(key = "note") {
+                                com.abrah.nightmare.canvas.ExperimentalLoraNote(Modifier.fillMaxWidth())
+                            }
+                        }
+                        if (rows.isEmpty()) {
+                            item(key = "empty") {
+                                Text(
+                                    stringResource(R.string.newui_lora_empty),
+                                    style = TextStyle(fontSize = 13.sp, color = Nm.sub),
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                                )
+                            }
+                        }
+                        val chosenRows = rows.filter { n -> chosen.any { it.name == n } }
+                        val rest = rows.filter { n -> chosen.none { it.name == n } }
+                        val (groups, loose) = if (query.isBlank())
+                            com.abrah.nightmare.LoraLibrary.grouped(rest, folders)
+                        else emptyList<Pair<String, List<String>>>() to rest
+
+                        val draw: @Composable (String) -> Unit = { name ->
+                            val entry = chosen.firstOrNull { it.name == name }
+                            val missing = name !in installedNames
+                            NmCard(
+                                name = name,
+                                entry = entry,
+                                base = baseOf[name],
+                                bytes = sizes[name] ?: 0L,
+                                missing = missing,
+                                hasNote = !notes[name].isNullOrBlank(),
+                                allowNegative = allowNegative,
+                                onToggle = { on ->
+                                    if (on) com.abrah.nightmare.LoraLibrary.markUsed(ctx, name)
+                                    commit(
+                                        if (on) chosen + com.abrah.nightmare.LoraSpec.Entry(name, com.abrah.nightmare.LoraSpec.FULL)
+                                        else chosen.filterNot { it.name == name },
+                                    )
+                                },
+                                onWeight = { v ->
+                                    val snapped = com.abrah.nightmare.LoraSpec.snapped(v, allowNegative)
+                                    commit(chosen.map { if (it.name == name) it.copy(strength = snapped) else it })
+                                },
+                                onType = { typing = name },
+                                onMore = if (onSaveNote != null && !missing) {
+                                    { noting = name }
+                                } else null,
+                            )
+                        }
+                        items(chosenRows, key = { "lora:$it" }) { name -> draw(name) }
+                        for ((folder, names) in groups) {
+                            val isOpen = folder in openFolders
+                            item(key = "hdr:$folder") {
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            openFolders = if (isOpen) openFolders - folder else openFolders + folder
+                                        }
+                                        .padding(vertical = 4.dp, horizontal = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        if (isOpen) Icons.Filled.KeyboardArrowDown
+                                        else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = stringResource(R.string.lora_cd_folder, folder),
+                                        tint = Nm.sub,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Text(
+                                        stringResource(R.string.lora_folder_count, folder, names.size),
+                                        style = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Nm.ink),
+                                        modifier = Modifier.padding(start = 4.dp),
+                                    )
+                                }
+                            }
+                            if (isOpen) items(names, key = { "lora:$it" }) { name -> draw(name) }
+                        }
+                        items(loose, key = { "lora:$it" }) { name -> draw(name) }
+                    }
+
+                    // ── Bottom Action Bar ───────────────────────────────────
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        onImport?.let { act ->
+                            Row(
+                                Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Nm.priSoft)
+                                    .clickable { act() }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Add,
+                                    contentDescription = null,
+                                    tint = Nm.pri,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                                Text(
+                                    stringResource(R.string.newui_lora_import),
+                                    style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Nm.pri),
+                                    modifier = Modifier.padding(start = 4.dp),
+                                )
+                            }
+                        }
+                        onBrowse?.let { act ->
+                            Text(
+                                stringResource(R.string.lb_open),
+                                style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Nm.sub),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.6f) else Color(0xFFF2F0F7))
+                                    .clickable { act() }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
                         Text(
-                            stringResource(R.string.newui_lora_import),
-                            style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Nm.pri),
-                            modifier = Modifier.padding(start = 2.dp),
+                            stringResource(R.string.crop_done),
+                            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Nm.pri)
+                                .clickable { animateDismiss() }
+                                .padding(horizontal = 26.dp, vertical = 10.dp),
                         )
                     }
                 }
-                onBrowse?.let { act ->
-                    Text(
-                        stringResource(R.string.lb_open),
-                        style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Nm.pri),
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { act() }
-                            .padding(vertical = 4.dp),
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                Text(
-                    stringResource(R.string.crop_done),
-                    style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Nm.pri)
-                        .clickable { onDismiss() }
-                        .padding(horizontal = 22.dp, vertical = 10.dp),
-                )
             }
         }
     }
 }
 
-/**
- * ⭐ The filter chip. **FILLED with the accent when it is the state** — the user:
- * *"选中的标签应使用主色调填充背景+白色文字"*; the pale tint was too easy to miss.
- */
 @Composable
 private fun NmChip(label: String, on: Boolean, onClick: () -> Unit) {
     Text(
@@ -536,33 +626,51 @@ private fun NmChip(label: String, on: Boolean, onClick: () -> Unit) {
         ),
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(if (on) Nm.pri else Color.White)
+            .background(if (on) Nm.pri else if (Nm.customBgActive) Color.White.copy(alpha = 0.6f) else Color(0xFFF6F5FA))
             .border(1.dp, if (on) Nm.pri else Nm.line, RoundedCornerShape(10.dp))
             .clickable { onClick() }
-            .padding(horizontal = 11.dp, vertical = 7.dp),
+            .padding(horizontal = 12.dp, vertical = 7.dp),
     )
 }
 
-/** ⭐ The switch: a 42×24 pill, a white knob, the violet when it is on. */
+/** ⭐ Smooth Animated Switch: spring translation knob and smooth color transition */
 @Composable
 private fun NmSwitch(on: Boolean, onToggle: (Boolean) -> Unit) {
-    // ⭐ probe v4 (review report 2 §4): the tappable area used to be exactly
-    // the 42×24 pill — a thumb landing a couple of px outside it silently did
-    // nothing ("LoRA 选择偶尔点击无反应"). A 48×48 tap box (the Material 3
-    // minimum) wraps the pill; the pill's drawing is unchanged.
+    val knobOffset by animateDpAsState(
+        targetValue = if (on) 18.dp else 2.dp,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 450f),
+        label = "switchKnob",
+    )
+    val trackColor by animateColorAsState(
+        targetValue = if (on) Nm.pri else Color(0xFFDDD9E6),
+        animationSpec = tween(180),
+        label = "switchTrack",
+    )
+
     Box(
-        Modifier.size(48.dp)
-            .clickable { TouchProbe.uiToggle("lora_switch", on, !on); onToggle(!on) },
+        Modifier
+            .size(48.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {
+                    TouchProbe.uiToggle("lora_switch", on, !on)
+                    onToggle(!on)
+                },
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Box(
-            Modifier.size(width = 42.dp, height = 24.dp)
+            Modifier
+                .size(width = 40.dp, height = 24.dp)
                 .clip(RoundedCornerShape(999.dp))
-                .background(if (on) Nm.pri else Nm.fld),
-            contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
+                .background(trackColor),
+            contentAlignment = Alignment.CenterStart,
         ) {
             Box(
-                Modifier.padding(horizontal = 3.dp).size(18.dp)
+                Modifier
+                    .offset(x = knobOffset)
+                    .size(20.dp)
                     .clip(CircleShape)
                     .background(Color.White),
             )
@@ -571,14 +679,9 @@ private fun NmSwitch(on: Boolean, onToggle: (Boolean) -> Unit) {
 }
 
 /**
- * ⭐⭐ One LoRA as a CARD (the user's mock-up): the file name as the title, `MOSS ·
- * 141 MB` as the grey subtitle, the ⋮ and the switch at the right, and the
- * weight BELOW them — drawn only while the row is on.
- *
- * ⚠⚠ **A row that is off has no slider at all.** The old sheet drew a disabled
- * bar and a `—` where the figure goes; the user read that `—` as a minus sign
- * ("去掉冗余的 — (减号)"). Hiding the whole line removes the ambiguity and half
- * the noise with it.
+ * ⭐⭐ One LoRA Card:
+ * - Selected: accented border and subtle soft tint
+ * - Slider: rolls in/out smoothly with AnimatedVisibility (zero layout jank)
  */
 @Composable
 private fun NmCard(
@@ -595,43 +698,62 @@ private fun NmCard(
     onMore: (() -> Unit)?,
 ) {
     val on = entry != null
+    val cardBg by animateColorAsState(
+        targetValue = if (on) Nm.priSoft.copy(alpha = if (Nm.customBgActive) 0.80f else 0.88f)
+                      else if (Nm.customBgActive) Color.White.copy(alpha = 0.65f)
+                      else Color(0xFFF9F9FC),
+        animationSpec = tween(200),
+        label = "loraCardBg",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (on) Nm.pri.copy(alpha = 0.55f) else Color(0xFFEDEBF2),
+        animationSpec = tween(200),
+        label = "loraBorder",
+    )
+
     Column(
-        Modifier.fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            // ⭐ A faint ground: the pale violet once it is on, the neutral
-            // canvas once it is off — the state reads before the switch does.
-            .background(if (on) Nm.priSoft else Nm.canvas)
-            .then(if (on) Modifier.border(1.dp, Nm.priLine, RoundedCornerShape(12.dp)) else Modifier)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(cardBg)
+            .border(1.dp, borderColor, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 11.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
                     name,
                     style = TextStyle(
-                        fontSize = 14.5.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
-                        // ⭐ Off reads grey throughout, so a glance finds the
-                        // ones that are actually doing something.
                         color = if (on) Nm.ink else Nm.sub,
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // ⭐ 分组: the family it is filed under, then the size.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 2.dp),
+                ) {
                     if (base != null && base != com.abrah.nightmare.LoraLibrary.Base.OTHER) {
-                        Text(
-                            base.label,
-                            style = TextStyle(fontSize = 11.5.sp, color = Nm.sub),
-                            maxLines = 1,
-                        )
-                        Text(" · ", style = TextStyle(fontSize = 11.5.sp, color = Nm.sub))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (on) Nm.pri.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.05f))
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                        ) {
+                            Text(
+                                base.label,
+                                style = TextStyle(
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (on) Nm.pri else Nm.sub,
+                                ),
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
                     }
                     Text(
-                        // ⚠ The MB is why the size is carried at all: an adapter
-                        // is tens of megabytes and a merged checkpoint is
-                        // gigabytes, and the wrong file shows here, not at Run.
                         if (missing) stringResource(R.string.lora_missing)
                         else stringResource(R.string.device_mb, bytes shr 20),
                         style = TextStyle(fontSize = 11.5.sp, color = if (missing) Nm.bad else Nm.sub),
@@ -640,78 +762,91 @@ private fun NmCard(
                     )
                 }
             }
-            // ⚠ The ⋮ moved off the switch's edge and the target shrank to 28dp:
-            // a 36dp hit-box touching a 42dp switch was the mis-tap the user
-            // reported. The switch keeps the far right, as the mock-up draws it.
+
             onMore?.let { act ->
                 Box(
-                    Modifier.padding(end = 10.dp).size(28.dp)
-                        .clip(CircleShape).clickable { act() },
+                    Modifier
+                        .padding(end = 6.dp)
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .clickable { act() },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         Icons.Filled.MoreVert,
                         contentDescription = stringResource(R.string.lora_cd_note, name),
                         tint = Nm.sub,
-                        modifier = Modifier.size(17.dp),
+                        modifier = Modifier.size(18.dp),
                     )
-                    // ⭐ A dot says a note exists, so the LoRAs with a recipe
-                    // written down are findable at a glance.
                     if (hasNote) {
                         Box(
-                            Modifier.align(Alignment.TopEnd).padding(top = 2.dp, end = 2.dp)
-                                .size(5.dp).clip(CircleShape).background(Nm.pri),
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 3.dp, end = 3.dp)
+                                .size(5.dp)
+                                .clip(CircleShape)
+                                .background(Nm.pri),
                         )
                     }
                 }
             }
             NmSwitch(on, onToggle)
         }
-        // ⚠⚠ Only while ON. No bar, no `—`, no row.
-        if (entry != null) {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Slider(
-                    value = entry.strength.toFloat(),
-                    onValueChange = { onWeight(it.toDouble()) },
-                    valueRange = com.abrah.nightmare.LoraSpec.range(allowNegative).let {
-                        it.start.toFloat()..it.endInclusive.toFloat()
-                    },
-                    // ⚠⚠ No `steps`: passing it makes Material draw a mark per
-                    // stop — forty across a phone-width slider, which reads as a
-                    // barcode. The quantising happens above, on the VALUE.
-                    colors = SliderDefaults.colors(
-                        thumbColor = Nm.pri,
-                        activeTrackColor = Nm.pri,
-                        inactiveTrackColor = Nm.line,
-                    ),
-                    modifier = Modifier.weight(1f).height(32.dp),
-                )
-                // ⭐ The figure sits beside the slider while it is on (the user:
-                // "滑块滑到最右侧显示具体的数值（如 1.0）"); tapping it types an
-                // exact weight, which a slider cannot land on.
-                Text(
-                    com.abrah.nightmare.LoraSpec.number(entry.strength),
-                    style = TextStyle(
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Nm.pri,
-                    ),
-                    textAlign = TextAlign.End,
-                    modifier = Modifier
-                        .width(42.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable { onType() }
-                        .padding(vertical = 4.dp),
-                )
+
+        // ⭐ Animated expansion for slider row: smooth roll out/in without layout snap!
+        AnimatedVisibility(
+            visible = on,
+            enter = expandVertically(tween(240, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f))) + fadeIn(tween(180)),
+            exit = shrinkVertically(tween(180, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f))) + fadeOut(tween(140)),
+        ) {
+            if (entry != null) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Slider(
+                        value = entry.strength.toFloat(),
+                        onValueChange = { onWeight(it.toDouble()) },
+                        valueRange = com.abrah.nightmare.LoraSpec.range(allowNegative).let {
+                            it.start.toFloat()..it.endInclusive.toFloat()
+                        },
+                        colors = SliderDefaults.colors(
+                            thumbColor = Nm.pri,
+                            activeTrackColor = Nm.pri,
+                            inactiveTrackColor = Color(0xFFDDD9E6),
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(30.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Nm.priSoft)
+                            .border(1.dp, Nm.pri.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                            .clickable { onType() }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            com.abrah.nightmare.LoraSpec.number(entry.strength),
+                            style = TextStyle(
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Nm.pri,
+                            ),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
             }
         }
     }
 }
 
-/** ⭐ The sort menu's label — the canvas picker's own four ([com.abrah.nightmare.LoraLibrary.Sort]). */
 private fun sortLabelRes(s: com.abrah.nightmare.LoraLibrary.Sort): Int = when (s) {
     com.abrah.nightmare.LoraLibrary.Sort.NAME -> R.string.lora_sort_name
     com.abrah.nightmare.LoraLibrary.Sort.NEWEST -> R.string.lora_sort_newest
