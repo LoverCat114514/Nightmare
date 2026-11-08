@@ -466,42 +466,221 @@ object PngMetadata {
         outStream.write(bytes)
     }
 
+    private fun decompressZlib(bytes: ByteArray, offset: Int, length: Int): String? = try {
+        val inflater = java.util.zip.Inflater()
+        inflater.setInput(bytes, offset, length)
+        val bos = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(4096)
+        while (!inflater.finished()) {
+            val count = inflater.inflate(buffer)
+            if (count <= 0 && inflater.needsInput()) break
+            bos.write(buffer, 0, count)
+        }
+        inflater.end()
+        bos.toString("UTF-8")
+    } catch (_: Throwable) {
+        null
+    }
+
     fun extractMetadata(inStream: java.io.InputStream): String? {
         val bytes = inStream.readBytes()
-        if (bytes.size < 8 || bytes[0] != 0x89.toByte() || bytes[1] != 'P'.code.toByte()
-            || bytes[2] != 'N'.code.toByte() || bytes[3] != 'G'.code.toByte()) {
-            return null
-        }
-        var idx = 8
-        val buf = java.nio.ByteBuffer.wrap(bytes)
-        while (idx + 8 <= bytes.size) {
-            val len = buf.getInt(idx)
-            val type = String(bytes, idx + 4, 4, Charsets.US_ASCII)
-            val dataStart = idx + 8
-            if (dataStart + len > bytes.size) break
-            if (type == "tEXt" || type == "iTXt") {
-                var nullIdx = -1
-                for (i in 0 until len) {
-                    if (bytes[dataStart + i] == 0.toByte()) {
-                        nullIdx = i
-                        break
+        if (bytes.size < 8) return null
+
+        var rawResult: String? = null
+
+        // 1. Check PNG signature
+        if (bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte()
+            && bytes[2] == 'N'.code.toByte() && bytes[3] == 'G'.code.toByte()) {
+            var idx = 8
+            val buf = java.nio.ByteBuffer.wrap(bytes)
+            while (idx + 8 <= bytes.size) {
+                val len = buf.getInt(idx)
+                if (len < 0) break
+                val type = String(bytes, idx + 4, 4, Charsets.US_ASCII)
+                val dataStart = idx + 8
+                if (dataStart + len > bytes.size) break
+
+                if (type == "tEXt") {
+                    var nullIdx = -1
+                    for (i in 0 until len) {
+                        if (bytes[dataStart + i] == 0.toByte()) {
+                            nullIdx = i
+                            break
+                        }
                     }
-                }
-                if (nullIdx > 0) {
-                    val kw = String(bytes, dataStart, nullIdx, Charsets.ISO_8859_1)
-                    if (kw == KEYWORD || kw == "parameters" || kw == "workflow") {
-                        val textStart = dataStart + nullIdx + 1
-                        val textLen = len - (nullIdx + 1)
-                        if (textLen > 0) {
-                            return String(bytes, textStart, textLen, Charsets.UTF_8)
+                    if (nullIdx > 0) {
+                        val kw = String(bytes, dataStart, nullIdx, Charsets.ISO_8859_1)
+                        if (kw.equals(KEYWORD, ignoreCase = true) || kw.equals("parameters", ignoreCase = true)
+                            || kw.equals("workflow", ignoreCase = true) || kw.equals("prompt", ignoreCase = true)
+                            || kw.equals("comment", ignoreCase = true) || kw.equals("description", ignoreCase = true)) {
+                            val textStart = dataStart + nullIdx + 1
+                            val textLen = len - (nullIdx + 1)
+                            if (textLen > 0) {
+                                rawResult = String(bytes, textStart, textLen, Charsets.UTF_8)
+                                break
+                            }
+                        }
+                    }
+                } else if (type == "zTXt") {
+                    var nullIdx = -1
+                    for (i in 0 until len) {
+                        if (bytes[dataStart + i] == 0.toByte()) {
+                            nullIdx = i
+                            break
+                        }
+                    }
+                    if (nullIdx > 0 && nullIdx + 2 < len) {
+                        val kw = String(bytes, dataStart, nullIdx, Charsets.ISO_8859_1)
+                        if (kw.equals(KEYWORD, ignoreCase = true) || kw.equals("parameters", ignoreCase = true)
+                            || kw.equals("workflow", ignoreCase = true) || kw.equals("prompt", ignoreCase = true)) {
+                            val decomp = decompressZlib(bytes, dataStart + nullIdx + 2, len - (nullIdx + 2))
+                            if (!decomp.isNullOrBlank()) {
+                                rawResult = decomp
+                                break
+                            }
+                        }
+                    }
+                } else if (type == "iTXt") {
+                    var nullIdx = -1
+                    for (i in 0 until len) {
+                        if (bytes[dataStart + i] == 0.toByte()) {
+                            nullIdx = i
+                            break
+                        }
+                    }
+                    if (nullIdx > 0 && nullIdx + 3 < len) {
+                        val kw = String(bytes, dataStart, nullIdx, Charsets.ISO_8859_1)
+                        if (kw.equals(KEYWORD, ignoreCase = true) || kw.equals("parameters", ignoreCase = true)
+                            || kw.equals("workflow", ignoreCase = true) || kw.equals("prompt", ignoreCase = true)) {
+                            val compFlag = bytes[dataStart + nullIdx + 1].toInt()
+                            // Skip language tag and translated keyword (both null-terminated)
+                            var p = dataStart + nullIdx + 3
+                            var nullCount = 0
+                            while (p < dataStart + len && nullCount < 2) {
+                                if (bytes[p] == 0.toByte()) nullCount++
+                                p++
+                            }
+                            val textLen = (dataStart + len) - p
+                            if (textLen > 0) {
+                                val text = if (compFlag == 1) decompressZlib(bytes, p, textLen)
+                                else String(bytes, p, textLen, Charsets.UTF_8)
+                                if (!text.isNullOrBlank()) {
+                                    rawResult = text
+                                    break
+                                }
+                            }
                         }
                     }
                 }
+                idx += 8 + len + 4
             }
-            idx += 8 + len + 4
         }
-        return null
+
+        // 2. Check JPEG (0xFF, 0xD8)
+        if (rawResult.isNullOrBlank() && bytes.size >= 4 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()) {
+            var p = 2
+            while (p + 4 <= bytes.size) {
+                if (bytes[p] == 0xFF.toByte()) {
+                    val marker = bytes[p + 1].toInt() and 0xFF
+                    val segLen = ((bytes[p + 2].toInt() and 0xFF) shl 8) or (bytes[p + 3].toInt() and 0xFF)
+                    if (marker == 0xFE && segLen > 2 && p + 2 + segLen <= bytes.size) { // COM (Comment)
+                        val comment = String(bytes, p + 4, segLen - 2, Charsets.UTF_8).trim()
+                        if (comment.isNotBlank()) {
+                            rawResult = comment
+                            break
+                        }
+                    }
+                    if (marker == 0xE1 && segLen > 6 && p + 2 + segLen <= bytes.size) { // APP1 (Exif / XMP)
+                        val segContent = String(bytes, p + 4, segLen - 2, Charsets.ISO_8859_1)
+                        if ("\"app\":\"Nightmare\"" in segContent || "Steps:" in segContent) {
+                            rawResult = segContent
+                            break
+                        }
+                    }
+                    p += 2 + segLen
+                } else {
+                    p++
+                }
+            }
+        }
+
+        // 3. Fallback: scanning raw binary for JSON signature or A1111 Steps
+        if (rawResult.isNullOrBlank()) {
+            val rawStr = String(bytes, Charsets.ISO_8859_1)
+            val nmIdx = rawStr.indexOf("{\"app\":\"Nightmare\"")
+            if (nmIdx >= 0) {
+                val endIdx = rawStr.indexOf("}", nmIdx)
+                if (endIdx > nmIdx) {
+                    rawResult = String(bytes.sliceArray(nmIdx..endIdx), Charsets.UTF_8)
+                }
+            }
+        }
+
+        return rawResult
     }
+
+    /**
+     * Normalizes metadata extracted from Nightmare, WebUI (A1111), ComfyUI, etc. into a standard Nightmare JSON.
+     */
+    fun normalizeMetadata(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+            val parsedObj = runCatching { org.json.JSONObject(trimmed) }.getOrNull()
+            if (parsedObj != null) {
+                if (parsedObj.has("positive") || parsedObj.has("prompt") || parsedObj.has("modelId")) {
+                    if (!parsedObj.has("positive") && parsedObj.has("prompt")) {
+                        parsedObj.put("positive", parsedObj.getString("prompt"))
+                    }
+                    return parsedObj.toString()
+                }
+            }
+        }
+        // Try parsing A1111 / WebUI format
+        if (trimmed.contains("Steps:") && (trimmed.contains("Sampler:") || trimmed.contains("Size:"))) {
+            val a1111 = parseA1111(trimmed)
+            if (a1111 != null) return a1111.toString()
+        }
+        // Fallback: put string directly into positive prompt
+        return org.json.JSONObject().put("positive", trimmed).toString()
+    }
+
+    private fun parseA1111(text: String): org.json.JSONObject? = runCatching {
+        val obj = org.json.JSONObject()
+        val lines = text.trim().lines()
+        val posLines = mutableListOf<String>()
+        val negLines = mutableListOf<String>()
+        var inNeg = false
+        var paramLine = ""
+        for (line in lines) {
+            val l = line.trim()
+            if (l.startsWith("Negative prompt:")) {
+                inNeg = true
+                negLines.add(l.removePrefix("Negative prompt:").trim())
+            } else if (l.contains("Steps:") && (l.contains("Sampler:") || l.contains("CFG scale:"))) {
+                paramLine = l
+                break
+            } else if (inNeg) {
+                negLines.add(line)
+            } else {
+                posLines.add(line)
+            }
+        }
+        val pos = posLines.joinToString("\n").trim()
+        val neg = negLines.joinToString("\n").trim()
+        if (pos.isNotBlank()) obj.put("positive", pos)
+        if (neg.isNotBlank()) obj.put("negative", neg)
+
+        Regex("""Steps:\s*(\d+)""").find(paramLine)?.groupValues?.get(1)?.toIntOrNull()?.let { obj.put("steps", it) }
+        Regex("""CFG scale:\s*([\d.]+)""").find(paramLine)?.groupValues?.get(1)?.toDoubleOrNull()?.let { obj.put("cfg", it) }
+        Regex("""Seed:\s*(\d+)""").find(paramLine)?.groupValues?.get(1)?.toLongOrNull()?.let { obj.put("seed", it) }
+        Regex("""Size:\s*(\d+)x(\d+)""").find(paramLine)?.let {
+            obj.put("width", it.groupValues[1].toInt())
+            obj.put("height", it.groupValues[2].toInt())
+        }
+        Regex("""Sampler:\s*([^,\n]+)""").find(paramLine)?.groupValues?.get(1)?.trim()?.let { obj.put("scheduler", it) }
+        Regex("""Model:\s*([^,\n]+)""").find(paramLine)?.groupValues?.get(1)?.trim()?.let { obj.put("modelId", it) }
+        obj
+    }.getOrNull()
 }
 
 /** Finished PNG → Pictures/Nightmare via MediaStore; with embedded ComfyUI-like parameter metadata. */

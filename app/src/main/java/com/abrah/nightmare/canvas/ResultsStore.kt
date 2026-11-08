@@ -90,6 +90,14 @@ data class Result(
      * Clear on the canvas must not undo it. Defaults false for older files.
      */
     val auto: Boolean = false,
+    /**
+     * ⭐ fix35l — the generation's FULL parameter JSON, kept beside the
+     * display prompt. `prompt` is what the card shows (fix35l: a plain-text
+     * positive), but the info sheet needs the machine-readable whole — and
+     * needs it as the unambiguous "this came from the workbench" tell even
+     * when the positive prompt itself holds no braces. Null for older files.
+     */
+    val meta: String? = null,
 ) {
     val label: String get() = prompt?.take(60)?.ifBlank { null } ?: "no prompt"
 }
@@ -269,7 +277,11 @@ class ResultsStore(private val dir: File) {
                             com.abrah.nightmare.newui.core.PngMetadata
                                 .injectMetadata(tmpPng, metaJson, fo)
                         }
-                        if (!swapped.renameTo(tmpPng)) swapped.delete()
+                        tmpPng.delete()
+                        if (!swapped.renameTo(tmpPng)) {
+                            swapped.copyTo(tmpPng, overwrite = true)
+                            swapped.delete()
+                        }
                     } catch (_: Throwable) {
                         swapped.delete()
                     }
@@ -288,6 +300,7 @@ class ResultsStore(private val dir: File) {
                     favourite = favourite,
                     auto = auto,
                     times = times,
+                    meta = metaJson,
                 )
                 val json = JSONObject()
                     .put("savedAt", r.savedAt)
@@ -303,6 +316,7 @@ class ResultsStore(private val dir: File) {
                     .put("batchLabel", r.batchLabel)
                     .put("favourite", r.favourite)
                     .put("auto", r.auto)
+                    .put("meta", r.meta ?: JSONObject.NULL)
                     .put("times", JSONObject(r.times as Map<*, *>))
                     // ⭐ The graph, as the same JSON a saved workflow uses — so
                     // reopening a result is exactly reopening a workflow, with no
@@ -368,6 +382,7 @@ class ResultsStore(private val dir: File) {
                         batchLabel = j.optString("batchLabel"),
                         favourite = j.optBoolean("favourite", false),
                         auto = j.optBoolean("auto", false),
+                        meta = j.optString("meta").takeIf { it.isNotBlank() && it != "null" },
                         times = j.optJSONObject("times")?.let { t ->
                             t.keys().asSequence().associateWith { k -> t.optLong(k) }
                         }.orEmpty(),

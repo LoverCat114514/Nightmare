@@ -6531,9 +6531,15 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun keepResultFromNewUi(bitmap: android.graphics.Bitmap, seed: Long, meta: String?) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
+                val promptText = if (!meta.isNullOrBlank()) {
+                    runCatching {
+                        val obj = org.json.JSONObject(meta)
+                        obj.optString("positive").takeIf { it.isNotBlank() }
+                    }.getOrNull() ?: meta
+                } else null
                 results.keep(
                     bitmap, null, canvas.workflow, nodeTypes,
-                    seed = seed.toString(), model = modelLabel, prompt = meta,
+                    seed = seed.toString(), model = modelLabel, prompt = promptText,
                     auto = true,
                     // ⭐ fix35i: the parameter JSON rides INSIDE the stored PNG
                     // (tEXt), so a copy out of Results — gallery save, share —
@@ -7721,53 +7727,69 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val g = canvas.workflow.graph
         val types = typesFor(g)
         fun name(id: String) = com.abrah.nightmare.logNameOf(id, g, types)
+        val bridge = wbPromptBridge
         return when (item) {
-            is com.abrah.nightmare.ui.TransferItem.Prompt, is com.abrah.nightmare.ui.TransferItem.Negative -> {
-                val key = if (item is com.abrah.nightmare.ui.TransferItem.Prompt) "prompt" else "negative"
-                // ⭐ fix35k: the workbench's own prompt boxes, when the screen is
-                // alive and the box is not empty — the same "current" line every
-                // other target shows.
-                val bridge = wbPromptBridge
-                val wb = buildList {
-                    if (bridge != null && item is com.abrah.nightmare.ui.TransferItem.Prompt &&
-                        bridge.positive.isNotBlank()
-                    ) {
-                        add(
-                            com.abrah.nightmare.ui.TransferTarget(
-                                com.abrah.nightmare.ui.WB_POSITIVE, "工作台 · 正面提示词",
-                                bridge.positive.take(40).ifBlank { "(empty)" },
-                            ),
+            is com.abrah.nightmare.ui.TransferItem.Prompt -> {
+                val wb = if (bridge != null) {
+                    listOf(
+                        com.abrah.nightmare.ui.TransferTarget(
+                            com.abrah.nightmare.ui.WB_POSITIVE, "工作台 · 正面提示词",
+                            bridge.positive.take(40).ifBlank { "(空)" },
                         )
-                    }
-                    if (bridge != null && item is com.abrah.nightmare.ui.TransferItem.Negative &&
-                        bridge.negative.isNotBlank()
-                    ) {
-                        add(
-                            com.abrah.nightmare.ui.TransferTarget(
-                                com.abrah.nightmare.ui.WB_NEGATIVE, "工作台 · 负面提示词",
-                                bridge.negative.take(40).ifBlank { "(empty)" },
-                            ),
-                        )
-                    }
+                    )
+                } else emptyList()
+                val canvasTargets = g.nodes.filter { it.type == "core.prompt" }.map { n ->
+                    com.abrah.nightmare.ui.TransferTarget(n.id, name(n.id), n.params["prompt"].orEmpty().ifBlank { "(空)" })
                 }
-                wb + g.nodes.filter { it.type == "core.prompt" }.map { n ->
-                    com.abrah.nightmare.ui.TransferTarget(n.id, name(n.id), n.params[key].orEmpty().ifBlank { "(empty)" })
-                }
+                wb + canvasTargets
             }
-            is com.abrah.nightmare.ui.TransferItem.Seed ->
-                g.nodes.filter { n -> com.abrah.nightmare.isSampler(n.type) && types[n.type]?.widgets?.any { it.name == "seed" } == true }
+            is com.abrah.nightmare.ui.TransferItem.Negative -> {
+                val wb = if (bridge != null) {
+                    listOf(
+                        com.abrah.nightmare.ui.TransferTarget(
+                            com.abrah.nightmare.ui.WB_NEGATIVE, "工作台 · 负面提示词",
+                            bridge.negative.take(40).ifBlank { "(空)" },
+                        )
+                    )
+                } else emptyList()
+                val canvasTargets = g.nodes.filter { it.type == "core.prompt" }.map { n ->
+                    com.abrah.nightmare.ui.TransferTarget(n.id, name(n.id), n.params["negative"].orEmpty().ifBlank { "(空)" })
+                }
+                wb + canvasTargets
+            }
+            is com.abrah.nightmare.ui.TransferItem.Seed -> {
+                val wb = if (bridge != null) {
+                    listOf(
+                        com.abrah.nightmare.ui.TransferTarget(
+                            com.abrah.nightmare.ui.WB_SEED, "工作台 · 随机种子 (Seed)",
+                            if (bridge.seed > 0) bridge.seed.toString() else "随机",
+                        )
+                    )
+                } else emptyList()
+                val canvasTargets = g.nodes.filter { n -> com.abrah.nightmare.isSampler(n.type) && types[n.type]?.widgets?.any { it.name == "seed" } == true }
                     .map { n ->
                         val seed = n.params["seed"]?.trim()?.takeIf { it.isNotEmpty() && it != "0" }
                         com.abrah.nightmare.ui.TransferTarget(n.id, name(n.id), seed ?: "random")
                     }
-            is com.abrah.nightmare.ui.TransferItem.Picture ->
-                g.nodes.filter { it.type == "core.image" }.map { n ->
+                wb + canvasTargets
+            }
+            is com.abrah.nightmare.ui.TransferItem.Picture -> {
+                val wb = if (bridge != null) {
+                    listOf(
+                        com.abrah.nightmare.ui.TransferTarget(
+                            com.abrah.nightmare.ui.WB_PICTURE, "工作台 · 源图片", "(载入到底图)",
+                        )
+                    )
+                } else emptyList()
+                val canvasTargets = g.nodes.filter { it.type == "core.image" }.map { n ->
                     com.abrah.nightmare.ui.TransferTarget(
                         n.id, name(n.id), n.params["uri"].orEmpty().substringAfterLast('/').ifBlank { "(empty)" },
                     )
                 } + com.abrah.nightmare.ui.TransferTarget(
                     com.abrah.nightmare.ui.NEW_IMAGE_NODE, getApplication<Application>().getString(R.string.transfer_new_image_node), "",
                 )
+                wb + canvasTargets
+            }
         }
     }
 
@@ -7785,27 +7807,44 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         var wbCount = 0
         if (bridge != null) {
             for ((item, target) in picks) {
-                val text = when (item) {
-                    is com.abrah.nightmare.ui.TransferItem.Prompt -> item.text.trim()
-                    is com.abrah.nightmare.ui.TransferItem.Negative -> item.text.trim()
-                    else -> continue
-                }
                 when (target) {
                     com.abrah.nightmare.ui.WB_POSITIVE -> {
+                        val text = when (item) {
+                            is com.abrah.nightmare.ui.TransferItem.Prompt -> item.text.trim()
+                            else -> continue
+                        }
                         val old = bridge.positive.trim()
                         bridge.onPositive?.invoke(if (append && old.isNotEmpty()) "$old, $text" else text)
                         wbCount++
                     }
                     com.abrah.nightmare.ui.WB_NEGATIVE -> {
+                        val text = when (item) {
+                            is com.abrah.nightmare.ui.TransferItem.Negative -> item.text.trim()
+                            else -> continue
+                        }
                         val old = bridge.negative.trim()
                         bridge.onNegative?.invoke(if (append && old.isNotEmpty()) "$old, $text" else text)
                         wbCount++
+                    }
+                    com.abrah.nightmare.ui.WB_SEED -> {
+                        if (item is com.abrah.nightmare.ui.TransferItem.Seed) {
+                            item.value.toLongOrNull()?.let { seedVal ->
+                                bridge.onSeed?.invoke(seedVal)
+                                wbCount++
+                            }
+                        }
+                    }
+                    com.abrah.nightmare.ui.WB_PICTURE -> {
+                        if (item is com.abrah.nightmare.ui.TransferItem.Picture) {
+                            bridge.onPicture?.invoke(item.path)
+                            wbCount++
+                        }
                     }
                 }
             }
         }
         val canvasPicks = picks.filterValues { t ->
-            t != com.abrah.nightmare.ui.WB_POSITIVE && t != com.abrah.nightmare.ui.WB_NEGATIVE
+            !t.startsWith("\u0000wb")
         }
         if (canvasPicks.isEmpty()) {
             say("from the picture: $wbCount to the workbench")
@@ -7859,34 +7898,42 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun detailsOf(r: com.abrah.nightmare.canvas.Result): List<Pair<String, String>> {
-        // ⭐ fix35j: the flow-less branch is NOT `g == null` — keep() always
-        // writes a `flow` (a NewUI keep stores the canvas's then-current graph),
-        // so that check was dead code and the sheet always walked the graph,
-        // found no sampler, and showed Size + Nodes only. A NewUI keep puts the
-        // PARAMETER JSON in `prompt` (a canvas keep puts a real prompt there),
-        // so that is the reliable tell.
-        val isWbKeep = r.prompt?.trimStart()?.startsWith("{") == true
+        // ⭐ fix35l: the workbench tell is the kept meta JSON (r.meta), not a
+        // brace in the prompt — fix35l stores a PLAIN-TEXT positive in
+        // `prompt`, so a brace-less prompt must not fall into the graph
+        // branch (the fix35i "Size + Nodes only" bug). Pre-meta keeps still
+        // tell by a leading `{`; canvas keeps walk the graph as before.
+        val metaObj = r.meta?.let { m -> runCatching { org.json.JSONObject(m) }.getOrNull() }
+        val legacyJson = if (metaObj == null) {
+            val raw = r.prompt.orEmpty().trimStart()
+            if (raw.startsWith("{")) {
+                val e = raw.lastIndexOf("}")
+                if (e > 0) runCatching { org.json.JSONObject(raw.substring(0, e + 1)) }.getOrNull() else null
+            } else null
+        } else null
+        val isWbKeep = metaObj != null || legacyJson != null
         val g = if (isWbKeep) null else results.flow(r.id)?.workflow?.graph
-        if (g == null) {
+        if (isWbKeep) {
             val out = mutableListOf<Pair<String, String>>()
             out += "Size" to "${r.width}x${r.height}"
             r.model?.takeIf { it.isNotBlank() }?.let {
                 out += "Model" to (ModelCatalog.byId(it)?.label ?: it)
             }
             r.seed?.takeIf { it.isNotBlank() && it != "0" }?.let { out += "Seed" to it }
-            r.prompt?.takeIf { it.isNotBlank() }?.let { p ->
-                runCatching {
-                    val o = org.json.JSONObject(p)
-                    o.optString("positive").takeIf { it.isNotBlank() }?.let { out += "Prompt" to it }
-                    o.optString("negative").takeIf { it.isNotBlank() }?.let { out += "Negative" to it }
-                    o.optString("steps").takeIf { it.isNotBlank() }?.let { out += "Steps" to it }
-                    o.optString("cfg").takeIf { it.isNotBlank() }?.let { out += "CFG" to it }
-                    o.optString("scheduler").takeIf { it.isNotBlank() }?.let { out += "Scheduler" to it }
-                }
+            val obj = metaObj ?: legacyJson
+            if (obj != null) {
+                obj.optString("positive").takeIf { it.isNotBlank() }?.let { out += "Prompt" to it }
+                obj.optString("negative").takeIf { it.isNotBlank() }?.let { out += "Negative" to it }
+                obj.optString("steps").takeIf { it.isNotBlank() }?.let { out += "Steps" to it }
+                obj.optString("cfg").takeIf { it.isNotBlank() }?.let { out += "CFG" to it }
+                obj.optString("scheduler").takeIf { it.isNotBlank() }?.let { out += "Scheduler" to it }
             }
+            r.prompt?.takeIf { it.isNotBlank() && obj?.optString("positive").isNullOrBlank() }
+                ?.let { out += "Prompt" to it }
             out += "Nodes" to "1"
             return out
         }
+        if (g == null) return emptyList()
         // ⭐ The same Time rows as the canvas's info ([detailsOfNode]), from the run that made it.
         return detailsOfGraph(g, null, r.width, r.height, times = { id: String -> r.times[id] }.takeIf { r.times.isNotEmpty() }) { r.seed }
     }

@@ -133,26 +133,37 @@ fun NewUiScreen(
 
     var positive by remember { mutableStateOf("") }
     var negative by remember { mutableStateOf("") }
+    // ⭐ fix35l: declared BEFORE the bridge block — the bridge's onPicture
+    // hook writes these, and a forward reference does not compile.
+    var srcDataUrl by remember { mutableStateOf<String?>(null) }
+    var srcName by remember { mutableStateOf("") }
     // ⭐ fix35k — publish the prompt boxes to the host while this screen is
     // alive, so the Results "use on the current flow" transfer can land text
     // in them. Set up in a DisposableEffect so a disposed screen can never
     // leave a dangling bridge behind.
     val bridge = remember { com.abrah.nightmare.newui.WbPromptBridge() }
     DisposableEffect(bridge) {
+        bridge.onPositive = { positive = it }
+        bridge.onNegative = { negative = it }
+        bridge.onSeed = { s.seed = it; s.fixedSeed = true }
+        bridge.onPicture = { path ->
+            srcDataUrl = uriToDataUrl(ctx, android.net.Uri.fromFile(java.io.File(path)))
+            srcName = path.substringAfterLast('/')
+        }
         promptBridgeHost?.invoke(bridge)
         onDispose {
             promptBridgeHost?.invoke(null)
             bridge.onPositive = null
             bridge.onNegative = null
+            bridge.onSeed = null
+            bridge.onPicture = null
         }
     }
-    LaunchedEffect(positive, negative) {
+    LaunchedEffect(positive, negative, s.seed) {
         bridge.positive = positive
         bridge.negative = negative
+        bridge.seed = s.seed
     }
-    var srcDataUrl by remember { mutableStateOf<String?>(null) }
-    var srcName by remember { mutableStateOf("") }
-
     // The one finished shot on show, and this session's strip. ⭐ Ordinary
     // state, not an `AtomicReference` plus a version counter: a write is a
     // recomposition, and there is no way to forget a bump.
@@ -504,9 +515,10 @@ fun NewUiScreen(
         { uri: android.net.Uri ->
             runCatching {
                 ctx.contentResolver.openInputStream(uri)?.use { stream ->
-                    val meta = com.abrah.nightmare.newui.core.PngMetadata.extractMetadata(stream)
-                    if (!meta.isNullOrBlank()) {
-                        val obj = org.json.JSONObject(meta)
+                    val rawMeta = com.abrah.nightmare.newui.core.PngMetadata.extractMetadata(stream)
+                    if (!rawMeta.isNullOrBlank()) {
+                        val norm = com.abrah.nightmare.newui.core.PngMetadata.normalizeMetadata(rawMeta)
+                        val obj = org.json.JSONObject(norm)
                         if (obj.has("modelId")) s.modelId = obj.getString("modelId")
                         if (obj.has("scheduler")) s.scheduler = obj.getString("scheduler")
                         if (obj.has("positive")) positive = obj.getString("positive")
@@ -541,7 +553,7 @@ fun NewUiScreen(
                         if (obj.has("warm")) s.warm = obj.getInt("warm")
                         android.widget.Toast.makeText(ctx, "已成功从图片中解析并恢复全部参数！", android.widget.Toast.LENGTH_SHORT).show()
                     } else {
-                        android.widget.Toast.makeText(ctx, "未在该图片中检测到 Nightmare 参数元数据", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(ctx, "未在该图片中检测到参数元数据", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 }
             }.onFailure {

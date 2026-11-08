@@ -57,6 +57,8 @@ const val NEW_IMAGE_NODE = "\u0000new"
 /** ⭐ fix35k: the workbench prompt boxes as transfer targets — no node has these ids. */
 const val WB_POSITIVE = "\u0000wb-positive"
 const val WB_NEGATIVE = "\u0000wb-negative"
+const val WB_SEED = "\u0000wb-seed"
+const val WB_PICTURE = "\u0000wb-picture"
 
 /** ⚠ Pure: the Info row [key] / [value] as an item, or null for a row that does not transfer. */
 fun transferItemOf(key: String, value: String): TransferItem? = when (key) {
@@ -80,7 +82,9 @@ fun TransferDialog(
 ) {
     val targets = remember(items) { items.associateWith(targetsFor) }
     var picks by remember(items) {
-        mutableStateOf(targets.mapNotNull { (item, ts) -> ts.singleOrNull()?.let { item to it.nodeId } }.toMap())
+        mutableStateOf(targets.mapNotNull { (item, ts) ->
+            (ts.singleOrNull() ?: ts.firstOrNull { it.nodeId.startsWith("\u0000wb") })?.let { item to it.nodeId }
+        }.toMap())
     }
     var append by remember { mutableStateOf(false) }
     val hasPrompt = items.any { it is TransferItem.Prompt || it is TransferItem.Negative }
