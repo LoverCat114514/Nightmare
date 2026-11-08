@@ -446,8 +446,14 @@ object PngMetadata {
 
             // Insert chunk right before IEND
             val iendBytes = "IEND".toByteArray(Charsets.US_ASCII)
+            // ⭐ fix35p: the scan starts at size-8, not size-12. A PNG ends with
+            // the 12-byte IEND chunk (len4+type4+crc4), so the "IEND" TYPE field
+            // sits at size-8 — a scan from size-12 never reached it, every inject
+            // fell through to the plain-copy fallback, and NO metadata was ever
+            // written (the import-params bug, reported 2026-11-09; verified on a
+            // real gallery PNG: IEND at n-8, old range [n-12..8] missed it).
             var iendPos = -1
-            for (i in bytes.size - 12 downTo 8) {
+            for (i in bytes.size - 8 downTo 8) {
                 if (bytes[i] == iendBytes[0] && bytes[i + 1] == iendBytes[1] &&
                     bytes[i + 2] == iendBytes[2] && bytes[i + 3] == iendBytes[3]) {
                     iendPos = i

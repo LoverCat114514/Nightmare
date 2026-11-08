@@ -392,7 +392,26 @@ fun NewUiScreen(
         // would otherwise fire during the render, and a person who leaves the
         // screen mid-run should still come back to what they asked for.
         WbParams.save(ctx, s)
-
+        // ⭐ fix35p: an upscale run's original is the SOURCE picture, not the
+        // engine's output — persist the source to a cache file so the result
+        // pager's 原图 page (Shot.sourceFile) can show it. The engine's output
+        // is already enlarged; without this both pager pages showed the
+        // enlarged copy (reported 2026-11-09).
+        val upsSourceFile: java.io.File? = if (s.mode == WbParams.MODE_UPSCALE) {
+            runCatching {
+                val b64 = req.images["image"].orEmpty()
+                val b = android.util.Base64.decode(
+                    b64.substringAfter("base64,", ""),
+                    android.util.Base64.NO_WRAP,
+                )
+                // One source file per upscale run: sweep the previous ones so
+                // repeated runs do not pile megabytes in the cache dir.
+                ctx.cacheDir.listFiles()?.filter { it.name.startsWith("wb-src-") }?.forEach { it.delete() }
+                val f = java.io.File(ctx.cacheDir, "wb-src-" + System.currentTimeMillis() + ".png")
+                java.io.FileOutputStream(f).use { it.write(b) }
+                f
+            }.getOrNull()
+        } else null
         run.start { onStep, isCancelled ->
             // The engine blocks, and [RunController.start] has already moved
             // this to its own single-threaded lane.
@@ -436,17 +455,23 @@ fun NewUiScreen(
                             }
                         }
                     }
+                    // ⭐ fix35p: the upscale FLOW already enlarged the picture in
+                    // the engine — the bilinear post tools must not run on top of
+                    // it (a ×4 toggle turned the engine's output into a ×8
+                    // blow-up, and the pager's 原图 page showed the enlarged
+                    // copy too, because [file] IS the engine output here).
+                    val engineUpscaled = s.mode == WbParams.MODE_UPSCALE
                     var out = bmp
                     if (!isVideo) {
                         if (s.pColor) out = autoColour(out)
                         if (s.adjOn) out = applyAdjust(out, s)
-                        if (s.pUps) {
+                        if (s.pUps && !engineUpscaled) {
                             run.note("post-processing…")
                             out = android.graphics.Bitmap.createScaledBitmap(
                                 out, out.width * 4, out.height * 4, true,
                             )
                         }
-                        if (s.pUps2) {
+                        if (s.pUps2 && !engineUpscaled) {
                             run.note("post-processing…")
                             out = android.graphics.Bitmap.createScaledBitmap(
                                 out, out.width * 2, out.height * 2, true,
@@ -458,10 +483,15 @@ fun NewUiScreen(
                         meta = metaJson,
                         // ⭐ fix35g: remember which post tools produced `out`, so
                         // the gallery save can re-apply them to the raw render.
+                        // ⭐ fix35p: the upscale toggles did NOT run when the
+                        // engine already enlarged — the flags must say so, or the
+                        // save path re-applies a second enlargement.
                         postColor = s.pColor,
                         postAdj = s.adjOn,
-                        postUps4x = s.pUps,
-                        postUps2x = s.pUps2,
+                        postUps4x = s.pUps && !engineUpscaled,
+                        postUps2x = s.pUps2 && !engineUpscaled,
+                        // ⭐ fix35p: the pager's 原图 page shows the SOURCE.
+                        sourceFile = upsSourceFile,
                     )
                     shot = made
                     // ⭐ fix35j: Results keeps the RAW render, not the enlarged
@@ -491,6 +521,19 @@ fun NewUiScreen(
         val cur = shot
         if (cur != null) {
             run.runSideWork {
+                // ⭐ fix35p: an upscale FLOW's output is already enlarged —
+                // [sourceFile] is set exactly then. Re-enlarging it (tool 0/3)
+                // would compound again; skip instead, the picture is done.
+                val isUpscaled = cur.sourceFile != null
+                if (isUpscaled && (tool == 0 || tool == 3)) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        android.widget.Toast.makeText(
+                            ctx,
+                            "该图已是放大结果，无需再放大",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                } else {
                 val src = android.graphics.BitmapFactory.decodeFile(cur.file.absolutePath)
                 if (src != null) {
                     val out = when (tool) {
@@ -505,7 +548,8 @@ fun NewUiScreen(
                             src, src.width * 2, src.height * 2, true,
                         )
                     }
-                    shot = Shot(out.asImageBitmap(), cur.ms, cur.seed, cur.file, meta = cur.meta)
+                    shot = Shot(out.asImageBitmap(), cur.ms, cur.seed, cur.file, meta = cur.meta, sourceFile = cur.sourceFile)
+                }
                 }
             }
         }

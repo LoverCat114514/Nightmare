@@ -260,14 +260,20 @@ fun ParamsCard(
         }
         FoldBody(postOpen) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                PostTool(
-                    title = stringResource(R.string.post_upscale_title),
-                    desc = stringResource(R.string.newui_p_ups_hint),
-                    on = s.pUps,
-                    onFlag = { s.pUps = it },
-                    actionLabel = stringResource(R.string.post_upscale_now),
-                    onAction = { onApply(0) },
-                )
+                // ⭐ fix35p: the upscale MODE enlarges in the engine — a bilinear
+                // post tool on top would compound the enlargement (and the
+                // result pager's 原图 page showed the enlarged copy too).
+                // Hidden in upscale mode.
+                if (s.mode != WbParams.MODE_UPSCALE) {
+                    PostTool(
+                        title = stringResource(R.string.post_upscale_title),
+                        desc = stringResource(R.string.newui_p_ups_hint),
+                        on = s.pUps,
+                        onFlag = { s.pUps = it },
+                        actionLabel = stringResource(R.string.post_upscale_now),
+                        onAction = { onApply(0) },
+                    )
+                }
                 PostTool(
                     title = stringResource(R.string.post_colour_title),
                     desc = stringResource(R.string.post_colour_desc),
@@ -327,12 +333,16 @@ fun ParamsCard(
         }
         FoldBody(moreOpen) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SwitchRow(
-                    title = stringResource(R.string.knob_enlarge),
-                    hint = stringResource(R.string.newui_m_ups_hint),
-                    checked = s.pUps2,
-                    onCheckedChange = { s.pUps2 = it },
-                )
+                // ⭐ fix35p: same rule as the ×4 tool above — the upscale mode
+                // already enlarges in the engine, so this toggle hides there.
+                if (s.mode != WbParams.MODE_UPSCALE) {
+                    SwitchRow(
+                        title = stringResource(R.string.knob_enlarge),
+                        hint = stringResource(R.string.newui_m_ups_hint),
+                        checked = s.pUps2,
+                        onCheckedChange = { s.pUps2 = it },
+                    )
+                }
                 SwitchRow(
                     title = stringResource(R.string.knob_fix_faces),
                     hint = stringResource(R.string.newui_p_face_hint),

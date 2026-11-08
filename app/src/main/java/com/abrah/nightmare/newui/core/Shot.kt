@@ -43,6 +43,14 @@ class Shot(
     val postAdj: Boolean = false,
     val postUps4x: Boolean = false,
     val postUps2x: Boolean = false,
+    /**
+     * ⭐ fix35p — the picture the run STARTED from, when it differs from the
+     * render: an upscale engine outputs the ENLARGED picture, so [file] is
+     * already the ×N result and a pager page named 原图 showing [file] would
+     * be a lie (both pages showed the enlarged copy — reported 2026-11-09).
+     * The pager's original page decodes THIS when set; null keeps [file].
+     */
+    val sourceFile: File? = null,
 ) {
     val key: String get() = file.absolutePath
 
@@ -58,9 +66,11 @@ class Shot(
     /**
      * ⭐ fix35h — the raw render, decoded lazily on first page swipe so an
      * upscaled x8 session never holds two giant bitmaps from the start.
+     * ⭐ fix35p — an upscale run's original is the SOURCE picture
+     * ([sourceFile]), not [file] (the engine's already-enlarged output).
      */
     val rawBitmap: ImageBitmap by lazy {
-        val bmp = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+        val bmp = android.graphics.BitmapFactory.decodeFile((sourceFile ?: file).absolutePath)
             ?: bitmap.asAndroidBitmap()
         bmp.asImageBitmap()
     }
