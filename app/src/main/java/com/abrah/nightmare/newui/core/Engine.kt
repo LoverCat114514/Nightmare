@@ -690,7 +690,19 @@ object PngMetadata {
 }
 
 /** Finished PNG → Pictures/Nightmare via MediaStore; with embedded ComfyUI-like parameter metadata. */
-fun saveShot(ctx: Context, shot: Shot, post: ((android.graphics.Bitmap) -> android.graphics.Bitmap)? = null) {
+fun saveShot(
+    ctx: Context,
+    shot: Shot,
+    /**
+     * ⭐ fix35q — save the ORIGINAL picture instead of the processed one: the
+     * upscale SOURCE ([Shot.sourceFile]) when set, else [Shot.file] as-is.
+     * Metadata is still spliced in; the post chain is skipped. Driven by the
+     * workbench pager sitting on the 原图 page when 保存 was tapped.
+     * (Sits BEFORE [post] so a trailing lambda still binds to [post].)
+     */
+    original: Boolean = false,
+    post: ((android.graphics.Bitmap) -> android.graphics.Bitmap)? = null,
+) {
     // ⚠ fix35f: this runs on RunController's sideWork lane — a plain background
     // thread with NO Looper. Every Toast here used to be constructed on that
     // thread and died with "Can't toast on a thread that has not called
@@ -727,7 +739,19 @@ fun saveShot(ctx: Context, shot: Shot, post: ((android.graphics.Bitmap) -> andro
             val uri = ctx.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
                 ?: throw IllegalStateException("MediaStore insert failed")
             ctx.contentResolver.openOutputStream(uri)?.use { out ->
-                if (post != null) {
+                if (original) {
+                    // ⭐ fix35q: the 原图 page was showing when 保存 was tapped —
+                    // stream the original file byte-wise, metadata spliced in
+                    // exactly like the plain path below. No post chain, no
+                    // re-encode. The upscale run's original is [sourceFile]
+                    // (the run's input), NOT [file] (the engine's ×N output).
+                    val src = shot.sourceFile ?: shot.file
+                    if (shot.meta != null) {
+                        PngMetadata.injectMetadata(src, shot.meta, out)
+                    } else {
+                        java.io.FileInputStream(src).use { it.copyTo(out) }
+                    }
+                } else if (post != null) {
                     // ⭐ fix35g: the shot on screen is POST-PROCESSED (colour /
                     // adjust / upscale) but [file] is the raw render. Re-apply
                     // the chain so the gallery copy matches what was on screen.

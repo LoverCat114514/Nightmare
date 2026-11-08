@@ -40,10 +40,13 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,11 +63,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.abrah.nightmare.R
+import com.abrah.nightmare.newui.core.PngMetadata
 import com.abrah.nightmare.newui.core.RunController
 import com.abrah.nightmare.newui.core.Shot
 import com.abrah.nightmare.newui.core.WbParams
 import com.abrah.nightmare.newui.theme.Nm
 import com.abrah.nightmare.ui.SaveIcon
+
+/**
+ * ⭐ fix35q: PNG/JPEG dimensions, header-only (`inJustDecodeBounds`) — no
+ * pixel decode, so asking for the original's size never defeats the lazy
+ * bitmap load. Null when the file cannot be read.
+ */
+private fun imageDimensions(path: String): Pair<Int, Int>? = runCatching {
+    val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeFile(path, opts)
+    if (opts.outWidth > 0 && opts.outHeight > 0) opts.outWidth to opts.outHeight else null
+}.getOrNull()
 
 /**
  * ⭐ Sleek vector play/generate icon for the primary action button.
@@ -103,7 +118,8 @@ fun ResultCard(
     statusText: String,
     modelLabel: String,
     onPickSrc: (Uri?, String) -> Unit,
-    onSave: () -> Unit,
+    /** ⭐ fix35q: carries the workbench pager's page — true = the 原图 page was showing. */
+    onSave: (original: Boolean) -> Unit,
     onSaveWorkflow: (() -> Unit)? = null,
     onImportImageParams: ((Uri) -> Unit)? = null,
     onRun: () -> Unit,
@@ -112,12 +128,16 @@ fun ResultCard(
     NmCard {
         // ── The status line (isolated recomposition) ──────────────────────
         GenerationStatusHeader(phase = phase, statusText = statusText)
-
         // ── The square frame ───────────────────────────────────────────────
         // Fixed 1:1 ratio box with smooth crossfade on new render arrival.
         // Causes zero layout re-measurement because container dimensions are strictly invariant.
         // ⭐ fix35h: full-screen viewer state — tap the picture to open it big.
-        var viewerOpen by remember { mutableStateOf(false) }
+        // ⭐ fix35q: now an Int (-1 = closed) so the fullscreen viewer OPENS on
+        // the page the workbench pager was showing, and its swipes mirror back.
+        var viewerPage by remember { mutableIntStateOf(-1) }
+        // ⭐ fix35q: which workbench page is showing, mirrored up so the save
+        // button can honour it (save what the user SEES: 原图 ⇄ 成品).
+        var resultPage by remember { mutableIntStateOf(0) }
 
         Box(
             Modifier.fillMaxWidth()
@@ -149,7 +169,16 @@ fun ResultCard(
                     // picture — swiped exactly like the canvas fullscreen viewer
                     // (CanvasScreen's Received ⇄ Made pager). The raw bitmap is
                     // decoded lazily on the first swipe, never up front.
-                    val pager = rememberPagerState(pageCount = { 2 })
+                    // ⭐ fix35q: starts on [resultPage] (what was showing before
+                    // a new render replaced the shot) and mirrors swipes back
+                    // into it — the save button saves what the user SEES.
+                    val pager = rememberPagerState(
+                        pageCount = { 2 },
+                        initialPage = resultPage,
+                    )
+                    LaunchedEffect(pager) {
+                        snapshotFlow { pager.currentPage }.collect { resultPage = it }
+                    }
                     HorizontalPager(
                         state = pager,
                         modifier = Modifier.fillMaxSize(),
@@ -163,7 +192,7 @@ fun ResultCard(
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
-                                ) { viewerOpen = true },
+                                ) { viewerPage = pager.currentPage },
                         )
                     }
                     // ⭐ Page dots: with two nearly identical pictures the only
@@ -175,6 +204,17 @@ fun ResultCard(
                     // is shown, where the raw bitmap is already on screen —
                     // asking on page 0 would decode the raw render and defeat
                     // the lazy load.
+                    // ⭐ fix35q: labels carry each page's pixel dimensions — the
+                    // only way to tell a ×N result from its source at a glance.
+                    // The original's size comes from the file header (no pixel
+                    // decode), the processed one from the in-memory bitmap.
+                    val origDims = remember(curShot.key) {
+                        imageDimensions((curShot.sourceFile ?: curShot.file).absolutePath)
+                    }
+                    val procDims = remember(curShot.key) {
+                        val b = curShot.bitmap.asAndroidBitmap()
+                        b.width to b.height
+                    }
                     val mult = if (pager.currentPage == 1) {
                         val rw = curShot.rawBitmap.asAndroidBitmap().width.coerceAtLeast(1)
                         val pw = curShot.bitmap.asAndroidBitmap().width
@@ -187,10 +227,13 @@ fun ResultCard(
                             .padding(bottom = 28.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        PageLabel("原图", pager.currentPage == 0)
                         PageLabel(
-                            mult?.let { "放大 ×" + if (it == it.toInt().toDouble()) "${it.toInt()}" else "$it" }
-                                ?: "成品",
+                            origDims?.let { "原图 ${it.first}×${it.second}" } ?: "原图",
+                            pager.currentPage == 0,
+                        )
+                        PageLabel(
+                            (mult?.let { "放大 ×" + if (it == it.toInt().toDouble()) "${it.toInt()}" else "$it" }
+                                ?: "成品") + " ${procDims.first}×${procDims.second}",
                             pager.currentPage == 1,
                         )
                     }
@@ -222,18 +265,20 @@ fun ResultCard(
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
-                            ) { viewerOpen = true },
+                            ) { viewerPage = 0 },
                     )
                 }
             }
         }
-
         // ⭐ fix35h: the full-screen viewer. Same two-page pager inside, so the
         // swipe continues in fullscreen; tap anywhere to close.
-        if (viewerOpen && shot != null && !shot.file.name.endsWith(".mp4", ignoreCase = true)) {
+        // ⭐ fix35q: opens on the page that was showing (viewerPage), and the
+        // fullscreen pager mirrors its swipes back into [resultPage] so the
+        // save button keeps tracking what the user last looked at.
+        if (viewerPage >= 0 && shot != null && !shot.file.name.endsWith(".mp4", ignoreCase = true)) {
             val fsShot = shot
             Dialog(
-                onDismissRequest = { viewerOpen = false },
+                onDismissRequest = { viewerPage = -1 },
                 properties = DialogProperties(usePlatformDefaultWidth = false),
             ) {
                 Box(
@@ -243,10 +288,16 @@ fun ResultCard(
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
-                        ) { viewerOpen = false },
+                        ) { viewerPage = -1 },
                 ) {
                     if (fsShot.hasPost) {
-                        val fsPager = rememberPagerState(pageCount = { 2 })
+                        val fsPager = rememberPagerState(
+                            pageCount = { 2 },
+                            initialPage = viewerPage,
+                        )
+                        LaunchedEffect(fsPager) {
+                            snapshotFlow { fsPager.currentPage }.collect { resultPage = it }
+                        }
                         HorizontalPager(state = fsPager, modifier = Modifier.fillMaxSize()) { page ->
                             Image(
                                 bitmap = if (page == 0) fsShot.rawBitmap else fsShot.bitmap,
@@ -255,22 +306,34 @@ fun ResultCard(
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
+                        // ⭐ fix35q: fullscreen labels carry dimensions too — the big
+                        // view is exactly where you compare the two resolutions.
+                        val fsOrigDims = remember(fsShot.key) {
+                            imageDimensions((fsShot.sourceFile ?: fsShot.file).absolutePath)
+                        }
+                        val fsProcDims = remember(fsShot.key) {
+                            val b = fsShot.bitmap.asAndroidBitmap()
+                            b.width to b.height
+                        }
                         Row(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .padding(bottom = 40.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            PageLabel("原图", fsPager.currentPage == 0)
+                            PageLabel(
+                                fsOrigDims?.let { "原图 ${it.first}×${it.second}" } ?: "原图",
+                                fsPager.currentPage == 0,
+                            )
                             val m = if (fsPager.currentPage == 1) {
                                 val rw = fsShot.rawBitmap.asAndroidBitmap().width.coerceAtLeast(1)
                                 val pw = fsShot.bitmap.asAndroidBitmap().width
                                 (pw.toFloat() / rw * 10).toInt() / 10.0
                             } else null
                             PageLabel(
-                                m?.takeIf { it > 1.0 }
+                                (m?.takeIf { it > 1.0 }
                                     ?.let { "放大 ×" + if (it == it.toInt().toDouble()) "${it.toInt()}" else "$it" }
-                                    ?: "成品",
+                                    ?: "成品") + " ${fsProcDims.first}×${fsProcDims.second}",
                                 fsPager.currentPage == 1,
                             )
                         }
@@ -331,7 +394,14 @@ fun ResultCard(
                 }
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = onSave, enabled = shot != null) {
+            // ⭐ fix35q: save what the user SEES — the 原图 page saves the untouched
+            // original (upscale runs: the source picture), the 成品 page saves
+            // the processed result. A single-page (no-post) shot always saves
+            // as-is.
+            IconButton(
+                onClick = { shot?.let { onSave(it.hasPost && resultPage == 0) } },
+                enabled = shot != null,
+            ) {
                 Icon(
                     SaveIcon,
                     contentDescription = stringResource(R.string.save),

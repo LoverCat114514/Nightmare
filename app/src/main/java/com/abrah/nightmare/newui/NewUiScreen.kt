@@ -643,9 +643,15 @@ fun NewUiScreen(
         }
     }
 val onSaveCallback = remember(ctx, run, shot) {
-        {
+        { original: Boolean ->
             shot?.let { currentShot ->
                 run.runSideWork {
+                    if (original) {
+                        // ⭐ fix35q: the workbench pager sat on the 原图 page —
+                        // save the untouched original (upscale runs: the source
+                        // picture), metadata still spliced in for 导入图参.
+                        saveShot(ctx, currentShot, original = true)
+                    } else {
                     // ⭐ fix35g: re-apply the post chain the shot was made with,
                     // so the gallery copy matches the on-screen (post-processed)
                     // picture. Order matches the generation path: colour →
@@ -664,13 +670,14 @@ val onSaveCallback = remember(ctx, run, shot) {
                                 out, out.width * 2, out.height * 2, true,
                             )
                         }
-                        out
+                         out
+                     }
                     }
-                }
-            }
-            Unit
-        }
-    }
+                 }
+             }
+             Unit
+         }
+     }
     val onCancelCallback = remember(run) {
         { run.cancel() }
     }
