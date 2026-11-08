@@ -2,6 +2,24 @@
 # through JNI, so nothing in the bytecode references it and the shrinker is
 # right, by its own rules, to delete it. The failure mode is a release-only
 # UnsatisfiedLinkError or NoSuchMethodError that no debug build ever shows.
+
+# ⭐ fix35n — the JNI host classes. Upstream's release ships R8 with no rules
+# because ITS native surface is reached from the backend child process, not
+# through JNI callbacks into these classes. Our fork adds three:
+#   JsRuntime (libnmjs), npu.NativeQnn (libnmqnn), portrait.NativePortrait.
+# JNI resolves `Java_<class>_<method>` by exact NAME, so the class and its
+# native methods must survive obfuscation. Keeping the classes whole (not
+# just names) is deliberate: these are small, and a half-kept host class is
+# exactly the kind of bug that only shows on a phone.
+-keep class com.abrah.nightmare.JsRuntime** { *; }
+-keep class com.abrah.nightmare.npu.NativeQnn** { *; }
+-keep class com.abrah.nightmare.portrait.NativePortrait** { *; }
+
+# Belt and braces for anything the fork grows later: never rename a class
+# that carries native methods, wherever it ends up.
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
 #
 # ⚠⚠ The native side looks these up BY STRING (app/src/main/cpp/nmjs.c), so
 # renaming is as fatal as removing. -keepclasseswithmembernames from

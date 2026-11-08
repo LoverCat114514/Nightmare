@@ -51,8 +51,8 @@ android {
         // a minor bump per push, which is what the rule exists to stop. The
         // minor moves only when a release is called a release. ⚠ versionCode
         // stays a plain incrementing integer; Android requires that.
-        versionCode = 637
-        versionName = "1.6.330"
+        versionCode = 638
+        versionName = "1.6.331"
         // ⭐ fix31 (friend's audit P1-1): the touch/frame probe is a diagnostic
         // tool, not a product feature — release builds must not write to
         // external storage from every touch. dev keeps it (this push build is
@@ -151,8 +151,13 @@ android {
         // Same applicationId and version on purpose: it is the same app to Android.
         create("dev") {
             initWith(getByName("release"))
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // ⭐ fix35n: R8 ON for the push build too. The dex had grown to
+            // 23.8 MB unminified (the revisit the note above promised), and
+            // the JNI surface the shrinker could break is pinned by keep
+            // rules in proguard-rules.pro. Stack traces come back obfuscated;
+            // that is the price, and it is worth 19 MB on every push.
+            isMinifyEnabled = true
+            isShrinkResources = true
             matchingFallbacks += listOf("release")
             // ⭐ fix33 (user 2026-11-06): the probe is RETIRED. It is a
             // diagnostic tool, and every measurement it could give has been
