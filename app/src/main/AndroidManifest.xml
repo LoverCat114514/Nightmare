@@ -158,7 +158,7 @@
         <activity
             android:name=".canvas.MossCanvasActivity"
             android:exported="false"
-            android:label="MOSS Layout"
+            android:label="Moss LayOut"
             android:theme="@style/Theme.Nightmare" />
 
         <!-- The FOREGROUND harness entry: the same activity, reached with the same

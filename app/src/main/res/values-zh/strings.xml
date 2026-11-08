@@ -782,8 +782,8 @@
     <string name="knob_saturation">饱和度</string>
     <string name="knob_warmth">色温</string>
     <string name="hint_match_colours">保持输入图片的颜色：图生图、局部重绘以及修复面部或手部的结果都沿用它的颜色，不留色差接缝。没有输入图片且不修复时不起作用。</string>
-    <string name="hint_moss_layout">MOSS 布局草稿：开启后，贴在提示词里的布局草稿（画框＋描述的 JSON）会在生成前编译成引擎格式。普通文字提示词不受影响；草稿自带尺寸时以草稿为准，否则以本节点的宽高为画布。</string>
-    <string name="moss_open_canvas">打开布局画布</string>
+    <string name="hint_moss_layout">Moss LayOut：开启后，贴在提示词里的布局草稿（画框＋描述的 JSON）会在生成前编译成引擎格式。普通文字提示词不受影响；草稿自带尺寸时以草稿为准，否则以本节点的宽高为画布。</string>
+    <string name="moss_open_canvas">打开画布</string>
     <string name="moss_no_prompt_wire">请先连线提示词节点</string>
     <string name="run_moss_layout_compiled">已为本次生成编译 MOSS 布局草稿</string>
     <string name="hint_auto_colour">修正发灰或偏色的图片：让暗部够暗、亮部够亮，并去除偏色。暖色场景仍保持温暖。</string>
@@ -1408,7 +1408,7 @@
         <string name="newui_results">结果</string>
         <string name="newui_fixed_seed">固定</string>
         <string name="newui_add_lora">添加</string>
-        <string name="newui_moss_layout">布局草稿</string>
+        <string name="newui_moss_layout">Moss LayOut</string>
     <string name="newui_load">加载图片</string>
     <string name="newui_positive">正面提示词</string>
     <string name="newui_denoise">重绘幅度 Denoise</string>

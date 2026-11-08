@@ -798,7 +798,7 @@
     <string name="knob_warmth">Теплота</string>
     <string name="hint_match_colours">Сохраняет цвета входной картинки: изображение в изображение, инпейнт и исправление лиц или рук возвращаются в её цветах, без цветного шва. Ничего не делает, если картинки на входе нет и ничего не исправляется.</string>
     <string name="hint_moss_layout">Черновик раскладки MOSS: при включении черновик раскладки (JSON с рамками и подписями), вставленный в промпт, компилируется для движка прямо перед генерацией. Обычный текстовый промпт не меняется; если у черновика нет своего размера, холст берётся из ширины и высоты этого узла.</string>
-    <string name="moss_open_canvas">Открыть холст раскладки</string>
+    <string name="moss_open_canvas">Открыть холст</string>
     <string name="moss_no_prompt_wire">Сначала подключите узел промпта</string>
     <string name="run_moss_layout_compiled">Черновик раскладки MOSS скомпилирован для этого запуска</string>
     <string name="hint_auto_colour">Исправляет тусклую или с оттенком картинку: тёмное делает тёмным, светлое светлым и убирает цветовой оттенок. Тёплая сцена остаётся тёплой.</string>
@@ -1435,7 +1435,7 @@
         <string name="newui_results">Результаты</string>
         <string name="newui_fixed_seed">Фикс.</string>
         <string name="newui_add_lora">Добавить</string>
-        <string name="newui_moss_layout">Черновик раскладки</string>
+        <string name="newui_moss_layout">Moss LayOut</string>
     <string name="newui_load">Загрузить картинку</string>
     <string name="newui_positive">Позитивный промпт</string>
     <string name="newui_denoise">Сила перерисовки (Denoise)</string>

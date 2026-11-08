@@ -809,8 +809,8 @@
     <string name="knob_saturation">Saturation</string>
     <string name="knob_warmth">Warmth</string>
     <string name="hint_match_colours">Keeps the colours of the picture going in: image to image, inpaint and Fix faces or hands come back in its colours, with no tinted seam. Does nothing when no picture goes in and nothing is fixed.</string>
-    <string name="hint_moss_layout">MOSS layout draft: with this on, a layout draft (a JSON of boxes and captions) pasted into the prompt is compiled for the engine right before the render. Plain prose prompts are untouched, and a draft without its own size is centred on this node\'s width and height.</string>
-    <string name="moss_open_canvas">Open layout canvas</string>
+    <string name="hint_moss_layout">Moss LayOut: with this on, a layout draft (a JSON of boxes and captions) pasted into the prompt is compiled for the engine right before the render. Plain prose prompts are untouched, and a draft without its own size is centred on this node\'s width and height.</string>
+    <string name="moss_open_canvas">Open canvas</string>
     <string name="moss_no_prompt_wire">Wire a prompt node first</string>
     <string name="run_moss_layout_compiled">MOSS layout draft compiled for this render</string>
     <string name="hint_auto_colour">Fixes a dull or tinted picture: makes the darkest parts dark and the brightest bright, and removes a colour cast. A warm scene stays warm.</string>
@@ -1439,7 +1439,7 @@
         <string name="newui_results">Results</string>
         <string name="newui_fixed_seed">Fixed</string>
         <string name="newui_add_lora">Add</string>
-        <string name="newui_moss_layout">Layout draft</string>
+        <string name="newui_moss_layout">Moss LayOut</string>
     <string name="newui_load">Load picture</string>
     <string name="newui_positive">Prompt</string>
     <string name="newui_denoise">Redraw amount (Denoise)</string>
