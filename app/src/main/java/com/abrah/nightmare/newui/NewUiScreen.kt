@@ -580,8 +580,28 @@ fun NewUiScreen(
                         if (obj.has("loras")) {
                             val loraStr = obj.getString("loras")
                             if (loraStr.isNotBlank()) {
+                                // ⭐ fix35r: the meta's loras field is OUR OWN
+                                // `name:weight,name:weight` ([buildMetaJson]) —
+                                // NOT a prompt. The old import wrapped every piece
+                                // in a <lora:…> tag and joined them with SPACES,
+                                // which the comma-splitting [LoraSpec.parse] read
+                                // as ONE glued file name ("<lora:a:1.0>
+                                // <lora:b:1.0>") and the run refused ("is not in
+                                // _loras"). Translate the separator (`:` → `@`)
+                                // and let the ONE tokeniser do the parsing.
                                 s.loras = com.abrah.nightmare.LoraSpec.parse(
-                                    loraStr.split(",").joinToString(" ") { "<lora:$it>" }
+                                    loraStr.split(',').mapNotNull { piece ->
+                                        val e = piece.trim()
+                                        if (e.isEmpty()) null
+                                        else {
+                                            val sep = e.lastIndexOf(':')
+                                            val w = if (sep > 0) e.substring(sep + 1).trim().toDoubleOrNull() else null
+                                            if (sep > 0 && w != null) {
+                                                e.substring(0, sep).trim() + "@" +
+                                                    e.substring(sep + 1).trim()
+                                            } else e
+                                        }
+                                    }.joinToString(", ")
                                 ).map { com.abrah.nightmare.newui.core.LoraPick(it.name, it.strength.toFloat()) }
                             }
                         }
