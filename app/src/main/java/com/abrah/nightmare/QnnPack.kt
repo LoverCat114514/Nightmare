@@ -33,7 +33,37 @@ object QnnPack {
 
     const val LABEL = "The NPU runtime for this phone (QAIRT 2.51)"
 
-    private const val BASE = "https://huggingface.co/AbrahamPJ/nightmare-qnn-251/resolve/main/"
+    /** The origin upstream hosts the runtime at. */
+    private const val HF_ORIGIN = "https://huggingface.co/AbrahamPJ/nightmare-qnn-251/"
+    /** The mainland-China mirror of the same files (hf-mirror.com proxies huggingface.co 1:1). */
+    private const val CN_MIRROR = "https://hf-mirror.com/AbrahamPJ/nightmare-qnn-251/"
+    /**
+     * ⭐ fix35m: the base this phone fetches the runtime from, chosen ONCE per
+     * process. A HEAD on the origin (8 s timeout) decides the ORDER: origin
+     * first when it answers, mirror first when it does not — mainland users
+     * get a working download instead of a 30 s stall per file, and everyone
+     * else keeps the origin. A file that fails on the first site still falls
+     * back to the other one (see [ensure]), so a wrong guess costs one failed
+     * attempt, not a broken install.
+     */
+    @Volatile private var probedBase: String? = null
+    private fun base(): String {
+        probedBase?.let { return it }
+        val chosen = try {
+            val conn = java.net.URL(HF_ORIGIN).openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "HEAD"
+            conn.connectTimeout = 8_000
+            conn.readTimeout = 8_000
+            val ok = conn.responseCode in 200..299
+            conn.disconnect()
+            if (ok) HF_ORIGIN else CN_MIRROR
+        } catch (_: Throwable) {
+            CN_MIRROR
+        }
+        probedBase = chosen
+        Log.i(TAG, "runtime source: $chosen")
+        return chosen
+    }
 
     /** name to (bytes, sha256), measured off the uploaded files (`../LocalDream/qairt-runtime/2.51.0.260929`). */
     val FILES: Map<String, Pair<Long, String>> = mapOf(
@@ -87,16 +117,37 @@ object QnnPack {
             val dst = File(dir, name)
             if (dst.length() == v.first) continue
             val part = File(dir, "$name.part")
+            // ⭐ fix35m: the user's explicit mirror (Settings) rewrites the URL
+            // FIRST and stays first; the probe only orders the two built-in
+            // sites when the setting is untouched. A failure on the first site
+            // falls back to the other one — a wrong guess costs one attempt.
+            // ⚠ The fallback is NOT passed through [Prefs.apply] when the
+            // primary already went through it (it would rewrite straight back).
+            val primary = Prefs.apply(base() + name)
+            val secondary =
+                if (primary.startsWith("https://huggingface.co/")) Prefs.apply(CN_MIRROR + name)
+                else HF_ORIGIN + name
             try {
-                UpscalerCatalog.download(Prefs.apply(BASE + name), part, v.first, { p ->
+                UpscalerCatalog.download(primary, part, v.first, { p ->
                     onProgress(ModelInstaller.Progress(p.phase, before + p.done, total))
                 }) { false }
+            } catch (e: ModelInstaller.Cancelled) {
+                throw e
             } catch (e: IOException) {
-                part.delete()
-                throw IOException(
-                    "$LABEL could not be downloaded (${missingBytes(dir, names) / 1_000_000} MB, once): " +
-                        "${e.message ?: e.javaClass.simpleName}. Connect to the internet and run again", e,
-                )
+                Log.w(TAG, "$name failed on the primary site (${e.message ?: e.javaClass.simpleName}), trying the other one")
+                try {
+                    UpscalerCatalog.download(secondary, part, v.first, { p ->
+                        onProgress(ModelInstaller.Progress(p.phase, before + p.done, total))
+                    }) { false }
+                } catch (e2: ModelInstaller.Cancelled) {
+                    throw e2
+                } catch (e2: IOException) {
+                    part.delete()
+                    throw IOException(
+                        "$LABEL could not be downloaded (${missingBytes(dir, names) / 1_000_000} MB, once): " +
+                            "${e2.message ?: e2.javaClass.simpleName}. Connect to the internet and run again", e2,
+                    )
+                }
             }
             val got = sha256(part)
             if (got != v.second) {
