@@ -137,21 +137,42 @@ class RunController(private val appContext: Context) {
                 }
                 // ⭐ One place maps a Result to the published Phase, so the UI
                 // reads a single shape whatever path the run took.
+                // ⭐ fix35s: the workbench's runs never spoke at the end — only
+                // the canvas's did ([HarnessViewModel]'s RunNotice call). Same
+                // promise here: done/failed rows from the same switch, silent
+                // in the foreground ([RunNotice.foreground]) and on CANCEL
+                // (the user pressed it, they know — the house rule).
                 _phase.value = when (result) {
-                    is Result.Success -> _phase.value.copy(
-                        running = false, error = null, message = "%.1fs".format(result.elapsedMs / 1000.0),
-                    )
-                    is Result.Failure -> _phase.value.copy(running = false, error = result.message)
-                    is Result.Empty -> _phase.value.copy(running = false, error = result.message)
+                    is Result.Success -> {
+                        com.abrah.nightmare.RunNotice.finished(
+                            appContext, ok = true,
+                            detail = "工作台 · " + "%.1fs".format(result.elapsedMs / 1000.0),
+                        )
+                        _phase.value.copy(
+                            running = false, error = null, message = "%.1fs".format(result.elapsedMs / 1000.0),
+                        )
+                    }
+                    is Result.Failure -> {
+                        com.abrah.nightmare.RunNotice.finished(appContext, ok = false, detail = result.message)
+                        _phase.value.copy(running = false, error = result.message)
+                    }
+                    is Result.Empty -> {
+                        com.abrah.nightmare.RunNotice.finished(appContext, ok = false, detail = result.message)
+                        _phase.value.copy(running = false, error = result.message)
+                    }
                     Result.Cancelled -> _phase.value.copy(running = false, message = "cancelled")
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
-                // ⚠ Rethrow: a cancelled coroutine must stay cancelled, or the
+                // ⭐ Rethrow: a cancelled coroutine must stay cancelled, or the
                 // structured-concurrency contract is broken and the caller
                 // sees success where it should see cancellation.
                 _phase.value = _phase.value.copy(running = false, message = "cancelled")
                 throw e
             } catch (e: Exception) {
+                com.abrah.nightmare.RunNotice.finished(
+                    appContext, ok = false,
+                    detail = e.message ?: e.javaClass.simpleName,
+                )
                 _phase.value = _phase.value.copy(
                     running = false,
                     error = e.message ?: e.javaClass.simpleName,
