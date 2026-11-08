@@ -51,6 +51,7 @@ class MossCanvasActivity : ComponentActivity() {
         hideSystemBars()
 
         web = findViewById(R.id.moss_canvas_web)
+        web.setBackgroundColor(android.graphics.Color.parseColor("#F2F0F7"))
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.addJavascriptInterface(Bridge(), "Nightmare")
@@ -94,6 +95,9 @@ class MossCanvasActivity : ComponentActivity() {
      * the canvas and the sampler's widgets no longer drift apart.
      */
     private inner class Bridge {
+        @JavascriptInterface
+        fun close() = runOnUiThread { finish() }
+
         @JavascriptInterface
         fun setSize(w: Int, h: Int) = runOnUiThread { sizeW = w; sizeH = h }
 
