@@ -1336,6 +1336,7 @@
     <string name="clip_unreadable">не удаётся воспроизвести клип</string>
     <string name="cd_kept_picture">сохранённое изображение</string>
     <string name="flow_this_chip">этот чип</string>
+    <string name="flow_no_snapdragon">%1$s: это не чип Snapdragon. Этому потоку нужен NPU Snapdragon.</string>
     <string name="flows_section_advanced">Дополнительно</string>
     <string name="flows_section_pictures">Изображения</string>
     <string name="flows_section_faces">Лица</string>

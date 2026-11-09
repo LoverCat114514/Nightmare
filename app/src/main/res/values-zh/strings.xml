@@ -1309,6 +1309,7 @@
     <string name="clip_unreadable">无法播放此片段</string>
     <string name="cd_kept_picture">已保存的图片</string>
     <string name="flow_this_chip">此芯片</string>
+    <string name="flow_no_snapdragon">%1$s 不是骁龙芯片。此工作流需要骁龙 NPU。</string>
     <string name="flows_section_advanced">高级</string>
     <string name="flows_section_pictures">图片</string>
     <string name="flows_section_faces">人脸</string>
