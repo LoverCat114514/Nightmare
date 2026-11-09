@@ -21,9 +21,12 @@ import com.abrah.nightmare.R
  * prompt node wired to the sampler that opened this screen. The
  * browser-then-copy-paste loop is gone.
  *
- * ⚠ The editor keeps persisting its draft in its own localStorage (the
- * WebView's per-app storage), so drafts survive across opens with no extra
- * code — the bridge adds a return path, it does not change the editor.
+ * ⚠ The editor persists its draft in its own localStorage (the WebView's
+ * per-app disk storage). Since fix35x the Activity clears it ONCE per process
+ * at startup: a cold start opens an EMPTY canvas (user ask 2026-11-10 — old
+ * words kept coming back after the app was killed), while re-entering the
+ * canvas within the same process still keeps the draft for continued editing.
+ * The bridge adds a return path, it does not change the editor.
  *
  * ⚠ No draft is parsed here. The page compiles; this Activity only carries the
  * compiled string back. Size hints come in as extras and are injected into the
@@ -36,6 +39,13 @@ class MossCanvasActivity : ComponentActivity() {
         const val EXTRA_WIDTH = "sampler_width"
         const val EXTRA_HEIGHT = "sampler_height"
         const val EXTRA_DRAFT = "compiled_draft"
+
+        // ⭐ fix35x (user ask 2026-11-10): the page keeps its draft in localStorage, which the WebView
+        // persists on disk — a cold start (app killed from recents) replayed yesterday's words into a
+        // canvas the user meant to start fresh. Cleared ONCE per process, below, so within one process
+        // re-entering the canvas keeps the draft (a backgrounded app is NOT killed, so flipping back
+        // and forth keeps editing where it left off); only a fresh process starts empty.
+        private var draftClearedThisProcess = false
     }
 
     private lateinit var web: WebView
@@ -67,6 +77,13 @@ class MossCanvasActivity : ComponentActivity() {
                     (if (h.isEmpty()) "null" else h) + ")}catch(e){}"
                 view.evaluateJavascript(js, null)
             }
+        }
+        // ⭐ fix35x: once per process, before the page can read its draft back. The editor's whole
+        // persistence is `localStorage["mossDraft"]` on the `file://` origin, so deleting that origin
+        // clears it without touching cookies or anything else (this is the app's only DOM-storage WebView).
+        if (!draftClearedThisProcess) {
+            draftClearedThisProcess = true
+            android.webkit.WebStorage.getInstance().deleteOrigin("file://")
         }
         web.loadUrl("file:///android_asset/moss_canvas/index.html")
     }
