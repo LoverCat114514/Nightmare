@@ -110,6 +110,30 @@ N/A - no score, no soundtrack, no musical arrangement at any point."""
         else -> if (i2v) WAN_I2V else WAN_T2V
     }
 
+    /**
+     * ⭐ MiniMax H3 Reference ([com.abrah.nightmare.canvas.H3REF]): the subject of Picture 1 (the wired reference) in a new
+     * scene. The prompt that rendered her on a beach in the one-model A/B (`docs/MINIMAX-H3.md`), made general.
+ * ⭐ 2026-11-10 port (upstream 1.6.280-282, #82/#93): opening prompt of a reference-wired H3 clip.
+     */
+    const val H3_REF = """subject_definitions:
+S1 is the main person of Picture 1, exactly as they appear there. They have a clear, natural, friendly voice.
+
+summary:
+Reference to video with audio: the subject of Picture 1 in a new scene. One continuous shot, no cut. The person walks along a beach at sunset, turns to the camera, waves and says one line out loud.
+
+retention_analysis:
+Picture 1: keep their face, hair, clothing and colours exactly; the beach, the light and their motion are new.
+
+detailed_description:
+Live action footage, golden sunset light, gentle waves behind them, handheld camera at eye level, framed from the waist up. The target video lasts 1.62 seconds.
+[Shot 1] The person (S1) walks barefoot on wet sand, turns to the camera, waves and says out loud: <d>[English] Hello from the beach.</d> Their lips move clearly and in sync with the words. They smile at the end.
+
+overall_soundscape:
+Diegetic sound only. Waves breaking softly, a light sea breeze, their voice close to the microphone.
+
+non_diegetic_music:
+N/A - no score, no soundtrack, no musical arrangement at any point."""
+
     private val VIDEO_TYPES = setOf(
         H3Node.name, WanNsfw13Node.name, WanA14Node.name, WanFunNode.name, VideoGate.VIDEO_TYPE, WanVideoNode.name,
     )
@@ -121,12 +145,14 @@ N/A - no score, no soundtrack, no musical arrangement at any point."""
      */
     fun forNode(node: com.abrah.nightmare.Node, graph: com.abrah.nightmare.Graph): String? {
         if (node.type !in VIDEO_TYPES) return null
+        // ⭐ 2026-11-10 port (upstream 1.6.280-282, #82/#93): a wired reference opens on its own prompt, as its flow does ([canvas.H3REF]).
+        if (node.type == H3Node.name && node.inputs[H3Node.REFERENCE] != null) return H3_REF
         val image = node.inputs["image"]?.node?.let { graph.byId[it] }
         if (node.type == WanA14Node.name && image != null && image.type != "core.image") return WAN14_T2V
         return forType(node.type, i2v = image != null)
     }
 
-    private val ALL = listOf(WAN_T2V, WAN_I2V, WAN14_I2V, WAN14_T2V, NSFW13, NEODRAGON, MOTION, H3, H3_I2V)
+    private val ALL = listOf(WAN_T2V, WAN_I2V, WAN14_I2V, WAN14_T2V, NSFW13, NEODRAGON, MOTION, H3, H3_I2V, H3_REF)
 
     /**
      * ⚠ Pure: whether [prompt] is still an opening prompt (or empty), so a model switch may replace it. The fox prompts

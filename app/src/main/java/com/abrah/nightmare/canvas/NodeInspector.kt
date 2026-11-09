@@ -1790,6 +1790,7 @@ internal fun NodeInspectorBody(
                 variesInLength = true,
             )
         }
+        H3ReferenceNote(node) // ⭐ 2026-11-10 port (upstream 1.6.280-282, #82/#93)
         if (node.type in com.abrah.nightmare.WAN_TYPES) {
             type?.widgets?.firstOrNull { it.name == com.abrah.nightmare.SdSampler.LORAS }?.let { w ->
                 LoraRow(widget = w, value = node.params[w.name].orEmpty(), why = w.locked, onOpen = { pickingLoras = true })
@@ -6159,4 +6160,21 @@ private fun MossCanvasEntry(
             enabled = promptNodeId != null,
         ) { Text(if (promptNodeId != null) stringResource(R.string.moss_open_canvas) else stringResource(R.string.moss_no_prompt_wire)) }
     }
+}
+
+
+/**
+ * ⭐ A reference wired runs MiniMax H3 Reference, its 2 GB turbo LoRA on every clip: say what that costs (measured on
+ * the S25, seed 42, 1.6 s: 384² 457 s vs FastH3's 186, a 384x672 first frame 433 vs 310). ⚠ Outside
+ * [NodeInspectorBody]: blocks added in that body failed ART's verifier twice (HANDOFF).
+ * ⭐ 2026-11-10 port (upstream 1.6.280-282, #82/#93): the reference-wired cost note.
+ */
+@Composable
+internal fun H3ReferenceNote(node: com.abrah.nightmare.Node) {
+    if (node.type != com.abrah.nightmare.npu.H3Node.name || node.inputs[com.abrah.nightmare.npu.H3Node.REFERENCE] == null) return
+    Text(
+        stringResource(R.string.h3_ref_slower),
+        style = NoteTextStyle,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }

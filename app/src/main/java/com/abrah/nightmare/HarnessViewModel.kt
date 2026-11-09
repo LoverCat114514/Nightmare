@@ -5041,7 +5041,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 ModelCatalog.WAN22_A14B_I2V -> com.abrah.nightmare.canvas.recipesWithId(com.abrah.nightmare.canvas.I2V, com.abrah.nightmare.canvas.T2V14)
                 // ⭐ Text to video only: the Text to video flow with its node swapped to the 1.3B.
                 ModelCatalog.WAN21_NSFW13 -> com.abrah.nightmare.canvas.recipesWithId(com.abrah.nightmare.canvas.T2V)
-                ModelCatalog.MINIMAX_H3, ModelCatalog.MINIMAX_H3_REF -> com.abrah.nightmare.canvas.recipesWithId(com.abrah.nightmare.canvas.T2V) // ⭐ 2026-11-05 port (#82)
+                ModelCatalog.MINIMAX_H3 -> com.abrah.nightmare.canvas.recipesWithId(com.abrah.nightmare.canvas.T2V, com.abrah.nightmare.canvas.I2V) // ⭐ 2026-11-05 port (#82)
+                ModelCatalog.MINIMAX_H3_REF -> com.abrah.nightmare.canvas.recipesWithId(com.abrah.nightmare.canvas.H3REF) // ⭐ 2026-11-10 port (upstream 1.6.282, #82)
                 else -> com.abrah.nightmare.canvas.recipesWithId(com.abrah.nightmare.canvas.T2V, com.abrah.nightmare.canvas.I2V)
             },
             unsavedFlow = unsavedFlow(),
