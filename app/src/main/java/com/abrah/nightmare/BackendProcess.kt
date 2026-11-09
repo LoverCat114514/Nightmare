@@ -208,6 +208,10 @@ object BackendProcess {
      */
     fun assertReason(log: List<String> = newestLaunch()): String? {
         npuCrash(log)?.let { return it }
+        // ⭐ An int8 file that reached the engine unconverted (Saved #7891): an import can put this right, so it says how.
+        if (log.any { "I8 convrot is not available" in it }) {
+            return "this imported model is stored as int8, which the engine cannot run as it is. Delete it and import the file again: the app converts it"
+        }
         val line = log.lastOrNull { "GGML_ASSERT(" in it } ?: return null
         val what = line.substringAfter("GGML_ASSERT(").substringBeforeLast(") failed").trim()
         val lora = log.asReversed().firstNotNullOfOrNull { LORA_LINE.find(it)?.groupValues?.get(1) }?.substringAfterLast('/')
@@ -368,6 +372,10 @@ object BackendProcess {
         val spec = ModelCatalog.byId(key.model) ?: return null
         return spec.ownLoraFile(spec.dir(ctx))?.absolutePath
     }
+
+    /** ⚠ Diagnostic: `nightmare-own-lora-weight.txt`, the strength [launchedOwnLora] is sent at, for an A/B of a LoRA's card. */
+    fun ownLoraWeight(): Double =
+        appContext?.let { readDiagnosticFile(it, "nightmare-own-lora-weight.txt")?.toDoubleOrNull() } ?: 1.0
 
     /**
      * True when the running process is an upscale-only server — no checkpoint.
@@ -590,7 +598,10 @@ object BackendProcess {
      * launch). ⚠⚠ `known` first ([DeviceProbe.Caps.known]): an unrecognised chip reads as the v68 floor, and 1.6.212's
      * `arch < 73` alone put every such phone's Klein 4B encoder on the CPU (a tester: 50 s to 6 min, 2026-10-22).
      */
-    internal fun ditOnCpu(caps: DeviceProbe.Caps): Boolean = caps.known && caps.arch < ModelCatalog.DIT_V73_MIN_ARCH
+    internal fun ditOnCpu(caps: DeviceProbe.Caps): Boolean = belowDitNpu(caps) && !Prefs.v69Npu
+
+    /** ⭐ A chip whose NPU has only ever hung on a DiT; [Prefs.v69Npu] is the trial that asks again. */
+    internal fun belowDitNpu(caps: DeviceProbe.Caps): Boolean = caps.known && caps.arch < ModelCatalog.DIT_V73_MIN_ARCH
 
     internal fun ditArchEnv(caps: DeviceProbe.Caps): String? =
         caps.arch.takeIf {
@@ -680,6 +691,9 @@ object BackendProcess {
      */
     internal fun kreaBudget(spec: ModelSpec?, ramBytes: Long, availBytes: Long): String? {
         if (spec?.family == Family.FIBO2 && ramBytes > 0) return if (availBytes >= FIBO_WHOLE_FREE) null else "4"
+        // ⚠⚠ Not Krea's thresholds: FLUX.1 holds its 3.4 GB T5 on the CPU beside the DiT. With 7.3 GB free it went whole, as
+        // `segment 1/1`, and lmkd took the app 2 minutes in with no error (S25, 12 GB, 2026-11-09).
+        if (spec?.family == Family.FLUX1 && ramBytes > 0) return if (availBytes >= FLUX1_WHOLE_FREE) null else "4"
         // ⭐ 2026-11-05 port: Krea 2 on the 16 GB class too (Saved #7754, a 16 GB phone: whole took 7.9 GB free to
         // 0.5, so ~7.4 GB): whole only with 2 GB left after, the floor Fibo keeps; else 5 or 4 GiB as below 16.
         if (spec?.family == Family.KREA2 && ramBytes >= Prefs.LOWRAM_BELOW_BYTES) return when {
@@ -689,7 +703,7 @@ object BackendProcess {
         }
         // ⚠ Not Z-Image on the GPU ([gpuWhole]): there it runs whole.
         if (gpuWhole(spec)) return null
-        if (spec?.family !in setOf(Family.KREA2, Family.IDEOGRAM, Family.ZIMAGE, Family.FIBO2) || ramBytes !in 1 until Prefs.LOWRAM_BELOW_BYTES) return null
+        if (spec?.family !in setOf(Family.KREA2, Family.IDEOGRAM, Family.ZIMAGE, Family.FIBO2, Family.FLUX1) || ramBytes !in 1 until Prefs.LOWRAM_BELOW_BYTES) return null
         return when {
             availBytes >= KREA_WHOLE_FREE -> null
             availBytes >= KREA_5_FREE -> "5"
@@ -711,6 +725,12 @@ object BackendProcess {
      * 3.5 GB DiT, not the NPU's 6.2 GB FP8; free RAM went from 6.3 to 1.3 GB.
      */
     internal fun gpuWhole(spec: ModelSpec?): Boolean = spec?.family == Family.ZIMAGE && DitGpu.runs(spec)
+
+    /** ⭐ FLUX.1 whole: its 6.8 GB DiT, 3.4 GB T5 and 0.25 GB CLIP-L plus a 2 GB floor ([kreaBudget]). Reasoned, not measured. */
+    private const val FLUX1_WHOLE_FREE = 12_500_000_000L
+
+    /** ⭐ FLUX.1's text encoders on the CPU, as measured (`docs/IMPORTS.md`). */
+    private const val FLUX1_BACKEND = "diffusion=HTP0,te=CPU,vae=HTP0"
 
     private const val KREA_WHOLE_FREE = 7_300_000_000L
     private const val KREA_5_FREE = 6_100_000_000L
@@ -904,6 +924,7 @@ object BackendProcess {
             if (isRunning) return@withContext Start.Failed("already running")
             // ⚠ A self-test line from a previous launch must not relaunch this one.
             hmxFailedThisLaunch = false
+            launchedDitBudget = null
             lastStartError = null
             // ⚠ Nor its arch / hwinfo / HMX lines reach this launch's error report.
             engineNpu = emptyMap()
@@ -1056,7 +1077,7 @@ object BackendProcess {
                         // else about a diffusion launch is skipped.
                         add("--upscaler_mode")
                     } else {
-                        addAll(modelLaunchArgs(ModelCatalog.backendTypeOf(modelId), model))
+                        addAll(modelLaunchArgs(ModelCatalog.backendTypeOf(modelId), ModelCatalog.byId(modelId)?.launchDir(model) ?: model))
                     }
                     // ⭐ Always the runtime dir. ⚠ It used to be the NATIVE
                     // dir for DiT types (upstream BackendService's shape),
@@ -1145,9 +1166,19 @@ object BackendProcess {
                         // 1.6.214), the phone idle. The S25 forced to v69 runs both, so it is the hardware. ⇒ The whole
                         // DiT on the CPU there: Anima Turbo 512² 10 steps 520 s on the S25's CPU, so ~15-20 min there.
                         if (ditOnCpu(DeviceProbe.caps()) && !diagnosing) put("NM_DIT_BACKEND", BlankDiagnosis.CPU_ALL)
+                        // ⭐ The trial ([Prefs.v69Npu]): at most 3 workers + main on v69, or main's HVX deadlocks (HexAnima's
+                        // `docs/PITFALLS.md`).
+                        if (Prefs.v69Npu && belowDitNpu(DeviceProbe.caps())) put("GGML_HEXAGON_NHVX", "3")
                         // ⭐⭐ …unless the GPU takes it ([DitGpu]): there, and wherever the person turned it on, a
                         // measured model renders on the Adreno with `dit/080`'s cuts and the tiny decoder (backend 052).
                         if (!diagnosing) putAll(DitGpu.launchEnv(context, spec))
+                        // ⭐ FLUX.1 ([Family.FLUX1], `dit/092`): CLIP-L's path, this model's or its donor's, and both its text
+                        // encoders on the CPU, which is how it was measured. ⚠ Before the diagnostic override, which beats it.
+                        if (spec?.family == Family.FLUX1) {
+                            (listOf(model) + spec.donorDirs(model)).map { File(it, ModelCatalog.FLUX1_CLIP_L) }.firstOrNull { it.isFile }
+                                ?.let { put("NM_DIT_CLIP_L", it.absolutePath) }
+                            put("NM_DIT_BACKEND", FLUX1_BACKEND)
+                        }
 
                         // ⚠ Diagnostic only, and absent on every ordinary launch.
                         readDitBackendOverride(context)?.let { put("NM_DIT_BACKEND", it) }
@@ -1172,7 +1203,7 @@ object BackendProcess {
                         (readDitMaxVramOverride(context) ?: budget ?: lowArchDitBudget(spec, DeviceProbe.caps().arch).takeIf { belowV79 && spec?.family != Family.WAN }
                             ?: kreaBudget(spec, DeviceProbe.caps().ramBytes, ErrorReport.availableRamBytes())
                             ?: importBudget(spec, ditBytesOf(context, spec) + ownLoraBytesOf(context, spec), DeviceProbe.caps().ramBytes, ErrorReport.availableRamBytes()))
-                            ?.let { put("DIT_MAX_VRAM", it) }
+                            ?.let { put("DIT_MAX_VRAM", it); launchedDitBudget = it }
                         // ⭐⭐ The v75 skel's fused upsample+conv (`CONV_2D_UPSCALE`, the VAE decoder's
                         // up blocks) computes garbage: 1.6.131's 8 Gen 3 renders came back solid red /
                         // black. Reproduced on the S25 with the v75 skel forced (`GGML_HEXAGON_ARCH=75`):
@@ -1439,6 +1470,29 @@ object BackendProcess {
     fun takeHmxFailure(): Boolean = hmxFailedThisLaunch.also {
         hmxFailedThisLaunch = false
         lastStartError = null
+    }
+
+    /** ⭐ This launch's `DIT_MAX_VRAM`, or null: what [learnDitMapLimit] lowers. */
+    @Volatile
+    private var launchedDitBudget: String? = null
+
+    /**
+     * ⭐ The NPU refused a mapping (GitHub #97): below v79 the next DiT launch gets a smaller budget ([DeviceProbe.ditMapCap]),
+     * and the changed [ContextKey.memoryBudget] relaunches it ([cappedDitBudget]). Null when there is nothing lower to try:
+     * ⚠ a v79 phone runs without a budget or with one sized to its RAM, and is not told to shrink.
+     */
+    fun learnDitMapLimit(): String? {
+        val ctx = appContext ?: return null
+        val caps = DeviceProbe.caps()
+        if (!caps.known || caps.arch >= ModelCatalog.DIT_MIN_ARCH) return null
+        return DeviceProbe.learnDitMapLimit(ctx, launchedDitBudget)
+    }
+
+    /** ⚠ Pure: the smaller of a launch's own budget and what this phone taught us; [cap] alone stands in for no budget. */
+    internal fun cappedDitBudget(budget: String?, cap: String?): String? {
+        val c = cap?.toDoubleOrNull() ?: return budget
+        val b = budget?.toDoubleOrNull() ?: return cap
+        return if (c < b) cap else budget
     }
 
     private fun say(line: String) {

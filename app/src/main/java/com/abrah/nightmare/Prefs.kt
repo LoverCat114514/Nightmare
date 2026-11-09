@@ -99,6 +99,7 @@ object Prefs {
         // ⭐ 2026-11-05 upstream port (v1.6.280, #78): chip temperature switch.
         chipTemps = p.getBoolean(KEY_CHIP_TEMPS, false)
         ditGpu = p.getBoolean(KEY_DIT_GPU, false)
+        v69Npu = p.getBoolean(KEY_V69_NPU, false)
         ditTaesd = p.getBoolean(KEY_DIT_TAESD, true)
         notifRun = p.getBoolean(KEY_NOTIF_RUN, false)
     }
@@ -399,6 +400,16 @@ object Prefs {
     @Volatile var ditGpu: Boolean = false
         private set
 
+    /**
+     * ⭐ An 8 Gen 1's DiT on its NPU, a trial and off by default: every one so far hung there ([BackendProcess.ditOnCpu]),
+     * and HexAnima's notes blame more than 3 HVX workers + main on v69. Shown only on such a chip.
+     */
+    const val KEY_V69_NPU = "dit_v69_npu"
+
+    /** ⚠ [KEY_V69_NPU] held in memory, as [ditGpu]. */
+    @Volatile var v69Npu: Boolean = false
+        private set
+
     /** ⭐ On the GPU route, the tiny decoder instead of the VAE ([DitGpu.Tae], the user 2026-10-31): on by default. */
     const val KEY_DIT_TAESD = "dit_fast_decoder"
 
@@ -444,6 +455,7 @@ object Prefs {
         // ⭐ 2026-11-05 port: chip temps (#78).
         val chipTemps: Boolean = false,
         val ditGpu: Boolean = false,
+        val v69Npu: Boolean = false,
         val ditTaesd: Boolean = true,
     )
 
@@ -471,6 +483,7 @@ object Prefs {
             // ⭐ 2026-11-05 port: chip temps (#78).
             chipTemps = read(KEY_CHIP_TEMPS, false),
             ditGpu = read(KEY_DIT_GPU, false),
+            v69Npu = read(KEY_V69_NPU, false),
             ditTaesd = read(KEY_DIT_TAESD, true),
         )
     }
@@ -481,6 +494,7 @@ object Prefs {
         // ⭐ 2026-11-05 port: chip temps (#78).
         if (key == KEY_CHIP_TEMPS) chipTemps = on
         if (key == KEY_DIT_GPU) ditGpu = on
+        if (key == KEY_V69_NPU) v69Npu = on
         if (key == KEY_DIT_TAESD) ditTaesd = on
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(key, on).apply()
     }

@@ -47,6 +47,11 @@ object SafetensorsGguf {
         open fun keep(name: String): Boolean = true
         /** ⚠ Throws when [names] are not this model's: a wrong file must fail here, not render noise. */
         abstract fun check(names: List<String>)
+        /**
+         * ⭐ How the source's shape is read: the same bytes, another shape. [MossGguf] flattens a row scale, `[3072, 1]`,
+         * into the one dimension the engine's `Linear` declares.
+         */
+        open fun sourceShape(name: String, shape: LongArray): LongArray = shape
         /** The output shape (torch order) — [shape] unless the model pads it. */
         open fun outShape(name: String, shape: LongArray): LongArray = shape
         /** [F32], [F16], [BF16] or [Q8_0]; [Q8_0] only for a row (last dim) that is a multiple of 32. */
@@ -90,9 +95,9 @@ object SafetensorsGguf {
             rule.keep(rule.prefixes.firstOrNull { key.startsWith(it) }?.let { key.removePrefix(it) } ?: key)
         }.map { key ->
             val t = header.getJSONObject(key)
-            val shape = t.getJSONArray("shape").let { a -> LongArray(a.length()) { a.getLong(it) } }
             val off = t.getJSONArray("data_offsets")
             val name = rule.prefixes.firstOrNull { key.startsWith(it) }?.let { key.removePrefix(it) } ?: key
+            val shape = rule.sourceShape(name, t.getJSONArray("shape").let { a -> LongArray(a.length()) { a.getLong(it) } })
             val out = rule.outShape(name, shape)
             val dtype = t.getString("dtype")
             val type = rule.type(name, out, dtype)
@@ -195,7 +200,7 @@ object SafetensorsGguf {
 
             var done = 0L
             for (t in tensors) {
-                val width = when (t.dtype) { "F32" -> 4; "BF16", "F16" -> 2; "I8" -> 1; else -> throw IOException("unsupported dtype ${t.dtype}") }
+                val width = when (t.dtype) { "F32" -> 4; "BF16", "F16" -> 2; "I8", "F8_E4M3" -> 1; else -> throw IOException("unsupported dtype ${t.dtype}") }
                 if (t.end - t.begin != t.elements * width) throw IOException("${t.name}: size does not match its shape")
                 src.seek(t.begin)
                 // ⚠ Row by row, in groups of whole rows: a row is where padding goes and where a Q8_0
@@ -242,6 +247,7 @@ object SafetensorsGguf {
                 "BF16" -> java.lang.Float.intBitsToFloat((bb.getShort(k * 2).toInt() and 0xFFFF) shl 16)
                 "F16" -> Half.toFloat(bb.getShort(k * 2))
                 "I8" -> raw[k].toFloat()
+                "F8_E4M3" -> Fp8Widen.LUT[raw[k].toInt() and 0xFF]
                 else -> bb.getFloat(k * width)
             }
         }

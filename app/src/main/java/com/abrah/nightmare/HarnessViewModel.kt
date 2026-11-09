@@ -448,10 +448,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             Prefs.KEY_WAN_STREAM -> { s -> s.family == Family.WAN }
             Prefs.KEY_ANIMA_LOWRAM, Prefs.KEY_ANIMA_SEQ_DIT -> { s -> s.family == Family.ANIMA }
             // ⭐ The GPU route ([DitGpu]) changes the engine variant, the build and the launch env of every DiT.
-            Prefs.KEY_DIT_GPU, Prefs.KEY_DIT_TAESD -> { s -> s.isDit }
+            // ⭐ The GPU route ([DitGpu]) changes the engine variant, the build and the launch env of every DiT.
+            Prefs.KEY_DIT_GPU, Prefs.KEY_DIT_TAESD, Prefs.KEY_V69_NPU -> { s -> s.isDit }
             else -> { _ -> false }
         }
-        if (key == Prefs.KEY_DIT_GPU) {
+        if (key == Prefs.KEY_DIT_GPU || key == Prefs.KEY_V69_NPU) {
             DitEngine.refresh(app)
             refreshModels()
         }
@@ -4879,6 +4880,14 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * ⭐ [RunLogState.askedSteps] (GitHub #95: "show the actual step"): the sampler's own steps, unless a picture is wired
+     * in. An img2img's denoise trims the count and its encode takes a slot, so it stays a percentage.
+     */
+    private fun askedStepsOf(id: String): Int? = canvas.workflow.graph.byId[id]
+        ?.takeIf { isSampler(it.type) && "image" !in it.inputs }
+        ?.let { n -> (NODE_TYPES[n.type]?.effectiveParams(n) ?: n.params)["steps"] }?.trim()?.toIntOrNull()
+
     fun deleteModel(spec: ModelSpec) {
         val ctx = getApplication<Application>()
         // ⚠⚠ The FILES go on IO: a 3 GB SDXL folder on the shared-storage FUSE
@@ -4963,6 +4972,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val neodragon: Boolean = false,
         /** ⭐ The flow's video node becomes this type after it opens (Wan 2.2 14B, [setVideoModel]). */
         val videoType: String? = null,
+        /** ⭐ Use on an upscaler: the flow's Output runs this one, not its default, the first installed (GitHub #99). */
+        val upscaler: String? = null,
     )
 
     var pendingUse by mutableStateOf<PendingUse?>(null)
@@ -4987,13 +4998,33 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** ⭐ Use on an UPSCALER — it has one flow and no global selection. */
-    fun askUseUpscaler(label: String) {
+    fun askUseUpscaler(upscaler: UpscalerSpec) {
         pendingUse = PendingUse(
             spec = null,
-            title = text(R.string.models_use_named, label),
+            title = text(R.string.models_use_named, upscaler.label),
             offer = com.abrah.nightmare.canvas.recipesWithId("upscale"),
             unsavedFlow = unsavedFlow(),
+            upscaler = upscaler.id,
         )
+    }
+
+    /**
+     * ⭐ Use on the model the node already is: nothing to switch, but a blank or leftover opening prompt still becomes this
+     * node's own, or H3's structured prompt never loads (a flow reopened from its autosave with the prompt cleared).
+     * ⚠ [com.abrah.nightmare.npu.VideoPrompts.forNode], not `forType`: the 14B's text to video and H3's reference open on
+     * prompts of their own, which `forType` would overwrite. Never over the person's own text.
+     */
+    private fun refillOpeningPrompt(node: Node) {
+        val g = canvas.workflow.graph
+        val prompt = node.inputs["prompt"]?.node?.let { g.byId[it] }
+            ?.takeIf { it.type == com.abrah.nightmare.PromptNode.name } ?: return
+        val current = prompt.params["prompt"].orEmpty()
+        if (!com.abrah.nightmare.npu.VideoPrompts.isDefault(current)) return
+        val opening = com.abrah.nightmare.npu.VideoPrompts.forNode(node, g) ?: return
+        if (current == opening) return
+        canvas = canvas.copy(workflow = canvas.workflow.copy(graph = Graph(
+            g.nodes.map { if (it.id == prompt.id) it.copy(params = it.params + ("prompt" to opening)) else it },
+        )))
     }
 
     /**
@@ -5055,7 +5086,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun setVideoModel(nodeId: String, newType: String) {
         val g = canvas.workflow.graph
         val node = g.byId[nodeId] ?: return
-        if (newType !in com.abrah.nightmare.VIDEO_MODEL_TYPES || node.type == newType) return
+        if (newType !in com.abrah.nightmare.VIDEO_MODEL_TYPES) return
+        if (node.type == newType) { refillOpeningPrompt(node); return }
         val ports = nodeTypes[newType]?.inputs?.map { it.name }?.toSet().orEmpty()
         val outs = nodeTypes[newType]?.outputs?.map { it.name }?.toSet().orEmpty()
         val keep = node.params.filterKeys { it in setOf("seed", "x", "y", "w", "h") }
@@ -5090,6 +5122,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun confirmUse(spec: ModelSpec?, recipe: com.abrah.nightmare.canvas.Recipe?) {
         val neodragon = pendingUse?.neodragon == true
         val videoType = pendingUse?.videoType ?: "nd.sample".takeIf { neodragon }
+        val upscaler = pendingUse?.upscaler
         pendingUse = null
         if (recipe == null) {
             // ⚠ Null for an upscaler or the video models: there is no global selection to make.
@@ -5106,6 +5139,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             openRecipeNow(recipe)
             if (videoType != null) canvas.workflow.graph.nodes.firstOrNull { it.type in com.abrah.nightmare.VIDEO_MODEL_TYPES }
                 ?.let { setVideoModel(it.id, videoType) }
+            if (upscaler != null) updateCanvas(canvas.withUpscaler(upscaler))
             // ⭐ …and get out of the way: choosing a flow is asking to work on it (2026-09-15).
             closeLibrary()
         }
@@ -7318,6 +7352,30 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             openedResultName = name
             say("opened \"" + name + "\"")
             sayNotes(loaded)
+            showResultOnOutput(id, name)
+        }
+    }
+
+    /**
+     * ⭐ The flow from a result opens with that result on its Output: a clip's flow showed an empty node until Run, a
+     * picture's too (found driving the phone, 2026-11-08). Shown only: nothing is cached, so Run still renders.
+     * ⚠ Off the main thread (a PNG up to 2048 px, and `put` hashes every pixel), and dropped if the person has opened
+     * something else by then.
+     */
+    private fun showResultOnOutput(id: String, name: String) {
+        val out = canvas.workflow.graph.nodes.firstOrNull { it.type == MediaOutputNode.name } ?: return
+        viewModelScope.launch {
+            val shown = withContext(kotlinx.coroutines.Dispatchers.Default) {
+                runCatching {
+                    results.full(id)?.let { bmp -> ops.images.put(bmp) to bmp.width.toFloat() / bmp.height.coerceAtLeast(1) }
+                }.getOrNull()
+            } ?: return@launch
+            if (openedResultName != name) return@launch
+            val clip = results.clipFile(id)?.path
+            canvas = canvas.copy(
+                previews = canvas.previews + (out.id to shown),
+                videos = if (clip != null) canvas.videos + (out.id to clip) else canvas.videos,
+            )
         }
     }
 
@@ -9220,7 +9278,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 onNode = ::noteNodeRun,
                 onProgress = { id, step, total ->
                     canvasStatus[id] = NodeStatus(progress = step to total)
-                    runLog = runLog.copy(now = logName(id), step = step to total)
+                    runLog = runLog.copy(now = logName(id), step = step to total, askedSteps = askedStepsOf(id))
                 },
                 onPhase = { _, ph -> if (runLog.phase != ph) runLog = runLog.copy(phase = ph) },
                 // ⚠ Once per SWEEP per sentence: eight runs refusing the same
@@ -9518,7 +9576,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             },
             onProgress = { id, step, total ->
                 canvasStatus[id] = NodeStatus(progress = step to total)
-                runLog = runLog.copy(now = logName(id), step = step to total)
+                runLog = runLog.copy(now = logName(id), step = step to total, askedSteps = askedStepsOf(id))
             },
             onPhase = { _, ph -> if (runLog.phase != ph) runLog = runLog.copy(phase = ph) },
             // ⭐⭐ A long node's own narration, live in the panel.

@@ -734,12 +734,14 @@ class SdSampler(
          * ([ModelSpec.fixedSizes]); it stays out until a masked render is measured.
          */
         val IRIS = SdSampler("iris.sample", Family.IRIS, inpaint = false)
-        /** ⭐ MOSS-Image (`docs/MOSS.md`) — text to image only, its 8-step LoRA always on ([ModelSpec.ownLora]). */
+        /** ⭐ MOSS-Image (`docs/MOSS.md`): its 8-step LoRA always on ([ModelSpec.ownLora]); inpaint is [MOSS_INPAINT]. */
         val MOSS = SdSampler("moss.sample", Family.MOSS, inpaint = false)
         /** ⭐ Ideogram 4 (`docs/ROADMAP.md`) — text to image only, its TurboTime LoRA always on ([ModelSpec.ownLora]). */
         val IDEOGRAM = SdSampler("ideogram.sample", Family.IDEOGRAM, inpaint = false)
         /** ⭐ FLUX.3 Image Klein (`docs/DIT.md`) — text to image only, as Ideogram, until its edit is measured. */
         val FLUX3 = SdSampler("flux3.sample", Family.FLUX3, inpaint = false)
+        /** ⭐ FLUX.1 dev (`docs/IMPORTS.md`) — text to image only until the rest is measured. */
+        val FLUX1 = SdSampler("flux1.sample", Family.FLUX1, inpaint = false)
         /** ⭐ Fibo 2.0 Edit Turbo (GH #69, `dit/056`): an editor, its picture the reference ([Family.edit]); no inpaint. */
         val FIBO2 = SdSampler("fibo2.sample", Family.FIBO2, inpaint = false)
         /**
@@ -759,6 +761,8 @@ class SdSampler(
         val QWEN21_INPAINT = SdSampler("qwen21.inpaint", Family.QWEN21, inpaint = true)
         val KREA2_INPAINT = SdSampler("krea2.inpaint", Family.KREA2, inpaint = true)
         val ANIMA_DIT_INPAINT = SdSampler("animadit.inpaint", Family.ANIMA_DIT, inpaint = true)
+        /** ⭐ GitHub #100: the same masked render Fix faces already sends on MOSS ([runDitMasked]). */
+        val MOSS_INPAINT = SdSampler("moss.inpaint", Family.MOSS, inpaint = true)
         /**
          * ⚠⚠ Klein's MASKED redraw ([runDitMasked] with `mask`) regenerates almost nothing inside the mask:
          * measured 2026-09-20 against the mask the SD path uses, SD 1.5 at 0.65 changed 6303 px, Klein 821 at
@@ -777,9 +781,9 @@ class SdSampler(
         val FLUX2_INPAINT = SdSampler("flux2.inpaint", Family.FLUX2, inpaint = true)
 
         val ALL = listOf(
-            SD15, SD15_SWAP, SDXL, SDXL_SWAP, ANIMA, FLUX2, ZIMAGE, QWEN21, KREA2, ANIMA_DIT, IRIS, MOSS, IDEOGRAM, FLUX3, FIBO2,
+            SD15, SD15_SWAP, SDXL, SDXL_SWAP, ANIMA, FLUX2, ZIMAGE, QWEN21, KREA2, ANIMA_DIT, IRIS, MOSS, IDEOGRAM, FLUX3, FLUX1, FIBO2,
             SD15_INPAINT, SD15_SWAP_INPAINT, SDXL_INPAINT, SDXL_SWAP_INPAINT, ANIMA_INPAINT,
-            ZIMAGE_INPAINT, QWEN21_INPAINT, KREA2_INPAINT, ANIMA_DIT_INPAINT, FLUX2_INPAINT,
+            ZIMAGE_INPAINT, QWEN21_INPAINT, KREA2_INPAINT, ANIMA_DIT_INPAINT, MOSS_INPAINT, FLUX2_INPAINT,
         )
 
         /**
@@ -1208,7 +1212,9 @@ class SdSampler(
             DeviceProbe.caps().ramBytes,
             DeviceProbe.caps().let { if (it.known) it.arch else 0 },
         )
-        return if (budget == null) key else key.copy(memoryBudget = budget)
+        // ⭐ What this phone's NPU taught us (GitHub #97): a changed budget in the key is what relaunches the backend.
+        val capped = if (family.dit) BackendProcess.cappedDitBudget(budget, DeviceProbe.ditMapCap) else budget
+        return if (capped == null) key else key.copy(memoryBudget = capped)
     }
 
     /** ⚠ The size a fixed-canvas family renders, not a stray one the node holds ([canvasOf], GitHub #60). */
@@ -1283,7 +1289,7 @@ class SdSampler(
      * ControlNet pack), not Iris (no VAE to mask through) or Wan (a video).
      */
     private val offersDetail: Boolean
-        get() = !inpaint && family !in setOf(Family.IRIS, Family.WAN, Family.IDEOGRAM, Family.FLUX3, Family.FIBO2)
+        get() = !inpaint && family !in setOf(Family.IRIS, Family.WAN, Family.IDEOGRAM, Family.FLUX3, Family.FLUX1, Family.FIBO2)
 
     /** ⭐ True when [node] will run the detail pass: what the Run's up-front tool check asks. */
     internal fun detailWanted(node: Node): Boolean = offersDetail && effectiveParams(node).let { p ->
@@ -1310,7 +1316,7 @@ class SdSampler(
     private fun detailWidgets(): List<Widget> = listOfNotNull(
         // ⭐ On every sampler but Wan and Iris: it acts on image to image, inpaint and Fix faces / hands.
         Widget(MATCH_COLORS, "bool", "false", hintRes = R.string.hint_match_colours)
-            .takeIf { family != Family.WAN && family != Family.IRIS && family != Family.MOSS && family != Family.IDEOGRAM && family != Family.FLUX3 && family != Family.FIBO2 },
+            .takeIf { family != Family.WAN && family != Family.IRIS && family != Family.MOSS && family != Family.IDEOGRAM && family != Family.FLUX3 && family != Family.FLUX1 && family != Family.FIBO2 },
         // ⭐⭐ MOSS layout prompt (a port of Comfyui-Moss-LayoutPrompt, 2026-11): paste a
         // layout DRAFT into the prompt box and this switch compiles it (abs/xyxy -> the
         // engine's centred yxyx) right before the render. MOSS only — the compiler speaks
