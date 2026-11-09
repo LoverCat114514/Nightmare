@@ -1227,6 +1227,7 @@
     <string name="import_family_title">这是哪个模型？</string>
     <string name="import_family_body">文件没有说明它是为哪个模型制作的。请选择它在 CivitAI 或 Hugging Face 上所属的模型。</string>
     <string name="import_is_lora">这个文件是 LoRA，不是模型。请在采样器的 LoRA 中添加，或在设置的 LoRA 中添加。</string>
+    <string name="import_other_upscaler">这种放大模型应用无法运行（DAT、SwinIR 等）。应用支持 ESRGAN 放大模型，格式为 .pth 或 .safetensors。</string>
     <string name="import_is_embedding">这个文件是嵌入（embedding），不是模型。请在设置的嵌入中添加。</string>
     <string name="import_needs_converting">这看起来是%1$s。这类模型需要先为 NPU 转换（npuforge），再导入生成的 zip。</string>
     <string name="import_unknown">无法识别这个文件。应用可以导入转换好的 zip、.safetensors 或 .gguf 检查点，或放大模型 .bin。</string>

@@ -1254,6 +1254,7 @@
     <string name="import_family_title">Что это за модель?</string>
     <string name="import_family_body">Файл не говорит, для какой модели он сделан. Выберите ту, откуда он взят на CivitAI или Hugging Face.</string>
     <string name="import_is_lora">Это LoRA, а не модель. Добавьте её в LoRA сэмплера или в Настройках, LoRA.</string>
+    <string name="import_other_upscaler">Это апскейлер того типа, который приложение не запускает (DAT, SwinIR и подобные). Поддерживаются апскейлеры ESRGAN в .pth или .safetensors.</string>
     <string name="import_is_embedding">Это эмбеддинг, а не модель. Добавьте его в Настройках, Эмбеддинги.</string>
     <string name="import_needs_converting">Похоже, это %1$s. Такие модели сначала нужно преобразовать для NPU (npuforge), затем импортировать полученный zip.</string>
     <string name="import_unknown">Не удалось понять, что это за файл. Приложение импортирует преобразованный zip, чекпоинт .safetensors или .gguf или апскейлер .bin.</string>

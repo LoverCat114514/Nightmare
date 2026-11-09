@@ -1938,6 +1938,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 CustomModels.ImportKind.Upscaler -> importUpscaler(uri)
                 // ⭐ 2026-11-05 port (S#7774): an ESRGAN as CivitAI ships it, run by the DiT engine.
                 is CustomModels.ImportKind.GgmlUpscaler -> importUpscaler(uri, kind.ext)
+                CustomModels.ImportKind.OtherUpscaler -> modelError = text(R.string.import_other_upscaler) // ⭐ 2026-11-10 port (upstream 1.6.282)
                 CustomModels.ImportKind.Lora -> modelError = text(R.string.import_is_lora)
                 CustomModels.ImportKind.Embedding -> modelError = text(R.string.import_is_embedding)
                 is CustomModels.ImportKind.NeedsConverting -> modelError = text(R.string.import_needs_converting, kind.what)
@@ -9202,6 +9203,14 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             }
             val label = rolled.labelFor(overrides)
             say("  run ${i + 1}/${combos.size}  $label")
+            // ⭐ 2026-11-10 port (upstream 1.6.282, GitHub #96): every run, not once before the loop. [HarnessOps.runWorkflow]
+            // ends in `releaseBackendIfTooBig`, so a model over the RAM gate (MOSS on 12 GB) is gone when run 2 starts,
+            // and `runWorkflow` cannot start one from nothing: `GET /handles unreachable`, 1 of 10 done.
+            if (i > 0 && !ops.ensureBackendFor(graph, typesFor(graph))) {
+                runError = backendRefusal(namesNoKey = false)
+                say("batch: stopped. $runError", bad = true)
+                break
+            }
             val r = ops.runWorkflow(
                 canvas.workflow.copy(graph = graph),
                 onStart = { id, _ ->
