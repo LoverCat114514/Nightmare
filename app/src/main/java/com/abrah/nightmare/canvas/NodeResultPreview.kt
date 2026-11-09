@@ -215,6 +215,7 @@ internal fun NodeResultPreview(
             com.abrah.nightmare.ui.ClipPlayer(
                 drivingVideo,
                 Modifier.fillMaxWidth().height(pictureCap(pair = true)).clip(RoundedCornerShape(10.dp)),
+                muted = true, // ⭐ 2026-11-10 port (upstream 1.6.284): inline preview silent
             )
         }
     }

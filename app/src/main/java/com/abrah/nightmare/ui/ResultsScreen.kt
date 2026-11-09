@@ -427,6 +427,7 @@ fun ResultsScreen(
                     com.abrah.nightmare.ui.ClipPlayer(
                         path = clip,
                         modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+                        muted = true, // ⭐ 2026-11-10 port (upstream 1.6.284): inline preview silent
                     )
                     Box(
                         Modifier.fillMaxSize().clickable {

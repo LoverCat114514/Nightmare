@@ -378,7 +378,12 @@ data class Recipe(
      * It stays in Flows and on the Wan 14B's own Use.
      */
     val offeredPerModel: Boolean = true,
-) {
+    /**
+         * ⭐ 2026-11-10 port (upstream 1.6.282, GitHub #85/#92): a flow with a route off the NPU, so it opens on a chip
+         * with no Snapdragon NPU: an imported SDXL MNN or SD 1.5 CPU model renders it on the GPU or CPU on any chip.
+         * Everything else here needs the NPU.
+         */
+        val anyChip: Boolean = false,) {
 
     /**
      * ⚠⚠⚠ **An UNKNOWN chip is offered the flow.** Gating on
@@ -388,8 +393,8 @@ data class Recipe(
      * ([com.abrah.nightmare.DeviceProbe.Caps.known], `docs/DEVICES.md`).
      */
     fun runsOnDevice(caps: com.abrah.nightmare.DeviceProbe.Caps): Boolean =
-        // ⭐ 2026-11-05 port (#85): a chip KNOWN not to be a Snapdragon runs no flow (DeviceProbe.Caps.qualcomm).
-        caps.qualcomm && (minArch == 0 || caps.supportsArch(minArch) || !caps.known)
+        // ⭐ 2026-11-05 port (#85), widened 2026-11-10 (upstream 1.6.282 #92): a chip KNOWN not to be a Snapdragon runs only what needs no NPU ([anyChip], [DeviceProbe.Caps.qualcomm]).
+        if (!caps.qualcomm) anyChip else minArch == 0 || caps.supportsArch(minArch) || !caps.known
     /** ⚠ Null families means every family; an entry restricts it. */
     fun servesFamily(family: com.abrah.nightmare.Family?): Boolean =
         families == null || family in families
@@ -455,6 +460,7 @@ val RECIPES: List<Recipe> = listOf(
         "A prompt in, a picture out. The one to start with.",
         ::defaultWorkflow,
         section = PICTURES,
+        anyChip = true, // ⭐ 2026-11-10 port (upstream 1.6.282)
         labelRes = R.string.flow_txt2img_name,
         aboutRes = R.string.flow_txt2img_about,
     ),
@@ -466,6 +472,7 @@ val RECIPES: List<Recipe> = listOf(
         // and has its own card, further down where its requirements put it.
         families = com.abrah.nightmare.Family.entries.filterNot { it.edit }.toSet(),
         section = PICTURES,
+        anyChip = true, // ⭐ 2026-11-10 port (upstream 1.6.282)
         labelRes = R.string.flow_img2img_name,
         aboutRes = R.string.flow_img2img_about,
     ),
