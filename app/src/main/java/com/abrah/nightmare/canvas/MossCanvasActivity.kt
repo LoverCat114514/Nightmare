@@ -21,11 +21,19 @@ import com.abrah.nightmare.R
  * prompt node wired to the sampler that opened this screen. The
  * browser-then-copy-paste loop is gone.
  *
- * ⚠ The editor persists its draft in its own localStorage (the WebView's
- * per-app disk storage). Since fix35x the Activity clears it ONCE per process
- * at startup: a cold start opens an EMPTY canvas (user ask 2026-11-10 — old
- * words kept coming back after the app was killed), while re-entering the
- * canvas within the same process still keeps the draft for continued editing.
+ * ⚠ The editor persists its draft in localStorage, which the WebView keeps on
+ * DISK — so a killed app replayed yesterday's words AND boxes into a canvas the
+ * user meant to start fresh (user ask 2026-11-10). fix35x tried clearing the
+ * origin once per process, but it did not survive contact with reality: ROMs
+ * tear down the task without killing the process (the once-flag then skips the
+ * clear), and WebStorage.deleteOrigin is an async REQUEST whose ordering
+ * against the page's own restoreState() is not guaranteed. fix35y therefore
+ * moves the draft to sessionStorage by REWRITING the page on load
+ * ([shouldInterceptRequest] swaps localStorage→sessionStorage; the asset file
+ * itself stays untouched, so external package merges cannot lose this):
+ * sessionStorage belongs to the WebView INSTANCE — every open of this screen
+ * starts EMPTY, no matter how the process got there, while the draft still
+ * survives within one open session (backgrounding and coming back included).
  * The bridge adds a return path, it does not change the editor.
  *
  * ⚠ No draft is parsed here. The page compiles; this Activity only carries the
@@ -40,11 +48,9 @@ class MossCanvasActivity : ComponentActivity() {
         const val EXTRA_HEIGHT = "sampler_height"
         const val EXTRA_DRAFT = "compiled_draft"
 
-        // ⭐ fix35x (user ask 2026-11-10): the page keeps its draft in localStorage, which the WebView
-        // persists on disk — a cold start (app killed from recents) replayed yesterday's words into a
-        // canvas the user meant to start fresh. Cleared ONCE per process, below, so within one process
-        // re-entering the canvas keeps the draft (a backgrounded app is NOT killed, so flipping back
-        // and forth keeps editing where it left off); only a fresh process starts empty.
+        // ⭐ fix35x, demoted by fix35y: clear the OLD localStorage draft once per process, best-effort.
+        // The real fix is sessionStorage (see the class comment) — this only sweeps the legacy disk
+        // state versions before fix35y left behind, when the process actually is fresh.
         private var draftClearedThisProcess = false
     }
 
@@ -66,6 +72,24 @@ class MossCanvasActivity : ComponentActivity() {
         web.settings.domStorageEnabled = true
         web.addJavascriptInterface(Bridge(), "Nightmare")
         web.webViewClient = object : WebViewClient() {
+            // ⭐ fix35y: serve the editor with localStorage rewritten to sessionStorage, so the draft
+            // lives only as long as THIS WebView instance — every open of the canvas starts empty
+            // (process cold or warm alike), and nothing persists on disk to come back later. The
+            // page uses localStorage for exactly one key ("mossDraft"), so the blanket swap is safe.
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: android.webkit.WebResourceRequest,
+            ): android.webkit.WebResourceResponse? {
+                if (request.url.toString() != "file:///android_asset/moss_canvas/index.html") return null
+                return runCatching {
+                    val html = assets.open("moss_canvas/index.html").use { it.readBytes() }
+                        .toString(Charsets.UTF_8)
+                        .replace("localStorage.", "sessionStorage.")
+                    android.webkit.WebResourceResponse(
+                        "text/html", "utf-8", java.io.ByteArrayInputStream(html.toByteArray(Charsets.UTF_8))
+                    )
+                }.getOrNull()
+            }
             override fun onPageFinished(view: WebView, url: String) {
                 // Size hint: the sampler's current width/height widgets, so the
                 // canvas opens already matched to what will be generated. The
@@ -78,9 +102,8 @@ class MossCanvasActivity : ComponentActivity() {
                 view.evaluateJavascript(js, null)
             }
         }
-        // ⭐ fix35x: once per process, before the page can read its draft back. The editor's whole
-        // persistence is `localStorage["mossDraft"]` on the `file://` origin, so deleting that origin
-        // clears it without touching cookies or anything else (this is the app's only DOM-storage WebView).
+        // ⭐ fix35x (kept by fix35y as legacy sweep): once per process, best-effort — the sessionStorage
+        // rewrite above is the real fix; this only clears the disk state old versions left behind.
         if (!draftClearedThisProcess) {
             draftClearedThisProcess = true
             android.webkit.WebStorage.getInstance().deleteOrigin("file://")
