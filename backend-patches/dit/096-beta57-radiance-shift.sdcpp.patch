@@ -73,7 +73,7 @@ index 0a4473e..97cfe6e 100644
              return default_scheduler(sd, sample_method);
          }
 diff --git a/src/runtime/denoiser.hpp b/src/runtime/denoiser.hpp
-index 4f5fbc4..0d4b859 100644
+index 723061f..ff5604d 100644
 --- a/src/runtime/denoiser.hpp
 +++ b/src/runtime/denoiser.hpp
 @@ -463,6 +463,48 @@ struct BetaScheduler : SigmaScheduler {
@@ -140,9 +140,9 @@ index 4f5fbc4..0d4b859 100644
 +                LOG_INFO("get_sigmas with Radiance Shift scheduler");
 +                scheduler = std::make_shared<RadianceShiftScheduler>();
 +                break;
- 
              case EXPONENTIAL_SCHEDULER:
                  LOG_INFO("get_sigmas exponential scheduler");
+                 scheduler = std::make_shared<ExponentialScheduler>();
 diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
 index a50c75d..5607004 100644
 --- a/src/stable-diffusion.cpp
