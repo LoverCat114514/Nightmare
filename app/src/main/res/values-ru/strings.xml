@@ -71,6 +71,17 @@
     <string name="download_queued">В очереди</string>
     <string name="download_mb">Скачать %1$d МБ</string>
     <string name="delete">Удалить</string>
+<string name="review_title">Просмотр</string>
+<string name="review_progress">%1$d из %2$d · удалить: %3$d</string>
+<string name="review_cd_back">К предыдущей картинке</string>
+<string name="review_cd_close">Закончить просмотр</string>
+<string name="review_loading">Загрузка картинки…</string>
+<string name="review_marked">Удалить</string>
+<string name="review_keep">Оставить</string>
+<string name="review_offer_title">Готово картинок: %1$d</string>
+<string name="review_offer_body">Просмотреть их по одной и решить, какие оставить, а какие удалить? Можно и позже: выберите картинки в Результатах и нажмите Просмотр.</string>
+<string name="review_offer_yes">Просмотр</string>
+<string name="review_offer_later">Позже</string>
     <string name="use">Выбрать</string>
     <string name="in_use">Используется</string>
     <string name="rename_node">Имя узла</string>

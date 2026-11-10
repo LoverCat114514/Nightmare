@@ -71,6 +71,17 @@
     <string name="download_queued">已排队</string>
     <string name="download_mb">下载 %1$d MB</string>
     <string name="delete">删除</string>
+<string name="review_title">逐张查看</string>
+<string name="review_progress">第 %1$d 张，共 %2$d 张 · 待删除 %3$d 张</string>
+<string name="review_cd_back">回到上一张</string>
+<string name="review_cd_close">结束查看</string>
+<string name="review_loading">正在加载图片…</string>
+<string name="review_marked">待删除</string>
+<string name="review_keep">保留</string>
+<string name="review_offer_title">已完成 %1$d 张图片</string>
+<string name="review_offer_body">要逐张查看，决定保留还是删除吗？也可以稍后：在结果中选择图片，然后点逐张查看。</string>
+<string name="review_offer_yes">逐张查看</string>
+<string name="review_offer_later">稍后</string>
     <string name="use">使用</string>
     <string name="in_use">使用中</string>
     <string name="rename_node">节点名称</string>

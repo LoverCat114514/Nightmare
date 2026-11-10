@@ -90,6 +90,17 @@
     <string name="download_queued">Queued</string>
     <string name="download_mb">Download %1$d MB</string>
     <string name="delete">Delete</string>
+<string name="review_title">Review</string>
+<string name="review_progress">%1$d of %2$d · %3$d to delete</string>
+<string name="review_cd_back">Back to the picture before</string>
+<string name="review_cd_close">Finish reviewing</string>
+<string name="review_loading">Loading the picture…</string>
+<string name="review_marked">To delete</string>
+<string name="review_keep">Keep</string>
+<string name="review_offer_title">%1$d pictures done</string>
+<string name="review_offer_body">Go through them one at a time and keep or delete each? You can also do it later: select pictures in Results and tap Review.</string>
+<string name="review_offer_yes">Review</string>
+<string name="review_offer_later">Later</string>
     <string name="use">Use</string>
     <string name="in_use">In use</string>
     <string name="rename_node">Node name</string>
