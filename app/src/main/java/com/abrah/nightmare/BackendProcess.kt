@@ -624,6 +624,31 @@ object BackendProcess {
      * ⭐ The decode stays on the NPU: TAEHV's `taew2_1` there is 1.4 s for 17 frames at 480x272 and 49 dB from the CPU's
      * 34 s, with the direct convolution the pipeline uses (`docs/VIDEO-GGML.md` §8; without it, purple mush).
      */
+    /**
+     * ⭐ Two engine speed-ups, both measured on Anima only, so given to Anima only until another family is measured.
+     *
+     * - `NM_KEEP_RUNNERS` (`dit/095`, LIST-N4 H1c, the user's call 2026-11-10: on for 12 GB phones): the encoder's and
+     *   the DiT's weights stay loaded between renders instead of loading again each time. Anima Turbo 4 steps on the
+     *   S25, every render after the first: 512x768 9.8 to 6.1 s, 1024² 22.7 to 18.3 s, byte-identical; ~3 GB more held
+     *   while the backend is up, hence [Prefs.RAM_12GB_CLASS_BYTES]. A render with a LoRA still loads in full.
+     * - `NM_SPECTRUM=4` (`dit/094`, GitHub #98, [Prefs.ditSpectrum]): 4 steps run, then some are predicted; a render of
+     *   under 8 steps is not changed by it.
+     * ⚠ Both bind at launch, as every variable here: a switch stops a resident Anima backend (`chooseLowRam`).
+     */
+    internal fun ditSpeedEnv(spec: ModelSpec?, ramBytes: Long, spectrum: Boolean): Map<String, String> = buildMap {
+        // ⚠⚠ Keeping is Anima's only. MOSS-Image Turbo with it HUNG after its graph-cut plan, 7 GB still free (S25,
+        // 2026-11-10): its 9B encoder stays staged and the DiT's segments find no room; the manager reclaims a runner's
+        // workspace, never a kept runner's weights. Klein 4B on the GPU route gained nothing (96 to 101 s, it keeps its
+        // weights there already). ⚠ Anima 2.9B is ANIMA_DIT too, but its turbo LoRA on every render ends in full.
+        if (spec?.family == Family.ANIMA_DIT && ramBytes >= Prefs.RAM_12GB_CLASS_BYTES) put("NM_KEEP_RUNNERS", "1")
+        // ⭐ Spectrum: Anima, and MOSS-Image from 1.6.291 (S25, 512x512 8 steps: Turbo 29.8 to 24.3 s, SFT 35.1 to 30.0 s,
+        // PSNR 26-29 dB against off, the same picture a little softer).
+        if (spectrum && spec?.family in SPECTRUM_FAMILIES) put("NM_SPECTRUM", "4")
+    }
+
+    /** ⭐ The families [Prefs.ditSpectrum] reaches: the ones measured with it. */
+    internal val SPECTRUM_FAMILIES = setOf(Family.ANIMA_DIT, Family.MOSS)
+
     internal fun wanA14Env(model: File, arch: Int = 0): Map<String, String> {
         val high = File(model, ModelCatalog.WAN_HIGH_DIT).takeIf { it.isFile } ?: return emptyMap()
         return buildMap {
@@ -1172,6 +1197,11 @@ object BackendProcess {
                         // ⭐⭐ …unless the GPU takes it ([DitGpu]): there, and wherever the person turned it on, a
                         // measured model renders on the Adreno with `dit/080`'s cuts and the tiny decoder (backend 052).
                         if (!diagnosing) putAll(DitGpu.launchEnv(context, spec))
+                        // ⭐ 2026-11-10 port: fix36 carried the [ModelSpec.flowShift] field but missed this launch put (leftover).
+                        // ⭐ A model's own flow shift ([ModelSpec.flowShift]).
+                        spec?.flowShift?.let { put("NM_DIT_FLOW_SHIFT", it) }
+                        // ⭐ Weights kept between renders, and Spectrum where it is turned on ([ditSpeedEnv]).
+                        if (!diagnosing) putAll(ditSpeedEnv(spec, DeviceProbe.caps().ramBytes, Prefs.ditSpectrum))
                         // ⭐ FLUX.1 ([Family.FLUX1], `dit/092`): CLIP-L's path, this model's or its donor's, and both its text
                         // encoders on the CPU, which is how it was measured. ⚠ Before the diagnostic override, which beats it.
                         if (spec?.family == Family.FLUX1) {

@@ -3772,6 +3772,9 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                     if (p.done == p.total) say("  ${p.phase} ${p.done}/${p.total}")
                 })
             }
+            // ⚠ The cached list Hires fix and Enlarge read: without this the install was invisible to them until a
+            // screen opened (the demo night, 2026-11-10).
+            UpscalerCatalog.refresh(ctx) // ⭐ 2026-11-10 port (upstream 1.6.288-292)
             say("  ok   installed ${spec.file(ctx).length()} B at ${spec.file(ctx).absolutePath}")
         } catch (e: Throwable) {
             // ⚠⚠ The CLASS as well as the message. The first failure of this
@@ -5523,6 +5526,11 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             k == "wan_stream" && v != null -> {
                 Prefs.setLowRam(ctx, Prefs.KEY_WAN_STREAM, v == "1")
                 say("spillfill: wan stream = ${Prefs.wanStream}")
+            }
+            // ⭐ Settings, Speed: Spectrum, the same way (GitHub #98). ⚠ A launch variable: the next backend reads it.
+            k == "dit_spectrum" && v != null -> {
+                Prefs.setLowRam(ctx, Prefs.KEY_DIT_SPECTRUM, v == "1")
+                say("spillfill: dit spectrum = ${Prefs.ditSpectrum}")
             }
             v != null -> {
                 SpillFill.setForTest(ctx, k, v.toLongOrNull() ?: 0L)

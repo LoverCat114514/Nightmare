@@ -447,6 +447,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             Prefs.KEY_SDXL_LOWRAM -> { s -> s.family == Family.SDXL }
             Prefs.KEY_WAN_STREAM -> { s -> s.family == Family.WAN }
             Prefs.KEY_ANIMA_LOWRAM, Prefs.KEY_ANIMA_SEQ_DIT -> { s -> s.family == Family.ANIMA }
+            // ⭐ Spectrum is a launch variable of the Anima DiT ([BackendProcess.ditSpeedEnv]).
+            Prefs.KEY_DIT_SPECTRUM -> { s -> s.family in BackendProcess.SPECTRUM_FAMILIES } // ⭐ 2026-11-10 port (upstream 1.6.288-292)
             // ⭐ The GPU route ([DitGpu]) changes the engine variant, the build and the launch env of every DiT.
             // ⭐ The GPU route ([DitGpu]) changes the engine variant, the build and the launch env of every DiT.
             Prefs.KEY_DIT_GPU, Prefs.KEY_DIT_TAESD, Prefs.KEY_V69_NPU -> { s -> s.isDit }

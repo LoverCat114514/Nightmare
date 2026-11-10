@@ -1267,6 +1267,11 @@ class SdSampler(
     // ⭐ ONE exit for every family's render, so [ENLARGE] and the detail pass cannot be missed by the
     // next return added. ⚠ Detail LAST: it redraws faces on the final, biggest picture.
     override suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value {
+        // ⭐ Why the low RAM switch seems to do nothing: it is off, and this phone runs SDXL in low RAM mode anyway.
+        if ((family == Family.SDXL || family == Family.SDXL_SWAP) && ctx.android?.let { Prefs.sdxlLowRamOverridden(it) } == true) {
+            ctx.say(ctx.text(R.string.run_sdxl_lowram_anyway,
+                "SDXL runs in low RAM mode on this phone whichever way the switch is set: without it SDXL fills a phone under 16 GB and Android closes apps."))
+        }
         // ⭐⭐ The picture under the fix, remembered without the fix's own params ([com.abrah.nightmare.detail.Detailer.PARAMS]): Fix faces
         // switched on, or a new Fix strength or Fix seed, redraws the faces on the picture already made (Saved #7072,
         // "it reruns the full diffusion sampling"). ⚠ Safe because Run rolls seed 0 into a real seed first
@@ -1349,7 +1354,7 @@ class SdSampler(
         if (parts.isEmpty()) return img
         val appCtx = ctx.android ?: return img
         if (!com.abrah.nightmare.detail.PartDetector.isInstalled(appCtx)) {
-            ctx.warn(ctx.text(R.string.run_detail_no_detector, "Fix faces and hands skipped: the face and hand detector is not installed. Download it in Models, Tools"))
+            ctx.dontCache(); ctx.warn(ctx.text(R.string.run_detail_no_detector, "Fix faces and hands skipped: the face and hand detector is not installed. Download it in Models, Tools"))
             return img
         }
         val wired = inputs["prompt"] as? Value.Prompt ?: return img
@@ -1369,7 +1374,7 @@ class SdSampler(
         } else {
             val square = ContextKey(ModelCatalog.backendTypeOf(spec.id), spec.id, spec.native.width, spec.native.height)
             if (backendContextKey(node) != square && ctx.switchKey?.invoke(square) != true) {
-                ctx.warn(ctx.text(R.string.run_detail_no_square, "Fix faces and hands skipped: could not load the model at %1\$dx%2\$d for it", spec.native.width, spec.native.height))
+                ctx.dontCache(); ctx.warn(ctx.text(R.string.run_detail_no_square, "Fix faces and hands skipped: could not load the model at %1\$dx%2\$d for it", spec.native.width, spec.native.height))
                 return img
             }
             spec.native.width to spec.native.height
@@ -1417,7 +1422,7 @@ class SdSampler(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                ctx.warn(ctx.text(R.string.run_detail_failed, "Fix faces and hands could not redraw: %1\$s. The picture is kept as it was", e.message ?: e.javaClass.simpleName))
+                ctx.dontCache(); ctx.warn(ctx.text(R.string.run_detail_failed, "Fix faces and hands could not redraw: %1\$s. The picture is kept as it was", e.message ?: e.javaClass.simpleName))
                 bmp
             }
         }
@@ -2086,7 +2091,7 @@ class SdSampler(
         val add = tags.mapNotNull { t ->
             PromptLoras.resolve(t.name, installed)?.let { LoraSpec.Entry(it, t.strength.coerceIn(range)) }
                 ?: run {
-                    ctx.warn(ctx.text(R.string.run_lora_tag_missing, "LoRA \"%1\$s\" from the prompt is not installed. Skipped", t.name))
+                    ctx.dontCache(); ctx.warn(ctx.text(R.string.run_lora_tag_missing, "LoRA \"%1\$s\" from the prompt is not installed. Skipped", t.name))
                     null
                 }
         }

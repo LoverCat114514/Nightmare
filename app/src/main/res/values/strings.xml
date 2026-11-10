@@ -271,6 +271,8 @@
     <string name="run_wan_ram_warning">%1$s for %2$s s needs about %3$s GB on the NPU, more than this phone\'s %4$s GB of RAM comfortably holds. It may stop or restart the app. 480p or fewer seconds is safer</string>
     <string name="run_wan_npu_warning">%1$s for %2$s s needs about %3$s GB of NPU memory at once, more than this phone\'s NPU takes, so it will probably fail. Trying anyway</string>
     <string name="run_wan_streams_anyway">This clip streams its model whichever way Video: stream the model is set: it cannot be held whole on this phone\'s NPU.</string>
+    <!-- ⭐ 2026-11-10 port (upstream 1.6.288-292) -->
+    <string name="run_sdxl_lowram_anyway">SDXL runs in low RAM mode on this phone whichever way the switch is set: without it SDXL fills a phone under 16 GB and Android closes apps.</string>
     <string name="run_ref_fit_warning">%1$s with a reference: %2$s is probably too big for this phone and may fail. %3$s fits. Trying anyway</string>
     <string name="feature_missing_convert">This conversion has no %1$s. Convert it again in npuforge with %1$s ticked.</string>
     <string name="feature_missing_builtin">This download of the model has no %1$s. Delete it and download it again to get the version that has it.</string>

@@ -122,6 +122,7 @@ icon-source.png
 # video it was cut from is three times the size for no benefit in a README.
 media/*.mp4
 media/*.gif
+__pycache__/
 
 # Android file-manager trash leftovers (recycled-icon copies etc). Junk,
 # and this file layer even reads them back unstably -- never commit.

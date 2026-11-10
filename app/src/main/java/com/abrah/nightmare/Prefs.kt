@@ -101,6 +101,7 @@ object Prefs {
         ditGpu = p.getBoolean(KEY_DIT_GPU, false)
         v69Npu = p.getBoolean(KEY_V69_NPU, false)
         ditTaesd = p.getBoolean(KEY_DIT_TAESD, true)
+        ditSpectrum = p.getBoolean(KEY_DIT_SPECTRUM, false)
         notifRun = p.getBoolean(KEY_NOTIF_RUN, false)
     }
 
@@ -417,6 +418,18 @@ object Prefs {
     @Volatile var ditTaesd: Boolean = true
         private set
 
+    /**
+     * ⭐ Spectrum (GitHub #98, the user's call 2026-11-10: a setting, off by default): from step 5 on, an Anima render of
+     * 8 steps or more predicts some steps from the earlier ones instead of running the DiT (`dit/094`'s
+     * `NM_SPECTRUM`, sd.cpp's own cache). Anima Turbo 10 steps on the S25: 20-26 % faster, the same composition, a
+     * little softer (PSNR 22-27 dB against off). Anima and MOSS-Image, the families measured ([BackendProcess.SPECTRUM_FAMILIES]).
+     */
+    const val KEY_DIT_SPECTRUM = "dit_spectrum"
+
+    /** ⚠ [KEY_DIT_SPECTRUM] held in memory, as [ditGpu]: a launch reads it with no Context. */
+    @Volatile var ditSpectrum: Boolean = false
+        private set
+
     /** ⭐ The end-of-run notification, done/failed each with its own channel ([RunNotice], upstream issue #79). */
     const val KEY_NOTIF_RUN = "notif_run"
 
@@ -457,6 +470,7 @@ object Prefs {
         val ditGpu: Boolean = false,
         val v69Npu: Boolean = false,
         val ditTaesd: Boolean = true,
+        val ditSpectrum: Boolean = false,
     )
 
     /** ⚠ Unknown RAM (0) answers ON — the safe side is the slow mode, never the kill. */
@@ -485,6 +499,7 @@ object Prefs {
             ditGpu = read(KEY_DIT_GPU, false),
             v69Npu = read(KEY_V69_NPU, false),
             ditTaesd = read(KEY_DIT_TAESD, true),
+            ditSpectrum = read(KEY_DIT_SPECTRUM, false),
         )
     }
 
@@ -496,6 +511,7 @@ object Prefs {
         if (key == KEY_DIT_GPU) ditGpu = on
         if (key == KEY_V69_NPU) v69Npu = on
         if (key == KEY_DIT_TAESD) ditTaesd = on
+        if (key == KEY_DIT_SPECTRUM) ditSpectrum = on
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(key, on).apply()
     }
 
@@ -506,10 +522,23 @@ object Prefs {
      * whatever this says).
      */
     fun lowRamFor(context: Context, spec: ModelSpec): Boolean = when (spec.family) {
-        Family.SDXL, Family.SDXL_SWAP -> lowRam(context).sdxl
+        Family.SDXL, Family.SDXL_SWAP -> lowRam(context).sdxl || forcesSdxlLowRam(totalRam(context)) // ⭐ 2026-11-10 port (upstream 1.6.288-292)
         Family.ANIMA -> lowRam(context).anima
         else -> spec.lowram
     }
+
+    /**
+     * ⭐⭐ SDXL low RAM is not optional below [LOWRAM_BELOW_BYTES] (the user's call, 2026-11-10; upstream's hint
+     * says "required on devices with less than 16GB RAM"). The S25 (12 GB) with the switch off launched SDXL without
+     * `--lowram`: both MNN CLIP sessions held (RSS 3.1 GB) beside the UNet's ~2.5 GB context, MemAvailable 6.6 to
+     * 0.9 GB in 20 s, lmkd reaped the person's apps and then this one (LIST-N4 item 39; an S24 Ultra tester's phone
+     * rebooted the same way). ⚠ Unknown RAM (0) is [lowRamDefault]'s business, not this one.
+     */
+    fun forcesSdxlLowRam(totalRamBytes: Long): Boolean = totalRamBytes in 1 until LOWRAM_BELOW_BYTES
+
+    /** ⭐ The switch is off but this phone runs SDXL in low RAM mode anyway: the run log says so. */
+    fun sdxlLowRamOverridden(context: Context): Boolean =
+        !lowRam(context).sdxl && forcesSdxlLowRam(totalRam(context))
 }
 
 /**
