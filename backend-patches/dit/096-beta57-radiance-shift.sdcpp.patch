@@ -1,0 +1,160 @@
+diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
+index 2e10381..8187d81 100644
+--- a/include/stable-diffusion.h
++++ b/include/stable-diffusion.h
+@@ -79,6 +79,12 @@ enum scheduler_t {
+     FLUX2_SCHEDULER,
+     FLUX_SCHEDULER,
+     BETA_SCHEDULER,
++    // nightmare (dit/096): RES4LYF's beta pinned to the community's 0.5/0.7 shape, and
++    // ComfyUI-UtilsCollection's radiance curve. The private backend's suffix whitelist
++    // can't carry either name, so Nightmare's Kotlin picks them through
++    // NM_DIT_SCHEDULE_FILE (request.cpp) while the wire keeps a whitelisted suffix.
++    BETA57_SCHEDULER,
++    RADIANCE_SHIFT_SCHEDULER,
+     SCHEDULER_COUNT
+ };
+ 
+diff --git a/src/pipeline/request.cpp b/src/pipeline/request.cpp
+index 0a4473e..97cfe6e 100644
+--- a/src/pipeline/request.cpp
++++ b/src/pipeline/request.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include <algorithm>
+ #include <cmath>
++#include <cstdio>
+ #include <cstdlib>
+ #include <ctime>
+ 
+@@ -94,9 +95,44 @@ namespace sd::pipeline {
+         return sample_method;
+     }
+ 
++    // nightmare (dit/096): the private backend's suffix whitelist can't carry a new
++    // schedule name down to the engine (an unknown suffix downgrades the whole
++    // sampler on the backend side), so Kotlin writes the schedule it picked into
++    // NM_DIT_SCHEDULE_FILE and sends a whitelisted suffix on the wire. Read fresh on
++    // every resolve — the file, not the launch environment, is what changes between
++    // renders. Anything unreadable or unmatchable falls back to the wire's value.
++    static scheduler_t resolve_schedule_file(scheduler_t scheduler) {
++        const char* path = getenv("NM_DIT_SCHEDULE_FILE");
++        if (!path || !path[0]) {
++            return scheduler;
++        }
++        FILE* f = fopen(path, "r");
++        if (!f) {
++            return scheduler;
++        }
++        char buf[32] = {0};
++        const bool read = fgets(buf, sizeof(buf), f) != nullptr;
++        fclose(f);
++        if (!read) {
++            return scheduler;
++        }
++        for (char* p = buf; *p; ++p) {
++            if (*p == '\n' || *p == '\r' || *p == ' ' || *p == '\t') {
++                *p = '\0';
++                break;
++            }
++        }
++        const scheduler_t from_file = str_to_scheduler(buf);
++        if (from_file == SCHEDULER_COUNT) {
++            return scheduler;
++        }
++        LOG_INFO("NM_DIT_SCHEDULE_FILE picks the '%s' scheduler", buf);
++        return from_file;
++    }
+     static scheduler_t resolve_scheduler(StableDiffusionGGML* sd,
+                                          scheduler_t scheduler,
+                                          enum sample_method_t sample_method) {
++        scheduler = resolve_schedule_file(scheduler);
+         if (scheduler == SCHEDULER_COUNT) {
+             return default_scheduler(sd, sample_method);
+         }
+diff --git a/src/runtime/denoiser.hpp b/src/runtime/denoiser.hpp
+index 4f5fbc4..0d4b859 100644
+--- a/src/runtime/denoiser.hpp
++++ b/src/runtime/denoiser.hpp
+@@ -463,6 +463,48 @@ struct BetaScheduler : SigmaScheduler {
+     }
+ };
+ 
++// nightmare (dit/096): ComfyUI-UtilsCollection's `radiance_shift_scheduler`
++// (helpers/scheduler_helpers.py, power=2.4, midpoint_shift=0.98), verbatim
++// structure: steps+1 points over [0, 1) (endpoint=False), x**midpoint_shift,
++// (1 - x**power)**power, rint to timesteps, consecutive-dedup, then
++// `discard_penultimate` drops the LAST positive survivor before the trailing
++// zero — so this table ships FINAL and nothing downstream trims another sigma
++// off it. ComfyUI indexes a 1001-rung ladder (sigmas[0..1000], 1000 == full
++// noise); this engine's is 1000 rungs deep, so the house translation — the one
++// BetaScheduler above already uses for the same ComfyUI shape — rescales the
++// normalized curve onto [0, TIMESTEPS-1] instead of indexing it raw. The
++// community's pick for dpmpp_2m_sde / dpmpp_sde on MOSS and Anima: it holds the
++// high-noise end longer than discrete or Karras before sliding down.
++struct RadianceShiftScheduler : SigmaScheduler {
++    std::vector<float> get_sigmas(uint32_t n, float /*sigma_min*/, float /*sigma_max*/, t_to_sigma_t t_to_sigma) override {
++        std::vector<float> result;
++        result.reserve(n + 2);
++        const int t_max = TIMESTEPS - 1;
++        if (n == 0) {
++            return result;
++        }
++        int last_t = -1;
++        for (uint32_t i = 0; i <= n; i++) {
++            const double x  = std::pow(static_cast<double>(i) / (static_cast<double>(n) + 1.0), 0.98);
++            const double ts = std::pow(1.0 - std::pow(x, 2.4), 2.4);
++            const int t     = static_cast<int>(std::lround(ts * t_max));
++
++            if (t != last_t) {
++                result.push_back(t_to_sigma(static_cast<float>(t)));
++                last_t = t;
++            }
++        }
++        // `discard_penultimate=True`: the last positive survivor goes, the
++        // trailing zero stays — the sampler still sees n steps when nothing
++        // deduped away, exactly ComfyUI's shape.
++        if (result.size() > 1) {
++            result.pop_back();
++        }
++        result.push_back(0.f);
++        return result;
++    }
++};
++
+ struct SimpleScheduler : SigmaScheduler {
+     std::vector<float> get_sigmas(uint32_t n, float sigma_min, float sigma_max, t_to_sigma_t t_to_sigma) override {
+         std::vector<float> result_sigmas;
+@@ -1071,6 +1113,17 @@ struct Denoiser {
+                 LOG_INFO("get_sigmas with Beta scheduler");
+                 scheduler = std::make_shared<BetaScheduler>(extra_sample_args);
+                 break;
++            // nightmare (dit/096): RES4LYF's "beta57" handler — the generic Beta scheduler
++            // with the shape the community actually runs (alpha=0.5, beta=0.7; RES4LYF
++            // sigmas.py:1422). The parseable-args Beta above stays as it is.
++            case BETA57_SCHEDULER:
++                LOG_INFO("get_sigmas with Beta 57 scheduler (alpha=0.5, beta=0.7)");
++                scheduler = std::make_shared<BetaScheduler>("alpha=0.5,beta=0.7");
++                break;
++            case RADIANCE_SHIFT_SCHEDULER:
++                LOG_INFO("get_sigmas with Radiance Shift scheduler");
++                scheduler = std::make_shared<RadianceShiftScheduler>();
++                break;
+ 
+             case EXPONENTIAL_SCHEDULER:
+                 LOG_INFO("get_sigmas exponential scheduler");
+diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
+index a50c75d..5607004 100644
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -124,6 +124,10 @@ const char* scheduler_to_str[] = {
+     "flux2",
+     "flux",
+     "beta",
++    // nightmare (dit/096): the file channel's values must match these exactly
++    // (request.cpp resolves the file's content through str_to_scheduler).
++    "beta57",
++    "radiance_shift",
+ };
+ 
+ static_assert(SCHEDULER_COUNT == sizeof(scheduler_to_str) / sizeof(scheduler_to_str[0]),

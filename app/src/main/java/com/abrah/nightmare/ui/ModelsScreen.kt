@@ -1,0 +1,1292 @@
+package com.abrah.nightmare.ui
+
+import com.abrah.nightmare.ui.StudioTextButton
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import com.abrah.nightmare.R
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.abrah.nightmare.Build
+import com.abrah.nightmare.Family
+import com.abrah.nightmare.ModelInstaller
+import com.abrah.nightmare.UpscalerBuild
+import com.abrah.nightmare.UpscalerSpec
+import com.abrah.nightmare.ModelSpec
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+
+/**
+ * What the model list needs to draw one row.
+ *
+ * ⚠ A plain data class rather than a `ModelSpec` plus a `Context`: this screen
+ * is previewable and testable only if it can be handed a finished state, and
+ * "is it installed" is a disk read that a preview cannot do.
+ */
+/**
+ * ⭐ One upscaler, as its card shows it.
+ *
+ * ⚠ Deliberately NOT a [ModelRow] with a flag. An upscaler has no `selected`
+ * (nothing global points at one — a NODE names it), no `missing` list (it is
+ * one file), and no family. Three fields that would always be dead is what a
+ * separate type costs less than.
+ */
+/**
+ * ⭐ One download on the Tools tab — today only the segmenter
+ * (`docs/SEGMENTER.md`). ⚠ Its own tab, the user's call 2026-09-16: it is not a
+ * checkpoint and has no Use button, and a row among checkpoints without one
+ * would read as a broken checkpoint (the upscalers' reasoning).
+ */
+data class ToolRow(
+    val label: String,
+    val bytes: Long,
+    val installed: Boolean,
+    val onDisk: Long = 0,
+    val progress: ModelInstaller.Progress? = null,
+)
+
+/**
+ * ⭐ One textual-inversion embedding, listed, imported and deleted in Settings.
+ *
+ * ⚠ Upstream `local-dream` has an Embedding Manager (import/list/delete a
+ * `.safetensors` by name); DreamUI dropped it along with `config.json` and
+ * the rest of its Kotlin-layer simplifications. The BACKEND never lost the
+ * feature — `text_encoder->loadTextualInversions()` already loads whatever is
+ * in `embeddings/` (two directories above `--model_dir`) at launch and
+ * matches a prompt TOKEN against a file's name — so this is purely the app
+ * half growing back. `docs/ARCHITECTURE.md`.
+ */
+data class EmbeddingRow(val name: String, val bytes: Long)
+
+data class UpscalerRow(
+    val spec: UpscalerSpec,
+    /** ⚠ Null when no published tier loads on this HTP — the card must say so. */
+    val build: UpscalerBuild?,
+    val installed: Boolean,
+    val progress: ModelInstaller.Progress? = null,
+    val onDisk: Long = 0,
+)
+
+/**
+ * ⭐⭐ The video models, as one row — because they are one decision.
+ *
+ * ⚠⚠ **A THIRD kind of model**, next to a checkpoint and an upscaler, and
+ * it gets its own tab for the same reason they do. It is not a family: there
+ * is no launch contract, nothing to "Use", no `--type`, and the catalogue
+ * cannot describe it at all ([com.abrah.nightmare.npu.NpuFiles]).
+ *
+ * ⚠ **One row for 13 files**, not thirteen. They are useless individually —
+ * the pipeline maps all of them — so thirteen cards would be thirteen
+ * decisions a user cannot make separately.
+ *
+ * @param supported null while the canary has not run; false means this chip
+ *   refused a real context binary and the download would be wasted.
+ */
+data class VideoRow(
+    val installedBytes: Long,
+    val totalBytes: Long,
+    /** ⚠ Graphs, not host weights — [weightsMissing] is the other half. */
+    val missing: List<String>,
+    /**
+     * ⚠ The host-side weights, which download with the graphs since
+     * 2026-09-13 — they are 0.7% of the bytes and the app cannot render a
+     * frame without them, so [VideoInstaller] fetches them FIRST.
+     */
+    val weightsMissing: List<String>,
+    val supported: Boolean? = null,
+    val progress: ModelInstaller.Progress? = null,
+) {
+    val complete: Boolean get() = missing.isEmpty() && weightsMissing.isEmpty()
+}
+
+data class ModelRow(
+    val spec: ModelSpec,
+    /**
+     * ⭐ The published build this device can load, or **null** when there is
+     * none. ⚠ Null is a real state and the row must SAY so: SDXL publishes one
+     * tier, so on an older HTP the honest answer is "not for this phone", not a
+     * Download button that spends 3.5 GB before failing at load.
+     */
+    val build: Build? = null,
+    val installed: Boolean,
+    val selected: Boolean,
+    /** Non-null while this model is being fetched. */
+    val progress: ModelInstaller.Progress? = null,
+    val onDisk: Long = 0,
+    /**
+     * ⭐ Required files that are absent, for an imported model that arrived
+     * incomplete.
+     *
+     * ⚠ Passed in for the same reason [installed] is: this is a disk read, and
+     * the screen has to stay renderable from a finished state so a preview and
+     * a golden can draw it. ⚠ Only meaningful when
+     * [ModelSpec.isCustom] — a built-in that is missing files has a Download
+     * button, so the list would be noise.
+     */
+    val missing: List<String> = emptyList(),
+    /** ⭐ [ModelSpec.partial] — a built-in that says Repair, not Download. */
+    val partial: Boolean = false,
+    /** ⭐ [ModelSpec.fetchBytes] — what the button will download. */
+    val fetchBytes: Long = 0,
+    /** ⭐ [ModelSpec.ramNeeded] — non-zero: the chip could, the RAM cannot. */
+    val needsRam: Long = 0,
+    /** ⭐ [com.abrah.nightmare.ModelSpec.noHmxOn]: this chip runs it with HMX off; the row says so, ⋮ tests the NPU. */
+    val noHmx: Boolean = false,
+    /** ⭐ [com.abrah.nightmare.ModelSpec.npuTestOn]: ⋮ offers Diagnose (Iris too, which keeps HMX). */
+    val npuTest: Boolean = false,
+    /** ⭐ [com.abrah.nightmare.CustomModels.ramTight] — an import that Android will likely close. */
+    val ramTight: Boolean = false,
+    /** ⭐ Its files are Local Dream's ([com.abrah.nightmare.LocalDreamModels]): a badge, no Delete. */
+    val fromLocalDream: Boolean = false,
+    /** ⭐ Waiting behind the download in flight (`HarnessViewModel.downloadQueue`); a tap takes it out. */
+    val queued: Boolean = false,
+    /** ⭐ Another model is downloading: Download stays live and queues this one. */
+    val queueable: Boolean = false,
+)
+
+/**
+ * The model picker: what exists, what is installed, and which one the app uses.
+ *
+ * ⭐ This screen is the difference between a demo and something a person can
+ * use. Before it, a model reached the phone only by an `adb push` from a
+ * developer's machine.
+ */
+@Composable
+fun ModelsScreen(
+    rows: List<ModelRow>,
+    busy: Boolean,
+    error: String?,
+    onDismissError: () -> Unit = {},
+    onInstall: (ModelSpec) -> Unit,
+    onCancel: () -> Unit,
+    onDelete: (ModelSpec) -> Unit,
+    onSelect: (ModelSpec) -> Unit,
+    /** ⭐ An imported model's new shown name ([com.abrah.nightmare.HarnessViewModel.renameModel]). */
+    onRename: (ModelSpec, String) -> Unit = { _, _ -> },
+    /** ⭐ ⋮ "Test the NPU" ([com.abrah.nightmare.HarnessViewModel.diagnoseBlank]), on a [ModelRow.noHmx] row. */
+    onTestNpu: (ModelSpec) -> Unit = {},
+    /** ⭐ ⋮ "8-step speed-up" on a MOSS import ([com.abrah.nightmare.HarnessViewModel.toggleMossSpeed]). */
+    onToggleSpeed: (ModelSpec) -> Unit = {},
+    /**
+     * ⭐⭐ A Use waiting on a flow choice — see
+     * [com.abrah.nightmare.HarnessViewModel.PendingUse]. Null when nothing is
+     * pending, which is almost always.
+     */
+    pendingUse: com.abrah.nightmare.HarnessViewModel.PendingUse? = null,
+    recipes: List<com.abrah.nightmare.canvas.Recipe> = emptyList(),
+    onConfirmUse: (ModelSpec?, com.abrah.nightmare.canvas.Recipe?) -> Unit = { _, _ -> },
+    onCancelUse: () -> Unit = {},
+    /** ⭐ Use on an upscaler row — opens the Upscale flow. */
+    onUseUpscaler: (UpscalerSpec) -> Unit = {},
+    /** ⭐ Use on the video row — offers the two video flows. */
+    onUseVideo: () -> Unit = {},
+    modifier: Modifier = Modifier,
+    /**
+     * ⭐⭐ The Models title's "+" popup ([ImportDialog]) is open. ⚠ The one import since
+     * 2026-10-14: the per-page cards went, and the file says what it is.
+     */
+    importOpen: Boolean = false,
+    onCloseImport: () -> Unit = {},
+    /** ⭐ "Choose a file" with the name typed (empty = the file's own). Null draws no popup. */
+    onImportFile: ((name: String) -> Unit)? = null,
+    /** ⭐ A checkpoint whose weights named no family is waiting for one ([FamilyAskDialog]). */
+    familyAsk: Boolean = false,
+    onAnswerFamily: (Family?) -> Unit = {},
+    /**
+     * ⭐ The name of an import in flight, or null. Drawn as a banner ABOVE the
+     * family tabs — an imported model has no row to hang progress on until the
+     * scan finds it, which is exactly why nothing was visible before.
+     */
+    importing: String? = null,
+    importProgress: ModelInstaller.Progress? = null,
+    /**
+     * ⭐⭐ The second KIND of model — see `Upscalers.kt`. Empty renders no tab
+     * at all, which is what a preview and a golden with no catalogue want.
+     */
+    upscalers: List<UpscalerRow> = emptyList(),
+    onInstallUpscaler: (UpscalerSpec) -> Unit = {},
+    onDeleteUpscaler: (UpscalerSpec) -> Unit = {},
+    /**
+     * ⭐⭐ The video models. Null renders no tab at all — which is what a
+     * preview, a golden, and a phone whose chip cannot run them all want.
+     */
+    video: VideoRow? = null,
+    onInstallVideo: () -> Unit = {},
+    onDeleteVideo: () -> Unit = {},
+    /**
+     * ⚠⚠ Asked for by the TAB, not at app start: it runs the canary, which
+     * brings the whole QNN backend up and costs seconds on a cold app. A user
+     * who never opens this tab never pays for it.
+     */
+    onProbeVideo: () -> Unit = {},
+    /**
+     * ⭐ The Wan models ([com.abrah.nightmare.ModelCatalog.video]: Wan 2.2 Turbo and Fun Control), drawn on
+     * the Video tab and on their own Wan page in the family menu (the user, 2026-10-15: "show WAN in the
+     * family filter"), and in their own Video section at the end of All (2026-10-24). Install and Delete are the
+     * checkpoints' own.
+     */
+    wans: List<ModelRow> = emptyList(),
+    onUseWan: (ModelSpec) -> Unit = {},
+    /** ⭐ The Tools tab. Null renders no tab, as for [video]. */
+    segmenter: ToolRow? = null,
+    onInstallSegmenter: () -> Unit = {},
+    onDeleteSegmenter: () -> Unit = {},
+    /** ⭐⭐ The second Tools row — Pick by name (`docs/SEGMENTER.md` §8). */
+    parser: ToolRow? = null,
+    onInstallParser: () -> Unit = {},
+    onDeleteParser: () -> Unit = {},
+    /** ⭐ The third Tools row — SD 1.5 Swap's openpose detector. */
+    pose: ToolRow? = null,
+    onInstallPose: () -> Unit = {},
+    onDeletePose: () -> Unit = {},
+    /** ⭐ Smooth motion's IFRNet ([com.abrah.nightmare.npu.FrameInterp]); null on a chip with no build. */
+    interp: ToolRow? = null,
+    onInstallInterp: () -> Unit = {},
+    onDeleteInterp: () -> Unit = {},
+    /** ⭐ Motion transfer's whole-body pose ([com.abrah.nightmare.pose.WholeBodyPose]). */
+    wholeBody: ToolRow? = null,
+    onInstallWholeBody: () -> Unit = {},
+    onDeleteWholeBody: () -> Unit = {},
+    /** ⭐ Fix faces / Fix hands' detector ([com.abrah.nightmare.detail.PartDetector]). */
+    detailer: ToolRow? = null,
+    onInstallDetailer: () -> Unit = {},
+    onDeleteDetailer: () -> Unit = {},
+    /** ⭐ Face edit's LivePortrait set ([com.abrah.nightmare.portrait.LivePortrait]). */
+    livePortrait: ToolRow? = null,
+    onInstallLivePortrait: () -> Unit = {},
+    /** ⭐ Use on LivePortrait: Edit a face or Animate a portrait ([com.abrah.nightmare.HarnessViewModel.askUseLivePortrait]). */
+    onUseLivePortrait: () -> Unit = {},
+    onDeleteLivePortrait: () -> Unit = {},
+    /** ⭐ The fourth Tools row — SD 1.5 Swap's depth estimator. */
+    depth: ToolRow? = null,
+    onInstallDepth: () -> Unit = {},
+    onDeleteDepth: () -> Unit = {},
+    describe: Map<com.abrah.nightmare.DescribeModel, ToolRow> = emptyMap(),
+    onInstallDescribe: (com.abrah.nightmare.DescribeModel) -> Unit = {},
+    onDeleteDescribe: (com.abrah.nightmare.DescribeModel) -> Unit = {},
+    /** ⭐ SD 1.5 Swap's ControlNets — one row per type built for this chip. */
+    controlnets: Map<String, ToolRow> = emptyMap(),
+    onInstallControlNet: (String) -> Unit = {},
+    onDeleteControlNet: (String) -> Unit = {},
+) {
+    // ⭐ Tap → first drawn frame, for the lag report of 2026-09-27 (`NmPerf`).
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        androidx.compose.runtime.withFrameNanos { }
+        com.abrah.nightmare.Perf.modelsDrawn()
+    }
+    // ⚠⚠ The confirm is intercepted HERE rather than inside the card, so the
+    // card stays a dumb row and there is exactly one place that can delete a
+    // model. A dialog per card would be one per row on screen.
+    // ⭐⭐⭐ **Use asks what to open with it**, rather than silently retargeting
+    // whatever happens to be on the canvas.
+    //
+    // ⚠⚠ Before this, someone who came here to START something with a
+    // checkpoint pressed Use, went to Flows, and picked a recipe — and if the
+    // canvas held unsaved work, Use had already rewritten it on the way past
+    // with nothing said. Asked for 2026-09-15.
+    pendingUse?.let { p ->
+        // ⭐⭐⭐ **Use asks what to open with it**, rather than silently
+        // retargeting whatever happens to be on the canvas.
+        //
+        // ⚠⚠ The flows live in the TEXT slot as rows, not in `confirmButton`.
+        // A Column of buttons in that slot is laid out by AlertDialog in a Row
+        // beside the dismiss button, which is why the first version came out a
+        // mess — reported 2026-09-15. A dialog's action slots hold ONE action
+        // each; a list of choices is content.
+        AlertDialog(
+            onDismissRequest = onCancelUse,
+            title = { Text(p.title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // ⚠ No unsaved warning here since 2026-10-10: choosing a flow goes through
+                    // the one open guard, which asks Save / Open anyway / Cancel when it matters.
+                    // ⚠⚠ The offer is computed by the CALLER
+                    // ([HarnessViewModel.PendingUse.offer]) and not filtered here.
+                    // It used to be `recipes.filter { it.usesCheckpoint }`, which
+                    // asks "does this flow need a checkpoint" and never "can it
+                    // use THIS one" — so Use on Z-Image offered Inpaint, which
+                    // Z-Image has no type for. Reported 2026-09-20.
+                    for (r in p.offer) {
+                        Surface(
+                            onClick = { onConfirmUse(p.spec, r) },
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                                Text(r.labelRes?.let { stringResource(it) } ?: r.label, fontWeight = FontWeight.Medium)
+                                Text(
+                                    r.aboutRes?.let { stringResource(it) } ?: r.about,
+                                    style = NoteTextStyle,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    // ⚠⚠ No "Keep the flow on the canvas" row: removed for good by the user,
+                    // 2026-10-11 (it went 2026-10-10, came back on one user's report, and went
+                    // again) — `docs/LEGACY.md` §9. Use always opens a flow.
+                }
+            },
+            // ⚠ ONE action button. Choosing a flow IS the confirmation, so
+            // there is nothing for a confirm button to do.
+            confirmButton = { StudioButton(onClick = onCancelUse) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+
+
+    var deleting by remember { mutableStateOf<ModelSpec?>(null) }
+    var renaming by remember { mutableStateOf<ModelSpec?>(null) }
+    // ⚠ The same pattern for the other catalogue: ONE owner of the confirm, so
+    // there is exactly one place that can delete an upscaler. It shipped
+    // without a confirm at all while the checkpoint beside it had one — the
+    // inconsistency the phone reported.
+    var deletingUpscaler by remember { mutableStateOf<UpscalerSpec?>(null) }
+    // ⚠⚠⚠ …and the same for the video models, which is the BIGGEST delete in
+    // the app and shipped without one. A checkpoint asks before costing a ~1 GB
+    // re-download and an upscaler asks before costing 24 MB; this threw away
+    // 8.6 GB on a single tap. Reported from the phone, 2026-09-13.
+    var deletingVideo by remember { mutableStateOf(false) }
+    var deletingSegmenter by remember { mutableStateOf(false) }
+    var deletingParser by remember { mutableStateOf(false) }
+    var deletingPose by remember { mutableStateOf(false) }
+    var deletingInterp by remember { mutableStateOf(false) }
+    var deletingWholeBody by remember { mutableStateOf(false) }
+    var deletingDetailer by remember { mutableStateOf(false) }
+    var deletingLivePortrait by remember { mutableStateOf(false) }
+    val livePortraitWords = livePortrait?.let { it.label + " liveportrait face edit smile expression head portrait animate" }
+    // ⚠ What a search finds the detector by, here AND in the tools-matched test below: one list of words.
+    val detailerWords = detailer?.let { it.label + " adetailer face hand fix" }
+    // ⚠ The same: the Tools card and the All search match Smooth motion by these words.
+    val interpWords = "ifrnet smooth motion frames fps interpolation video wan"
+    // ⚠ The same for the whole-body pose.
+    val wholeBodyWords = "dwpose whole body pose hands face skeleton motion transfer dance"
+    var deletingDepth by remember { mutableStateOf(false) }
+    var deletingDescribe by remember { mutableStateOf<com.abrah.nightmare.DescribeModel?>(null) }
+    var deletingControlNet by remember { mutableStateOf<String?>(null) }
+
+    // ⚠ No header and no `statusBarsPadding` any more: [LibraryScreen] owns
+    // both, because this screen is now a TAB rather than a whole screen. A
+    // second inset here would double it.
+    Column(modifier.fillMaxSize()) {
+        if (error != null) {
+            ErrorNotice(error, Modifier.padding(top = 8.dp), reportable = true, onClose = onDismissError)
+        }
+        // ⭐ "Something is happening", for the one case with no row to say so.
+        if (importing != null) {
+            Card(
+                Modifier.fillMaxWidth().padding(top = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                ),
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        stringResource(R.string.importing_model, importing),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        // ⚠ The PHASE, not a percentage: a zip's uncompressed
+                        // size is unknown until it is read, so there is no
+                        // honest percentage to show during the unpack.
+                        importProgress?.phase ?: stringResource(R.string.importing_working),
+                        style = NoteTextStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // ⚠ Indeterminate whenever the total is unknown, which is
+                    // most of an import. A bar parked at 100% through a minute
+                    // of unpacking reads as a hang.
+                    val p = importProgress
+                    if (p != null && p.total > 0) {
+                        LinearProgressIndicator(
+                            progress = { p.fraction },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        )
+                    } else {
+                        LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                    }
+                }
+            }
+        }
+        // ⭐⭐⭐ **The Models BROWSER** — the user's concept art, 2026-10-05
+        // ([ModelBrowser.kt]). Capability chips replaced the swipeable family
+        // tabs, which competed with the sheet's own swipes; a search box and a
+        // Family menu under them; Installed, then Available, then the models
+        // this phone cannot run in a collapsed section of their own (the user:
+        // *"so user only sees whats supported"*). A family opens its own page.
+        // ⭐ PAGES, not families: Anima's two runtimes share one ([page]).
+        val families = Family.entries.filter { f -> rows.any { it.spec.family.page() == f } || (f == Family.WAN && wans.isNotEmpty()) }
+        // ⚠ With no checkpoints but the video models, opens on Video — what the
+        // family tabs did when the video tab was page 0 (a real state: a phone
+        // that downloaded only the video models).
+        var kind by androidx.compose.runtime.saveable.rememberSaveable {
+            mutableStateOf(if (rows.isEmpty() && (video != null || wans.isNotEmpty())) ModelKind.VIDEO else ModelKind.ALL)
+        }
+        var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+        var familyPage by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Family?>(null) }
+        var sub by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SubKind.ALL) }
+        var showUnsupported by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+        val kinds = buildList {
+            add(ModelKind.ALL)
+            add(ModelKind.GENERATE)
+            if (rows.any { it.spec.family.edit }) add(ModelKind.EDIT)
+            if (rows.any { it.spec.isInpaintModel() }) add(ModelKind.INPAINT)
+            if (video != null || wans.isNotEmpty()) add(ModelKind.VIDEO)
+            if (upscalers.isNotEmpty()) add(ModelKind.UPSCALE)
+            if (livePortrait != null) add(ModelKind.FACES)
+            if (segmenter != null || parser != null || describe.isNotEmpty()) add(ModelKind.TOOLS)
+        }
+        // ⚠ Back leaves the family page before it leaves the screen.
+        if (familyPage != null) androidx.activity.compose.BackHandler { familyPage = null }
+        val fp = familyPage
+        if (fp == null) {
+            androidx.compose.foundation.layout.Box(Modifier.padding(top = 8.dp)) { PillRow(kinds, kind, { kindLabel(it) }) { kind = it } }
+        }
+        if (fp == null && kind == ModelKind.VIDEO && (video != null || wans.isNotEmpty())) {
+            VideoModelsTab(
+                video, busy, onInstallVideo, onCancel,
+                onConfirmDelete = { deletingVideo = true },
+                onProbe = onProbeVideo,
+                onUse = onUseVideo,
+                wans = wans,
+                onInstallWan = onInstall,
+                onDeleteWan = { deleting = it },
+                onUseWan = onUseWan,
+            )
+        } else {
+        // ⭐ The Tools, Upscale and Video cards as item blocks, so their tabs and the search (#6288)
+        // show the SAME cards. [match] takes a card's searchable words.
+        val toolItems: androidx.compose.foundation.lazy.LazyListScope.((String) -> Boolean) -> Unit = { match ->
+                    if (segmenter != null && match(segmenter.label)) {
+                        item { ToolCard(segmenter, busy, onInstallSegmenter, onCancel) { deletingSegmenter = true } }
+                    }
+                    if (parser != null && match(parser.label)) {
+                        item { ToolCard(parser, busy, onInstallParser, onCancel) { deletingParser = true } }
+                    }
+                    if (pose != null && match(pose.label)) {
+                        item {
+                            ToolCard(
+                                pose, busy, onInstallPose, onCancel,
+                                detail = stringResource(R.string.pose_about),
+                            ) { deletingPose = true }
+                        }
+                    }
+                    if (interp != null && match(interp.label + " " + interpWords)) {
+                        item {
+                            ToolCard(
+                                interp, busy, onInstallInterp, onCancel,
+                                detail = stringResource(R.string.interp_about),
+                            ) { deletingInterp = true }
+                        }
+                    }
+                    if (wholeBody != null && match(wholeBody.label + " " + wholeBodyWords)) {
+                        item {
+                            ToolCard(
+                                wholeBody, busy, onInstallWholeBody, onCancel,
+                                detail = stringResource(R.string.whole_body_about),
+                            ) { deletingWholeBody = true }
+                        }
+                    }
+                    if (detailer != null && match(detailerWords.orEmpty())) {
+                        item {
+                            ToolCard(
+                                detailer, busy, onInstallDetailer, onCancel,
+                                detail = stringResource(R.string.detailer_about),
+                            ) { deletingDetailer = true }
+                        }
+                    }
+                    for ((type, row) in controlnets) {
+                        if (!match(row.label)) continue
+                        item {
+                            ToolCard(
+                                row, busy, { onInstallControlNet(type) }, onCancel,
+                                // ⭐ SDXL's need a conversion that kept the feature (GitHub, 2026-10-10:
+                                // "downloaded them, the tiles are empty" on a LoRA-only Illustrious).
+                                detail = stringResource(
+                                    when {
+                                        type.startsWith(com.abrah.nightmare.IpAdapter.ROW_PREFIX) ->
+                                            if ("sdxl_" in type) R.string.ip_about_sdxl else R.string.ip_about
+                                        // ⚠ 8 Gen 3: it may not fit beside the UNet (`npuSpaceRefused`, 2026-10-10).
+                                        "sdxl_" in type && com.abrah.nightmare.DeviceProbe.caps().let { it.known && it.arch < 79 } ->
+                                            R.string.cn_about_sdxl_v75
+                                        "sdxl_" in type -> R.string.cn_about_sdxl
+                                        else -> R.string.cn_about
+                                    },
+                                ),
+                            ) { deletingControlNet = type }
+                        }
+                    }
+                    if (depth != null && match(depth.label)) {
+                        item {
+                            ToolCard(
+                                depth, busy, onInstallDepth, onCancel,
+                                detail = stringResource(R.string.depth_about),
+                            ) { deletingDepth = true }
+                        }
+                    }
+                    for ((m, row) in describe) {
+                        if (!match(row.label)) continue
+                        item {
+                            ToolCard(
+                                row, busy, { onInstallDescribe(m) }, onCancel,
+                                detail = stringResource(
+                                    if (m == com.abrah.nightmare.ImageTagger) R.string.tagger_about else R.string.describe_about,
+                                ),
+                            ) { deletingDescribe = m }
+                        }
+                    }
+        }
+        // ⭐ LivePortrait is a MODEL with its own tab and a Use, as the upscalers have (the user, 2026-10-21), not a Tools row.
+        val faceItems: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
+                    if (livePortrait != null) {
+                        item {
+                            AddonCard(
+                                title = livePortrait.label,
+                                detail = stringResource(R.string.liveportrait_about),
+                                installed = livePortrait.installed,
+                                sizeBytes = if (livePortrait.installed) livePortrait.onDisk else livePortrait.bytes,
+                                busy = busy,
+                                progress = livePortrait.progress,
+                                onCancel = onCancel,
+                                onInstall = onInstallLivePortrait,
+                                onDelete = { deletingLivePortrait = true },
+                                onUse = onUseLivePortrait,
+                            )
+                        }
+                    }
+        }
+        val upscalerItems: androidx.compose.foundation.lazy.LazyListScope.(List<UpscalerRow>) -> Unit = { shown ->
+                    items(shown, key = { "up_" + it.spec.id }) { row ->
+                        UpscalerCard(
+                            row, busy, onInstallUpscaler, onCancel,
+                            onDelete = { deletingUpscaler = it },
+                            onUse = onUseUpscaler,
+                        )
+                    }
+        }
+        // ⚠⚠ One list state PER PAGE (`docs/UI.md` §4b): one LazyColumn serves every kind pill and the family
+        // page, so a shared state opened Tools scrolled to row 25 of All, with its note off screen.
+        val listState = remember(kind, fp) { androidx.compose.foundation.lazy.LazyListState() }
+        LazyColumn(
+            Modifier.fillMaxWidth().padding(top = 8.dp),
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            when {
+                fp == null && kind == ModelKind.TOOLS -> {
+                    item {
+                        Text(
+                            stringResource(R.string.tools_note),
+                            style = NoteTextStyle,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    toolItems { true }
+                }
+                fp == null && kind == ModelKind.UPSCALE -> {
+                    item {
+                        Text(
+                            stringResource(R.string.upscalers_note),
+                            style = NoteTextStyle,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    upscalerItems(upscalers)
+                }
+                fp == null && kind == ModelKind.FACES -> {
+                    item {
+                        Text(
+                            stringResource(R.string.faces_note),
+                            style = NoteTextStyle,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    faceItems()
+                }
+                else -> {
+                    if (fp == null) {
+                        item { SearchBox(query, { query = it }) }
+                        item {
+                            FamilyMenu(families.map { f -> f to (if (f == Family.WAN) wans.size else rows.count { it.spec.family.page() == f }) }) {
+                                familyPage = it
+                                sub = SubKind.ALL
+                            }
+                        }
+                    } else {
+                        item {
+                            FamilyHeader(fp, if (fp == Family.WAN) wans.size else rows.count { it.spec.family.page() == fp }, familyNote(fp)) { familyPage = null }
+                        }
+                        // ⚠ Sub-chips only when there is a choice to make.
+                        val subs = SubKind.entries.filter { s ->
+                            s == SubKind.ALL || rows.any { it.spec.family.page() == fp && matchesSub(it.spec, s) }
+                        }
+                        if (subs.size > 2) item { PillRow(subs, sub, { subLabel(it) }) { sub = it } }
+                    }
+                    // ⭐ The Wan page: the video tab's cards for the Wan models, each with its own Use.
+                    if (fp == Family.WAN) {
+                        videoModelItems(
+                            null, busy, {}, onCancel, {}, {},
+                            wans, onInstall, { deleting = it }, onUseWan, showNote = false,
+                        )
+                        return@LazyColumn
+                    }
+                    // ⭐ The Anima page in two parts, DiT first (the user, 2026-10-14).
+                    val groups: List<Pair<Int?, List<ModelRow>>> = if (fp == Family.ANIMA_DIT) {
+                        listOf(
+                            R.string.models_section_anima_dit to rows.filter { it.spec.family == Family.ANIMA_DIT },
+                            R.string.models_section_anima_qnn to rows.filter { it.spec.family == Family.ANIMA },
+                        ).filter { it.second.isNotEmpty() }
+                    } else listOf(null to rows)
+                    // ⭐ The search reaches every tab (#6288): video, upscalers and tools that match,
+                    // as their own tabs draw them. ⚠ Found FIRST, so "No models match" is not said over
+                    // them (the user, 2026-10-16: "WAN" said it above the Wan cards).
+                    val searchAll = fp == null && kind == ModelKind.ALL && query.isNotBlank()
+                    val neoHit = searchAll && video != null && matchesWords("neodragon video text image", query)
+                    val wanHits = if (!searchAll) emptyList()
+                        else wans.filter { matchesQuery(it.spec, query) || matchesWords("video wan motion", query) }
+                    val ups = if (!searchAll) emptyList()
+                        else upscalers.filter { matchesWords(it.spec.label + " upscale upscaler", query) }
+                    val tools = searchAll && (listOfNotNull(segmenter, parser, pose, depth) + controlnets.values + describe.values)
+                        .any { matchesWords(it.label, query) } || (searchAll && detailerWords != null && matchesWords(detailerWords, query)) ||
+                        (searchAll && interp != null && matchesWords(interp.label + " " + interpWords, query)) ||
+                        (searchAll && wholeBody != null && matchesWords(wholeBody.label + " " + wholeBodyWords, query))
+                    val faces = searchAll && livePortraitWords != null && matchesWords(livePortraitWords, query)
+                    val otherHits = neoHit || wanHits.isNotEmpty() || ups.isNotEmpty() || faces || tools
+                    for ((gi, group) in groups.withIndex()) {
+                    val (heading, groupRows) = group
+                    val sec = sectionsOf(
+                        groupRows,
+                        if (fp == null) kind else ModelKind.ALL,
+                        if (fp == null) query else "",
+                        fp,
+                        if (fp == null) SubKind.ALL else sub,
+                    )
+                    if (heading != null) {
+                        item(key = "g_$gi") {
+                            Text(
+                                stringResource(heading),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = if (gi == 0) 0.dp else 12.dp),
+                            )
+                        }
+                    }
+                    val card: @Composable (ModelRow) -> Unit = { row ->
+                        ModelCardV2(row, busy, onInstall, onCancel, { deleting = it }, onSelect, onRename = { renaming = it }, onTestNpu = onTestNpu, onToggleSpeed = onToggleSpeed)
+                    }
+                    // ⭐ All lists the video models too, inside the same three sections as the checkpoints (the user,
+                    // 2026-10-24: "video models should show in All"): an installed Wan sits with the installed models,
+                    // not 46 cards down. Drawn with the Video tab's own cards ([videoModelItems]), after the
+                    // checkpoints of each section. ⚠ Neodragon only once installed or passed by the canary: the canary
+                    // brings the QNN backend up, so it stays on the Video tab, the place 8 GB is about to be spent.
+                    val allVideo = fp == null && kind == ModelKind.ALL && query.isBlank() && gi == 0
+                    val neo = video?.takeIf { allVideo && (it.complete || it.supported == true) }
+                    val neoIn = neo?.takeIf { it.complete }
+                    val neoOut = neo?.takeIf { !it.complete }
+                    val wansIn = if (allVideo) wans.filter { it.installed } else emptyList()
+                    val wansOut = if (allVideo) wans.filter { !it.installed && it.build != null } else emptyList()
+                    val wansNo = if (allVideo) wans.filter { !it.installed && it.build == null } else emptyList()
+                    fun androidx.compose.foundation.lazy.LazyListScope.videoPart(n: VideoRow?, w: List<ModelRow>) {
+                        if (n != null || w.isNotEmpty()) videoModelItems(
+                            n, busy, onInstallVideo, onCancel,
+                            onConfirmDelete = { deletingVideo = true }, onUse = onUseVideo,
+                            wans = w, onInstallWan = onInstall, onDeleteWan = { deleting = it }, onUseWan = onUseWan,
+                            showNote = false,
+                        )
+                    }
+                    val nIn = sec.installed.size + wansIn.size + (if (neoIn != null) 1 else 0)
+                    val nOut = sec.available.size + wansOut.size + (if (neoOut != null) 1 else 0)
+                    val nNo = sec.unsupported.size + wansNo.size
+                    if (nIn > 0) {
+                        item { SectionHeader(stringResource(R.string.mb_section_installed, nIn)) }
+                        items(sec.installed, key = { "i_" + it.spec.id }) { card(it) }
+                        videoPart(neoIn, wansIn)
+                    }
+                    if (nOut > 0) {
+                        item { SectionHeader(stringResource(R.string.mb_section_available, nOut)) }
+                        items(sec.available, key = { "a_" + it.spec.id }) { card(it) }
+                        videoPart(neoOut, wansOut)
+                    }
+                    if (nNo > 0) {
+                        item {
+                            SectionHeader(
+                                stringResource(R.string.mb_section_unsupported, nNo),
+                                collapsed = !showUnsupported,
+                            ) { showUnsupported = !showUnsupported }
+                        }
+                        if (showUnsupported) {
+                            items(sec.unsupported, key = { "u_" + it.spec.id }) { card(it) }
+                            videoPart(null, wansNo)
+                        }
+                    }
+                    if (sec.isEmpty && groups.size == 1 && !otherHits) {
+                        item {
+                            Text(
+                                stringResource(R.string.mb_no_match),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 16.dp),
+                            )
+                        }
+                    }
+                    }
+                    if (searchAll) {
+                        if (neoHit || wanHits.isNotEmpty()) {
+                            item { SectionHeader(kindLabel(ModelKind.VIDEO)) }
+                            videoModelItems(
+                                if (neoHit) video else null, busy, onInstallVideo, onCancel,
+                                onConfirmDelete = { deletingVideo = true }, onUse = onUseVideo,
+                                wans = wanHits,
+                                onInstallWan = onInstall,
+                                onDeleteWan = { deleting = it },
+                                onUseWan = onUseWan,
+                                showNote = false,
+                            )
+                        }
+                        if (ups.isNotEmpty()) {
+                            item { SectionHeader(kindLabel(ModelKind.UPSCALE)) }
+                            upscalerItems(ups)
+                        }
+                        if (faces) {
+                            item { SectionHeader(kindLabel(ModelKind.FACES)) }
+                            faceItems()
+                        }
+                        if (tools) {
+                            item { SectionHeader(kindLabel(ModelKind.TOOLS)) }
+                            toolItems { matchesWords(it, query) }
+                        }
+                    }
+                    item { androidx.compose.foundation.layout.Spacer(Modifier.padding(bottom = 16.dp)) }
+                }
+            }
+        }
+        }
+    }
+
+    if (importOpen && onImportFile != null) ImportDialog(onDismiss = onCloseImport, onChoose = onImportFile)
+    if (familyAsk) FamilyAskDialog(onAnswerFamily)
+
+    // ⚠ All three kinds of model ask through [ConfirmDelete] — one dialog, one
+    // verb, one pair of buttons (`docs/UI.md` §8.2). They shipped as three
+    // copies with two dismiss labels and two confirm styles.
+    deletingUpscaler?.let { spec ->
+        val row = upscalers.firstOrNull { it.spec.id == spec.id }
+        val label = spec.labelRes?.let { stringResource(it) } ?: spec.label
+        ConfirmDelete(
+            title = stringResource(R.string.models_delete_title, label),
+            body = stringResource(
+                R.string.models_delete_upscaler_body,
+                mb(row?.onDisk ?: 0L), mb(row?.build?.bytes ?: 0L),
+            ),
+            onConfirm = { onDeleteUpscaler(spec) },
+            onDismiss = { deletingUpscaler = null },
+        )
+    }
+
+    if (deletingParser && parser != null) {
+        ConfirmDelete(
+            title = stringResource(R.string.models_delete_title, parser.label),
+            body = stringResource(R.string.models_delete_parser_body, mb(parser.onDisk), mb(parser.bytes)),
+            onConfirm = onDeleteParser,
+            onDismiss = { deletingParser = false },
+        )
+    }
+
+    deletingControlNet?.let { type ->
+        controlnets[type]?.let { row ->
+            ConfirmDelete(
+                title = stringResource(R.string.models_delete_title, row.label),
+                body = if (type.startsWith(com.abrah.nightmare.IpAdapter.ROW_PREFIX)) {
+                    stringResource(R.string.models_delete_ip_adapter_body)
+                } else {
+                    stringResource(R.string.models_delete_controlnet_body, mb(row.onDisk), mb(row.bytes), type)
+                },
+                onConfirm = { onDeleteControlNet(type) },
+                onDismiss = { deletingControlNet = null },
+            )
+        }
+    }
+
+    deletingDescribe?.let { m ->
+        describe[m]?.let { row ->
+            ConfirmDelete(
+                title = stringResource(R.string.models_delete_title, row.label),
+                body = stringResource(R.string.models_delete_describe_body, mb(row.onDisk), mb(row.bytes)),
+                onConfirm = { onDeleteDescribe(m) },
+                onDismiss = { deletingDescribe = null },
+            )
+        }
+    }
+
+    if (deletingDepth && depth != null) {
+        ConfirmDelete(
+            title = stringResource(R.string.models_delete_title, depth.label),
+            body = stringResource(R.string.models_delete_depth_body, mb(depth.onDisk), mb(depth.bytes)),
+            onConfirm = onDeleteDepth,
+            onDismiss = { deletingDepth = false },
+        )
+    }
+
+    if (deletingLivePortrait && livePortrait != null) {
+        ConfirmDelete(
+            title = stringResource(R.string.models_delete_title, livePortrait.label),
+            body = stringResource(R.string.models_delete_liveportrait_body, mb(livePortrait.onDisk), mb(livePortrait.bytes)),
+            onConfirm = onDeleteLivePortrait,
+            onDismiss = { deletingLivePortrait = false },
+        )
+    }
+
+    if (deletingDetailer && detailer != null) {
+        ConfirmDelete(
+            title = stringResource(R.string.models_delete_title, detailer.label),
+            body = stringResource(R.string.models_delete_detailer_body, mb(detailer.onDisk), mb(detailer.bytes)),
+            onConfirm = onDeleteDetailer,
+            onDismiss = { deletingDetailer = false },
+        )
+    }
+
+    if (deletingPose && pose != null) {
+        ConfirmDelete(
+            title = stringResource(R.string.models_delete_title, pose.label),
+            body = stringResource(R.string.models_delete_pose_body, mb(pose.onDisk), mb(pose.bytes)),
+            onConfirm = onDeletePose,
+            onDismiss = { deletingPose = false },
+        )
+    }
+
+    if (deletingInterp && interp != null) {
+        ConfirmDelete(
+            title = stringResource(R.string.models_delete_title, interp.label),
+            body = stringResource(R.string.models_delete_interp_body, mb(interp.onDisk), mb(interp.bytes)),
+            onConfirm = onDeleteInterp,
+            onDismiss = { deletingInterp = false },
+        )
+    }
+
+    if (deletingWholeBody && wholeBody != null) {
+        ConfirmDelete(
+            title = stringResource(R.string.models_delete_title, wholeBody.label),
+            body = stringResource(R.string.models_delete_whole_body_body, mb(wholeBody.onDisk), mb(wholeBody.bytes)),
+            onConfirm = onDeleteWholeBody,
+            onDismiss = { deletingWholeBody = false },
+        )
+    }
+
+    if (deletingSegmenter && segmenter != null) {
+        ConfirmDelete(
+            title = stringResource(R.string.models_delete_title, segmenter.label),
+            body = stringResource(R.string.models_delete_segmenter_body, mb(segmenter.onDisk), mb(segmenter.bytes)),
+            onConfirm = onDeleteSegmenter,
+            onDismiss = { deletingSegmenter = false },
+        )
+    }
+
+    if (deletingVideo && video != null) {
+        ConfirmDelete(
+            title = stringResource(R.string.video_delete_title),
+            // ⚠⚠ The number is the whole point of the dialog. "Frees 8198 MB"
+            // and "getting it back is an 8198 MB download" are the same figure
+            // said twice on purpose — the second is the one that stops the tap.
+            body = stringResource(
+                R.string.video_delete_body,
+                mb(video.installedBytes), mb(video.totalBytes),
+            ),
+            onConfirm = onDeleteVideo,
+            onDismiss = { deletingVideo = false },
+        )
+    }
+
+    // ⭐⭐ A confirm before a delete that costs a ~1 GB re-download on a mobile
+    // plan. ⚠ The button sat next to "use", enabled, one tap from gone -- and
+    // deleting the SELECTED model also moves the selection, so a mis-tap changed
+    // what every node in every graph would render with.
+    renaming?.let { spec ->
+        // ⭐ The flows' own name dialog: one "type a name" in the app.
+        NameDialog(
+            title = stringResource(R.string.models_rename_title),
+            initial = spec.label,
+            confirm = stringResource(R.string.flows_rename),
+            onDismiss = { renaming = null },
+            onConfirm = { name -> onRename(spec, name); renaming = null },
+        )
+    }
+    deleting?.let { spec ->
+        val row = rows.firstOrNull { it.spec.id == spec.id } ?: wans.firstOrNull { it.spec.id == spec.id }
+        ConfirmDelete(
+            title = stringResource(R.string.models_delete_title, spec.label),
+            body = run {
+                val bytes = row?.build?.bytes ?: spec.best?.bytes
+                val custom = spec.isCustom || bytes == null
+                stringResource(
+                    when {
+                        custom && row?.selected == true -> R.string.models_delete_custom_selected_body
+                        custom -> R.string.models_delete_custom_body
+                        row?.selected == true -> R.string.models_delete_downloaded_selected_body
+                        else -> R.string.models_delete_downloaded_body
+                    },
+                    mb(row?.onDisk ?: 0L), mb(bytes ?: 0L),
+                )
+            },
+            onConfirm = { onDelete(spec) },
+            onDismiss = { deleting = null },
+        )
+    }
+}
+
+/**
+ * ⭐ What a family page says under its name — sizes, chips, speed — the line
+ * each family TAB used to open with, said BEFORE gigabytes are downloaded.
+ */
+@Composable
+private fun familyNote(family: Family): String = stringResource(when (family) {
+        Family.SD15 -> R.string.models_family_sd15
+        // ⭐ Two defaults, or any conversion of your own.
+        Family.SD15_SWAP -> R.string.models_family_sd15_swap
+        // ⭐ Two defaults since 2026-10-05, or any conversion of your own.
+        Family.SDXL_SWAP -> R.string.models_family_sdxl_swap
+        // ⚠ Measured 2026-09-16 on an 11.4 GB phone: 6.4 s a
+        // step, and killed by Android while other apps were
+        // in use. Said here, before 4 GB is downloaded.
+        Family.ANIMA -> R.string.models_family_anima
+        // ⚠ Plain files straight into place, so no unpack
+        // headroom. 8 Gen 3 takes the GGUF builds ([ModelCatalog.DIT_GGML_MIN_ARCH]).
+        // ⚠ Klein 9B is 10.7 GB and streams its text
+        // encoder from disk, so it is the slower of the two.
+        Family.FLUX2 -> R.string.models_family_flux2
+        // ⚠⚠ Said before 8.8 GB is downloaded: upstream's own
+        // build crashes on the dev phone (8 Elite), and works
+        // on some 8 Elite Gen 5 phones (the user, 2026-09-19).
+        Family.ZIMAGE -> R.string.models_family_zimage
+        // ⚠ 10.8 GB on disk against a 12 GB phone: it loads one
+        // part at a time, so it is slower than FLUX.2.
+        Family.QWEN21 -> R.string.models_family_qwen
+        // ⚠ Loads one part at a time like Qwen (all=disk).
+        // Not an edit model: the fork's own edits fail.
+        Family.KREA2 -> R.string.models_family_krea
+        // ⚠ The 4.2 GB download and the converted 2.3 GB are on disk at once.
+        Family.ANIMA_DIT -> R.string.models_family_animadit
+        // ⚠ The 6 GB download and the converted 3.4 GB are on disk at once, like Anima's.
+        Family.IRIS -> R.string.models_family_iris
+        // ⚠ Its 9B text encoder makes it a 10 GB download, and it is slow: measured times, said up front.
+        Family.MOSS -> R.string.models_family_moss
+        // ⚠ The same shape as MOSS: a 10.5 GB download (an 8B encoder) and minutes a picture, said up front.
+        Family.IDEOGRAM -> R.string.models_family_ideogram
+        // ⚠ Krea 2's encoder beside a 3.5 GB DiT: a 6.2 GB download, measured times said up front.
+        Family.FLUX3 -> R.string.models_family_flux3
+        // ⚠ An editor: it needs a picture wired in, said up front.
+        Family.FIBO2 -> R.string.models_family_fibo2
+        // ⚠ The free-space figure is the one that surprises:
+        // the archive and its unpacked copy are both on disk
+        // at once, so a 3.5 GB download needs ~7.5 GB free.
+        else -> R.string.models_family_other
+})
+
+/**
+ * ⭐⭐⭐ ONE row for every downloadable thing — checkpoint, upscaler, video.
+ *
+ * ⚠⚠ There were three hand-built cards and they had drifted exactly the way
+ * `docs/ARCHITECTURE.md` §5.6 says two lookups will: a checkpoint's progress
+ * read "downloading <its own name>" with no bytes, an upscaler's read nothing
+ * at all, and only the video card counted bytes in flight. The design review,
+ * 2026-09-15 — `docs/UI.md` §8.1 is the shape, and this is the only thing that
+ * draws it.
+ *
+ * ⚠ Only [status], [detail] and [action] vary by kind. Progress is drawn HERE,
+ * from the one [ModelInstaller.Progress], so the three cannot disagree again.
+ */
+@Composable
+internal fun DownloadCard(
+    title: String,
+    /** ⚠ In use — the one fact that also changes the card's colour and weight. */
+    emphasised: Boolean,
+    status: String,
+    detail: String,
+    progress: ModelInstaller.Progress?,
+    action: @Composable () -> Unit,
+) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (emphasised) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            },
+        ),
+    ) {
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.padding(12.dp)) {
+        // ⚠⚠⚠ **Buttons UNDER the text on a narrow card.** At 320dp the
+        // Delete + Use pair (~180dp) left the name and details a column a few
+        // words wide — "installed · / 8198 MB / Text and / image to…" — the
+        // whole card read as a stack of fragments (`NarrowSweep`, 2026-09-23).
+        // ⚠ Measured on the CARD's width, so a 384dp phone keeps them beside.
+        val stacked = maxWidth < 320.dp
+        val details: @Composable () -> Unit = {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = if (emphasised) FontWeight.Bold else FontWeight.Normal,
+                    )
+                    Text(
+                        // ⚠⚠⚠ While fetching, the LIVE byte count (`docs/UI.md`
+                        // §7.6) — never a figure of completed files, which froze
+                        // at 295 MB for twenty minutes on the video row.
+                        if (progress != null && progress.total > 0) {
+                            stringResource(R.string.mb_of_total, mb(progress.done), mb(progress.total))
+                        } else {
+                            status
+                        },
+                        style = NoteTextStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(detail, style = NoteTextStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Column {
+            if (stacked) {
+                details()
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) { action() }
+            } else Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // ⚠⚠ `padding(end = 12.dp)` — with `SpaceBetween` and a weighted
+                // column there is NOTHING between the longest line of text and
+                // the button beside it, so a title or a detail line that runs
+                // the full width ends up touching it. Reported 2026-09-22:
+                // *"give more room to the left of the btn, the text is
+                // basically touching the border"*. The gap belongs to the text
+                // column rather than to a Spacer, or a short line would push
+                // the button inwards.
+                Column(Modifier.weight(1f).padding(end = 12.dp)) { details() }
+                action()
+            }
+            if (progress != null) {
+                // ⚠ Indeterminate while the total is unknown — an unzip. A bar
+                // parked at 100% through a minute of unpacking reads as a hang.
+                if (progress.total > 0) {
+                    LinearProgressIndicator(
+                        progress = { progress.fraction },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                } else {
+                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                }
+                // ⭐ The phase under the bar: which file, or "extracting".
+                Text(progress.phase, style = NoteTextStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        }
+    }
+}
+
+/** ⚠ Fields on a status or detail line are joined by ONE separator (§8.1). */
+private fun fields(vararg parts: String?): String = parts.filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
+
+/**
+ * ⭐⭐ The video models, as one row on their own tab.
+ *
+ * ⚠⚠ **Bytes, not files.** "12 of 13" reads as nearly done when the absent
+ * one is 1.5 GB of 8.5, and the bytes are what the user is actually waiting
+ * for.
+ */
+@Composable
+private fun VideoModelsTab(
+    /** ⚠ Null when the canary hid Neodragon ([com.abrah.nightmare.npu.VideoGate]); Wan may still show. */
+    row: VideoRow?,
+    busy: Boolean,
+    onInstall: () -> Unit,
+    onCancel: () -> Unit,
+    /** ⚠ ASKS first — see [deletingVideo]. Never deletes on the tap. */
+    onConfirmDelete: () -> Unit,
+    onProbe: () -> Unit,
+    /**
+     * ⭐⭐ **Use — open a flow that uses these weights.** Added 2026-09-20 at
+     * the user's ask, for the reason [UpscalerCard] gives: the video models bind
+     * no context key and nothing selects them globally, but they have TWO flows
+     * (text to video, image to video) and picking between them is exactly what
+     * this dialog is for.
+     */
+    onUse: () -> Unit = {},
+    wans: List<ModelRow> = emptyList(),
+    onInstallWan: (ModelSpec) -> Unit = {},
+    onDeleteWan: (ModelSpec) -> Unit = {},
+    onUseWan: (ModelSpec) -> Unit = {},
+) {
+    // ⚠ Once, when the tab is first composed. [HarnessViewModel.probeVideoSupport]
+    // is itself idempotent, so a pager pre-composing this page costs one call.
+    androidx.compose.runtime.LaunchedEffect(Unit) { onProbe() }
+    LazyColumn(
+        Modifier.fillMaxWidth().padding(top = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        videoModelItems(row, busy, onInstall, onCancel, onConfirmDelete, onUse, wans, onInstallWan, onDeleteWan, onUseWan)
+    }
+}
+
+/** ⭐ The video tab's cards, also what the search shows for a video match (#6288). */
+private fun androidx.compose.foundation.lazy.LazyListScope.videoModelItems(
+    row: VideoRow?,
+    busy: Boolean,
+    onInstall: () -> Unit,
+    onCancel: () -> Unit,
+    onConfirmDelete: () -> Unit,
+    onUse: () -> Unit,
+    wans: List<ModelRow>,
+    onInstallWan: (ModelSpec) -> Unit,
+    onDeleteWan: (ModelSpec) -> Unit,
+    onUseWan: (ModelSpec) -> Unit,
+    showNote: Boolean = true,
+) {
+        if (row != null && showNote) item {
+            Text(
+                stringResource(R.string.video_models_note, gb(row.totalBytes)),
+                style = NoteTextStyle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (row != null) item {
+            // ⚠⚠ The canary's verdict, in the one place a user is about to spend 8 GB. It runs a
+            // real context binary rather than consulting a chip list — `docs/DEVICES.md` §2.
+            AddonCard(
+                title = stringResource(R.string.video_models),
+                detail = stringResource(R.string.video_about),
+                installed = row.complete,
+                sizeBytes = if (row.complete) row.installedBytes else row.totalBytes,
+                busy = busy,
+                progress = row.progress,
+                onCancel = onCancel,
+                onInstall = onInstall.takeIf { row.supported != false },
+                onDelete = onConfirmDelete,
+                onUse = onUse,
+                partial = !row.complete && row.installedBytes > 0,
+                unsupportedNote = if (row.supported == false) stringResource(R.string.cannot_run_it) else null,
+            )
+        }
+        // ⭐ Wan 2.2: the checkpoint card's facts ([ModelRow]) on the video tab's [AddonCard].
+        for (wan in wans) item(key = "wan_" + wan.spec.id) {
+            AddonCard(
+                title = wan.spec.label,
+                detail = stringResource(
+                    when (wan.spec) {
+                        com.abrah.nightmare.ModelCatalog.WAN22_FUN -> R.string.wan_fun_about
+                        com.abrah.nightmare.ModelCatalog.WAN22_A14B_I2V -> R.string.wan14_i2v_about
+                        else -> R.string.wan_about
+                    },
+                ),
+                installed = wan.installed,
+                sizeBytes = if (wan.installed) wan.onDisk else wan.fetchBytes.takeIf { it > 0 } ?: wan.build?.bytes,
+                busy = busy,
+                progress = wan.progress,
+                onCancel = onCancel,
+                onInstall = { onInstallWan(wan.spec) }.takeIf { wan.build != null },
+                onDelete = { onDeleteWan(wan.spec) },
+                onUse = { onUseWan(wan.spec) }.takeIf { wan.installed },
+                partial = wan.partial,
+                unsupportedNote = if (!wan.installed && wan.build == null) stringResource(R.string.cannot_run_it) else null,
+                queued = wan.queued,
+                queueable = wan.queueable,
+            )
+        }
+}
+
+/**
+ * One upscaler's card.
+ *
+ * ⭐⭐ **It has a Use button since 2026-09-20**, at the user's ask. The note
+ * here used to say it could not: *"nothing selects an upscaler globally, a
+ * flow's Upscale node names one"*. That is still true and it turned out not to
+ * be the point — Use never meant "select", it means **open a flow that uses
+ * this**, which an upscaler has exactly one of. Asking what to open is the
+ * whole shape of the dialog ([HarnessViewModel.PendingUse]), and it works the
+ * same whether or not a global selection comes with it.
+ *
+ * ⚠ Only once installed: Use on a model that is not here would offer a flow
+ * that cannot run.
+ */
+@Composable
+private fun UpscalerCard(
+    row: UpscalerRow,
+    busy: Boolean,
+    onInstall: (UpscalerSpec) -> Unit,
+    onCancel: () -> Unit,
+    onDelete: (UpscalerSpec) -> Unit,
+    onUse: (UpscalerSpec) -> Unit = {},
+) {
+    val label = row.spec.labelRes?.let { stringResource(it) } ?: row.spec.label
+    val about = row.spec.aboutRes?.let { stringResource(it) } ?: row.spec.about
+    AddonCard(
+        title = label,
+        detail = about,
+        badges = listOfNotNull(row.build?.tier),
+        installed = row.installed,
+        sizeBytes = if (row.installed) row.onDisk else row.build?.bytes,
+        busy = busy,
+        progress = row.progress,
+        onCancel = onCancel,
+        onInstall = row.build?.let { { onInstall(row.spec) } },
+        onDelete = { onDelete(row.spec) },
+        onUse = { onUse(row.spec) },
+        unsupportedNote = if (!row.installed && row.build == null) stringResource(R.string.cannot_run_it) else null,
+    )
+}
+
+/** ⚠ [UpscalerCard]'s shape without Use — the shared [AddonCard], wherever a tool is offered (Tools tab, panels, Settings). */
+@Composable
+internal fun ToolCard(
+    row: ToolRow,
+    busy: Boolean,
+    onInstall: () -> Unit,
+    onCancel: () -> Unit,
+    /** ⚠ What the model is for — the segmenter's line unless the caller says. */
+    detail: String = stringResource(R.string.segmenter_about),
+    onDelete: () -> Unit,
+) {
+    AddonCard(
+        title = row.label,
+        detail = detail,
+        installed = row.installed,
+        sizeBytes = if (row.installed) row.onDisk else row.bytes,
+        busy = busy,
+        progress = row.progress,
+        onCancel = onCancel,
+        onInstall = onInstall,
+        onDelete = onDelete,
+    )
+}
+
+private fun mb(bytes: Long): Long = bytes shr 20
+
+/** ⚠ The SAME unit as [mb], one step up: `8198 MB` is `8.0 GB`, never `8.6`. */
+private fun gb(bytes: Long): String = String.format(java.util.Locale.ROOT, "%.1f", bytes / (1024.0 * 1024 * 1024))

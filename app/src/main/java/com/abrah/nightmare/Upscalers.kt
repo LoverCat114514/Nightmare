@@ -1,0 +1,431 @@
+package com.abrah.nightmare
+
+import android.content.Context
+import android.util.Log
+import java.io.File
+import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+
+/**
+ * ⭐⭐ **Upscalers: the second KIND of model this app installs.**
+ *
+ * ⚠⚠ A separate catalogue from [ModelCatalog] rather than more rows in it, and
+ * the reason is not tidiness — the two differ in every way that matters:
+ *
+ * | | checkpoint | upscaler |
+ * |---|---|---|
+ * | on disk | a directory of ~12 files, unzipped | ONE loose `upscaler.bin` |
+ * | download | a 1-3.7 GB zip, extracted | a 8-24 MB file, used as-is |
+ * | launch | binds `--type`/`--model_dir`/`--patch` | **nothing** |
+ * | context key | `(type, model, resolution)` | **none** |
+ * | loading | held for the process's life | per REQUEST, freed after |
+ *
+ * ⭐⭐⭐ **The last two rows are why an upscaler can share a graph with a
+ * sampler.** `/upscale` is registered in `main.cpp` outside the `if (pipeline)`
+ * guards and builds its QNN model from the path in the request header, so it
+ * runs inside whichever backend is already up and costs no process transition
+ * ⚠⚠ …**as long as that process has a QNN runtime, which is not free.** It held
+ * for SD and SDXL and silently did not for FLUX.2: `main.cpp` initialised the
+ * QNN runtime only for a QNN pipeline, so inside a DiT process `/upscale` could
+ * not build its context and every upscale in the app failed — including one
+ * started from Results on a picture no DiT model made, because
+ * `HarnessOps.ensureUpscaleServer` reuses whatever is up. Fixed in
+ * `backend-patches/008`; the reason it is written here is that this comment is
+ * the claim that was wrong.
+ * (`docs/ARCHITECTURE.md` §4). An upscaler is not a checkpoint the graph is
+ * pinned to; it is a file a node names. ⚠ `--upscaler_mode` is unrelated — it
+ * means "a server with NO diffusion model".
+ *
+ * ⚠ Sizes below were read from the Hugging Face tree API on 2026-09-10, not
+ * estimated: they are what the free-space check and the progress bar divide by.
+ */
+data class UpscalerBuild(
+    /** The published tier, e.g. `8gen2`. ⚠ No leading underscore: upstream's
+     *  upscaler files are `upscaler_8gen2.bin`, where a checkpoint archive is
+     *  `..._qnn2.28_8gen2.zip`. Two different spellings of the same idea. */
+    val tier: String,
+    val bytes: Long,
+    /** The HTP arch this context needs. A lower-arch device cannot load it. */
+    val minArch: Int,
+    val minVtcmMb: Int,
+) {
+    fun runsOn(caps: DeviceProbe.Caps): Boolean =
+        caps.supportsArch(minArch) && caps.vtcmMb >= minVtcmMb
+}
+
+/**
+ * One upscaler, as the catalogue holds it.
+ *
+ * ⚠ [remoteDir] is the folder in `xororz/upscaler`; the file inside it is
+ * `upscaler_<tier>.bin` for every tier.
+ */
+data class UpscalerSpec(
+    val id: String,
+    val label: String,
+    val about: String,
+    val remoteDir: String,
+    /** ⚠ Best-first — [buildFor] takes the FIRST one this device can load. */
+    val builds: List<UpscalerBuild>,
+    @androidx.annotation.StringRes val labelRes: Int? = null,
+    @androidx.annotation.StringRes val aboutRes: Int? = null,
+) {
+    fun dir(context: Context): File {
+        val own = ownDir(context)
+        if (File(own, UpscalerCatalog.FILE_NAME).let { it.isFile && it.length() > 0 }) return own
+        // ⭐ Local Dream keeps the same `upscaler_<kind>/upscaler.bin` ([LocalDreamModels]).
+        val ld = LocalDreamModels.dirFor(id) ?: return own
+        return if (File(ld, UpscalerCatalog.FILE_NAME).let { it.isFile && it.length() > 0 }) ld else own
+    }
+
+    /** ⚠ Where an install writes and a delete removes — never Local Dream's folder. */
+    fun ownDir(context: Context): File = File(BackendProcess.modelsDir(context), id)
+
+    /**
+     * ⚠⚠ The file the BACKEND is told to open, by absolute device path. The
+     * weights never cross the wire — the same handles-not-buffers rule the rest
+     * of the op surface follows (`docs/ARCHITECTURE.md` §6).
+     */
+    fun file(context: Context): File = File(dir(context), UpscalerCatalog.FILE_NAME)
+
+    /**
+     * ⚠ Existence AND non-zero length, matching what upstream checks. A
+     * half-written file from a killed download is present and useless, and the
+     * failure it causes surfaces inside QNN rather than here.
+     */
+    fun installed(context: Context): Boolean = file(context).let { it.exists() && it.length() > 0 }
+
+    fun bytesOnDisk(context: Context): Long = file(context).takeIf { it.exists() }?.length() ?: 0L
+
+    fun buildFor(caps: DeviceProbe.Caps): UpscalerBuild? = builds.firstOrNull { it.runsOn(caps) }
+}
+
+object UpscalerCatalog {
+
+    private const val TAG = "Upscalers"
+
+    /** ⚠ The name upstream uses, and what `UpscaleNode` hands the backend. */
+    const val FILE_NAME = "upscaler.bin"
+
+    const val BASE_URL = "https://huggingface.co/xororz/upscaler/resolve/main/"
+
+    /**
+     * ⚠⚠ The SAME three tiers the checkpoints use, deliberately.
+     *
+     * Upstream also publishes `8gen3` and `8gen4`, and both are byte-identical
+     * in size to `8gen2` — so they are near-certainly the same context rebuilt
+     * for a different `socModel`, and `8gen2` is a v73 context that newer HTPs
+     * run forward (`../LocalDream/docs/MODEL-SUPPORT.md`). Adding tiers whose
+     * arch numbers nobody here has verified would be inventing a gate, and a
+     * wrong gate refuses a device that would have worked.
+     */
+    private const val ARCH_8GEN2 = 73
+    private const val ARCH_8GEN1 = 69
+    private const val ARCH_MIN = 68
+
+    /**
+     * ⚠ Two, and they are a genuine pair rather than a quality ladder: the
+     * anime one is a 6-block RealESRGAN trained on illustration, the realistic
+     * one is UltraSharp. Running a photo through the anime weights does not
+     * fail, it flattens the texture — so the choice is stated on the node.
+     */
+    val ALL: List<UpscalerSpec> = listOf(
+        UpscalerSpec(
+            id = "upscaler_anime",
+            label = "Anime 4x",
+            about = "RealESRGAN x4plus anime 6B: for illustration and anime. " +
+                "Flattens skin and fabric texture on a photo.",
+            remoteDir = "realesrgan_x4plus_anime_6b",
+            builds = listOf(
+                UpscalerBuild("8gen2", 8_353_936L, ARCH_8GEN2, 8),
+                UpscalerBuild("8gen1", 11_286_672L, ARCH_8GEN1, 8),
+                UpscalerBuild("min", 10_492_056L, ARCH_MIN, 2),
+            ),
+            labelRes = R.string.upscaler_anime_label,
+            aboutRes = R.string.upscaler_anime_about,
+        ),
+        UpscalerSpec(
+            id = "upscaler_realistic",
+            label = "Realistic 4x",
+            about = "4x UltraSharp V2 Lite: for photos and realistic renders.",
+            remoteDir = "4x_UltraSharpV2_Lite",
+            builds = listOf(
+                UpscalerBuild("8gen2", 23_461_888L, ARCH_8GEN2, 8),
+                UpscalerBuild("8gen1", 23_662_592L, ARCH_8GEN1, 8),
+                UpscalerBuild("min", 21_647_360L, ARCH_MIN, 2),
+            ),
+            labelRes = R.string.upscaler_realistic_label,
+            aboutRes = R.string.upscaler_realistic_about,
+        ),
+    )
+
+    /**
+     * ⭐⭐ Upscalers the user brought — imported from a bare `.bin`, the same
+     * way [CustomModels] handles a checkpoint, but far simpler: an upscaler
+     * IS one loose file, so there is no family to infer, only a name and the
+     * bytes. Reported 2026-09-18: *"i need allowing of importing upscalers
+     * like local dream"*.
+     *
+     * ⚠ Populated by [scanCustom], not cached across process death — same
+     * reasoning as [CustomModels.scanned]: the normal way one of these
+     * arrives is a copy made while the app is running.
+     */
+    @Volatile
+    var scanned: List<UpscalerSpec> = emptyList()
+        private set
+
+    /** Every upscaler this app knows about, built-in first. */
+    fun allSpecs(): List<UpscalerSpec> = ALL + scanned
+
+    /**
+     * Re-reads [BackendProcess.modelsDir] for directories that are a bare
+     * `upscaler.bin` and nothing this catalogue or [CustomModels] already
+     * claims.
+     *
+     * ⚠⚠ Skips a checkpoint's OWN directory, and skips a built-in upscaler's
+     * id — both share the same root as a plain `id -> directory` mapping, so
+     * a collision would otherwise shadow one with the other, exactly the trap
+     * [CustomModels.scan] guards against for checkpoints.
+     */
+    fun scanCustom(context: Context) {
+        val reserved = ALL.map { it.id }.toSet() + ModelCatalog.builtIn.map { it.id }.toSet()
+        scanned = BackendProcess.modelsDir(context).listFiles().orEmpty()
+            .filter { it.isDirectory && it.name !in reserved }
+            .mapNotNull { dir ->
+                val f = File(dir, FILE_NAME)
+                if (f.isFile && f.length() > 0) {
+                    UpscalerSpec(
+                        id = dir.name,
+                        label = dir.name,
+                        about = "Imported: ${dir.name}.",
+                        remoteDir = "",
+                        // ⚠ Empty, like a custom checkpoint's: there is no URL
+                        // that could produce this file, and an empty list is
+                        // what tells [UpscalerCard] there is no re-download
+                        // offer if it is ever deleted.
+                        builds = emptyList(),
+                    )
+                } else null
+            }
+            .sortedBy { it.label.lowercase() }
+    }
+
+    /** ⚠ A directory name: no separators, no leading dot, not empty — [CustomModels.isValidName]'s rule. */
+    fun isValidName(name: String): Boolean =
+        name.isNotBlank() && name.none { it == '/' || it == '\\' || it == ':' } && !name.startsWith(".")
+
+    /**
+     * Copies [open]'s bytes to `modelsDir/[name]/upscaler.bin` and rescans.
+     *
+     * ⚠ Blocking — call it off the main thread, same as [install].
+     */
+    fun importCustom(
+        context: Context,
+        name: String,
+        open: () -> InputStream,
+    ): UpscalerSpec {
+        require(isValidName(name)) { "\"$name\" is not a usable name" }
+        require(ALL.none { it.id == name }) { "\"$name\" is a built-in upscaler's name; pick another" }
+        require(ModelCatalog.builtIn.none { it.id == name }) {
+            "\"$name\" is a checkpoint's name; pick another"
+        }
+        val dir = File(BackendProcess.modelsDir(context), name).apply { mkdirs() }
+        val dest = File(dir, FILE_NAME)
+        val tmp = File(dir, "$FILE_NAME.part")
+        try {
+            open().use { input -> tmp.outputStream().use { input.copyTo(it) } }
+            if (tmp.length() == 0L) throw IOException("that file was empty")
+            if (dest.exists()) dest.delete()
+            if (!tmp.renameTo(dest)) throw IOException("could not finish writing ${dest.name}")
+        } catch (e: Exception) {
+            dir.deleteRecursively()
+            throw e
+        }
+        scanCustom(context)
+        Log.i(TAG, "imported custom upscaler '$name' (${dest.length()} bytes)")
+        return scanned.first { it.id == name }
+    }
+
+    /** ⚠ Only for a CUSTOM one — a built-in goes through [delete] instead. */
+    fun deleteCustom(context: Context, id: String) {
+        File(BackendProcess.modelsDir(context), id).deleteRecursively()
+        scanCustom(context)
+    }
+
+    fun byId(id: String): UpscalerSpec? = allSpecs().firstOrNull { it.id == id }
+
+    fun installed(context: Context): List<UpscalerSpec> = allSpecs().filter { it.installed(context) }
+
+    /**
+     * ⭐⭐ The installed ids, **cached**, for the node's dropdown.
+     *
+     * ⚠⚠ Cached for the same reason `SelectedModel.resolutions` is: a
+     * `NodeType.widgets` getter has no [Context], so it cannot ask the disk —
+     * and [UpscaleNode] was therefore defaulting to `ALL.first()` and offering
+     * every published upscaler whether or not it was on the device. On this
+     * phone that is `upscaler_anime`, which is NOT installed, so a freshly
+     * dropped upscale node was pre-set to a file that does not exist and failed
+     * the moment it ran. Reported from the phone 2026-09-11 ("I get an error if
+     * I just connect an image to upscale").
+     *
+     * ⚠ Empty until [refresh] runs. Callers fall back to [ALL] so the control
+     * is never blank; the node's own run() still names what is missing.
+     */
+    @Volatile
+    var installedIds: List<String> = emptyList()
+        private set
+
+    /** ⚠ Call whenever an upscaler is downloaded, imported or deleted. */
+    fun refresh(context: Context) {
+        scanCustom(context)
+        installedIds = installed(context).map { it.id }
+    }
+
+    /**
+     * ⚠ The absolute path, or null when it is not installed. Null is the node's
+     * cue to fail with a sentence naming the upscaler rather than to hand the
+     * backend a path that is not there — QNN's own error for a missing context
+     * file names neither the file nor the node.
+     */
+    fun pathFor(context: Context, id: String): String? =
+        byId(id)?.takeIf { it.installed(context) }?.file(context)?.absolutePath
+
+    /**
+     * Fetch [spec] into its model directory.
+     *
+     * ⚠ Blocking — call it off the main thread.
+     *
+     * ⚠⚠ Downloaded straight to its final name via a `.part` file, with NO
+     * unzip step: an upscaler ships as a bare weight file. That is also why
+     * there is no "twice the download" free-space rule here, unlike
+     * [ModelInstaller] — nothing is ever on disk twice.
+     */
+    fun install(
+        context: Context,
+        spec: UpscalerSpec,
+        build: UpscalerBuild,
+        onProgress: (ModelInstaller.Progress) -> Unit,
+        isCancelled: () -> Boolean = { false },
+    ) {
+        val dir = spec.ownDir(context).apply { mkdirs() }
+        val dest = spec.file(context)
+        val part = File(dir, "${FILE_NAME}.part")
+        val url = "$BASE_URL${spec.remoteDir}/upscaler_${build.tier}.bin"
+
+        download(url, part, build.bytes, onProgress, isCancelled)
+
+        // ⚠⚠ Renamed only once the bytes are all there. `installed()` tests the
+        // final name, so a download killed at 90% must not leave something that
+        // answers "yes" — the failure would then be a QNN init error on a
+        // truncated context, which names nothing a user can act on.
+        if (part.length() != build.bytes) {
+            val got = part.length()
+            part.delete()
+            throw IOException(
+                "${spec.label}: downloaded $got bytes, expected ${build.bytes} from $url"
+            )
+        }
+        if (dest.exists()) dest.delete()
+        if (!part.renameTo(dest)) throw IOException("could not finish writing ${dest.name}")
+        Log.i(TAG, "installed ${spec.id} tier ${build.tier} (${dest.length()} bytes)")
+    }
+
+    /** ⚠ The whole directory, `.part` leftovers included. */
+    fun delete(context: Context, spec: UpscalerSpec) {
+        spec.ownDir(context).deleteRecursively()
+    }
+
+    /**
+     * ⚠⚠ **A near-copy of `ModelInstaller.download`, and it is a copy on
+     * purpose.** The first version of this was written from scratch "because an
+     * upscaler is just one file", and it left a 0-byte `upscaler.bin.part` on
+     * the device with no picture of why: the stream was opened for WRITING
+     * before the response body was opened for READING, so anything that threw
+     * on the first read created the file and then abandoned it. The proven
+     * downloader opens them the other way round.
+     *
+     * ⇒ Same order, same `!in 200..299` check, same resume rule, same integrity
+     * check. The differences that remain are the ones that are actually
+     * different: no zip, and the size comes from the catalogue rather than a
+     * `Build`.
+     *
+     * ⚠ A resumed request answered with `200` rather than `206` means the
+     * server ignored the `Range` header and is sending the WHOLE file —
+     * appending that produces a file of the right length made of the wrong
+     * bytes. Restart cleanly instead.
+     *
+     * ⚠ `internal`: the segmenter's archive (`segment/Segmenter.kt`) is fetched
+     * through this too, rather than through a third copy.
+     */
+    internal fun download(
+        url: String,
+        dest: File,
+        expected: Long,
+        onProgress: (ModelInstaller.Progress) -> Unit,
+        isCancelled: () -> Boolean,
+    ) {
+        if (dest.exists() && dest.length() == expected) return
+        var from = if (dest.exists()) dest.length() else 0L
+        // A partial LONGER than the target is not a partial; it is junk.
+        if (from > expected) {
+            dest.delete()
+            from = 0L
+        }
+
+        // ⭐⭐ The mirror — the OTHER of the two connection sites. The
+        // segmenter and the DiT engine come through here too, so a mirror set
+        // in Settings covers them without either knowing about it.
+        val conn = (URL(Prefs.apply(url)).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 30_000
+            readTimeout = 60_000
+            instanceFollowRedirects = true
+            if (from > 0) setRequestProperty("Range", "bytes=$from-")
+        }
+        try {
+            val code = conn.responseCode
+            // ⚠ The URL is in the message. A bare "HTTP 404" on a catalogue
+            // whose paths are hand-written says nothing about which path.
+            if (code !in 200..299) throw IOException("HTTP $code for $url")
+            val append = from > 0 && code == HttpURLConnection.HTTP_PARTIAL
+            if (!append) from = 0L
+
+            // ⚠⚠ READ opened before WRITE — see the note above. This ordering
+            // is the actual bug fix.
+            conn.inputStream.use { input ->
+                java.io.FileOutputStream(dest, append).use { output ->
+                    copy(input, output, from, expected, onProgress, isCancelled)
+                }
+            }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** ⚠ Progress throttled to ~1 MB: it crosses to the main thread. */
+    private fun copy(
+        input: InputStream,
+        output: OutputStream,
+        startAt: Long,
+        total: Long,
+        onProgress: (ModelInstaller.Progress) -> Unit,
+        isCancelled: () -> Boolean,
+    ) {
+        val buf = ByteArray(64 * 1024)
+        var done = startAt
+        var lastReport = 0L
+        while (true) {
+            if (isCancelled()) throw ModelInstaller.Cancelled()
+            val n = input.read(buf)
+            if (n < 0) break
+            output.write(buf, 0, n)
+            done += n
+            if (done - lastReport >= 1_000_000L) {
+                lastReport = done
+                onProgress(ModelInstaller.Progress("downloading", done, total))
+            }
+        }
+        onProgress(ModelInstaller.Progress("downloading", done, total))
+    }
+}

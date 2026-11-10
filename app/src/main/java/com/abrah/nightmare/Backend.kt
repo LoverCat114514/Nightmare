@@ -1,0 +1,1323 @@
+package com.abrah.nightmare
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.net.HttpURLConnection
+import java.net.URL
+
+/**
+ * The HTTP client for the forked C++ backend.
+ *
+ * ⚠ The transport is deliberately boring. Per-op HTTP was MEASURED at ~70 µs
+ * loopback RTT and ~175 µs carrying a latent -- 0.2% of a render
+ * (docs/ARCHITECTURE.md section 3) -- so there is nothing to optimise here and
+ * no reason to take a dependency on a client library.
+ *
+ * ⚠ What is NOT cheap is the process model: --type, --model_dir and --patch are
+ * bound at backend launch, so changing checkpoint or resolution costs a kill +
+ * relaunch of 2.3-5 s. v1 sidesteps it by pinning one context key (section 5.2);
+ * this class must never grow a "just switch the model" convenience method.
+ */
+object Backend {
+
+    /**
+     * ⚠ 8189, NOT DreamUI's 8085. DreamUI may be resident on 8085 with its own
+     * backend, and silently talking to the wrong server would look exactly like
+     * success -- the endpoints it does share (/health) answer identically.
+     * `tools/op_smoke.sh` uses the same port for the same reason.
+     */
+    const val PORT = 8189
+    private const val BASE = "http://127.0.0.1:$PORT"
+
+    /**
+     * ⭐⭐ Every connection to the backend — and NEVER through a proxy.
+     *
+     * ⚠⚠⚠ Found 2026-10-07 with a phone-wide HTTP proxy set (`settings put global
+     * http_proxy`, to test the LoRA browser from Australia): `HttpURLConnection`
+     * follows the system proxy even for `127.0.0.1`, because that legacy setting
+     * carries no exclusion list. The proxy then tried to reach "127.0.0.1:8189" on
+     * ITS side, timed out, and a running backend read as "start failed — already
+     * running". Any user behind a system proxy (a work Wi-Fi, a proxy app) would
+     * have hit the same thing. The backend is on this phone; no proxy can reach it.
+     */
+    private fun open(path: String): HttpURLConnection =
+        (URL("$BASE$path").openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection).apply {
+            // ⚠⚠ The launch's token (backend-patches 042) on EVERY request: the socket is loopback,
+            // but loopback is every app on the phone, and the body names files the backend writes
+            // and deletes. A backend this app did not launch (a hand-run one) checks nothing.
+            BackendProcess.token?.let { setRequestProperty(TOKEN_HEADER, it) }
+        }
+
+    /** ⭐ The header backend 042 checks against its `NM_BACKEND_TOKEN`. */
+    const val TOKEN_HEADER = "X-Nightmare-Token"
+
+    /**
+     * Milliseconds. Generous: a cold backend takes 4-5 s to answer /health.
+     *
+     * ⚠⚠ **A PROBE timeout, and only that.** It is the right number for
+     * "is the server there", and it was the wrong one for every call that does
+     * model work — see [STAGE_TIMEOUT_MS].
+     */
+    private const val TIMEOUT_MS = 6_000
+
+    /**
+     * ⭐⭐ Milliseconds for a call that may have to **LOAD A STAGE** first.
+     *
+     * ⚠⚠⚠ **`--lowram` makes a request into a disk read.** Every SDXL
+     * checkpoint launches with it (`BackendProcess`), and it "loads and
+     * releases each stage instead of holding the pipeline resident" — so
+     * `/encode_text` on SDXL is not an inference, it is *load two text
+     * encoders, run them, release them*. Against [TIMEOUT_MS] that call had six
+     * seconds to read ~1.4 GB off flash.
+     *
+     * ⚠⚠ Reported 2026-09-13: *"with the sdxlbase model the first run always
+     * works and the second fails"* — `encode_text failed http -1 --
+     * SocketTimeoutException`, with the run bar reading **6.2 s**, which is
+     * [TIMEOUT_MS] to the tenth. The first run is fast because the encoders are
+     * still resident from launch; the sampler then releases them to fit the
+     * 1024² UNet, so the SECOND run's encode has to fetch them back.
+     *
+     * ⚠ Not a retry and not a tuning knob: the work genuinely takes this long
+     * on a cold stage, and failing at six seconds reports a timeout for
+     * something that was going to succeed.
+     */
+    private const val STAGE_TIMEOUT_MS = 120_000
+
+    /**
+     * Milliseconds BETWEEN stream frames, not for the whole response. A sample
+     * emits one every ~130 ms; the slack is for the first frame, which waits on
+     * CLIP, and for a cold NPU step.
+     *
+     * ⚠⚠ Raised from 30 s for Anima, 2026-09-16. Under `--lowram` its first
+     * frame waits on the Qwen encoder AND both ~2 GB DiT halves being mapped,
+     * then one 6.4 s step: ~26 s on an idle phone, and the DiT load alone took
+     * 24 s on a busy one. [STAGE_TIMEOUT_MS] is the same stage cost, so it is
+     * the same number.
+     */
+    private const val SSE_READ_TIMEOUT_MS = STAGE_TIMEOUT_MS
+
+    /**
+     * ⭐ [STAGE_TIMEOUT_MS], but a CPU (MNN) model's stage or the gap between two of its steps takes minutes:
+     * SDXL at 1024² on the CPU (backend 036) failed at 120 s with `SocketTimeoutException` while it was
+     * sampling (the S25, 2026-10-19). ⚠ Read per call: the backend the call goes to decides.
+     */
+    private fun stageTimeoutMs(): Int =
+        if (BackendProcess.launchedKey?.type == ModelCatalog.SDXL_MNN) DIT_SSE_READ_TIMEOUT_MS else STAGE_TIMEOUT_MS
+
+    /**
+     * ⭐ The same gap for a DiT `/generate` — [Ops.generate] is DiT-only.
+     *
+     * ⚠⚠ Reported 2026-09-28: a Qwen Image 2.1 EDIT at 1024² failed with
+     * `SocketTimeoutException` after 2 min 07 s — and the app then stopped a
+     * backend that was still working. Before its first step an edit runs the
+     * vision tower over the base picture, VAE-encodes it at the canvas size and
+     * loads a DiT whose sequence the reference doubles; text-to-image had its
+     * first frame at ~12 s. The phone was also busy with other apps.
+     *
+     * ⚠ Long on purpose: a backend that DIES closes the socket, which reads as
+     * an immediate EOF, not a timeout — so this only ever bounds a genuine hang,
+     * and Cancel still stops one at any time.
+     * ⚠⚠ 30 min, not 10: on a CPU-only phone ONE silent stage outlasts 10 (an 8 GB 8 Gen 1, Anima Turbo at
+     * 768x704, 2026-10-23: a 602 s full-frame decode with no event in it). The render finished in the backend
+     * at 1,150 s and the app had already given up and thrown it away.
+     */
+    internal const val DIT_SSE_READ_TIMEOUT_MS = 1_800_000
+
+    data class Response(val code: Int, val body: String, val millis: Long)
+
+    suspend fun get(path: String): Response = request("GET", path, null)
+
+    /**
+     * ⭐ A PROBE — "is the server there", answered or not in six seconds.
+     *
+     * ⚠⚠ The short timeout belongs HERE and nowhere else. `/health` and
+     * `/handles` answer from memory, so waiting two minutes on one would turn
+     * "the backend died" into a two-minute hang. Every other endpoint may be
+     * loading a stage; see [STAGE_TIMEOUT_MS].
+     */
+    suspend fun probe(path: String): Response = request("GET", path, null, TIMEOUT_MS)
+
+    suspend fun post(path: String, json: String): Response = request("POST", path, json)
+
+    /**
+     * A binary response, for `/vae_decode?binary=1`.
+     *
+     * ⚠ Header names are lowercased on the way in. HTTP header names are
+     * case-insensitive and cpp-httplib does not promise a casing, so a lookup
+     * for "X-Rgb-Sha" would work until the day it silently did not.
+     */
+    data class BinaryResponse(
+        val code: Int,
+        val bytes: ByteArray,
+        val text: String,
+        val headers: Map<String, String>,
+        val millis: Long,
+    )
+
+    suspend fun postForBytes(path: String, json: String): BinaryResponse =
+        withContext(Dispatchers.IO) {
+            val started = System.nanoTime()
+            val conn = open(path).apply {
+                requestMethod = "POST"
+                // ⚠ CONNECT stays short -- reaching a local socket is instant or
+                // it is broken. Only the READ waits on a stage load.
+                connectTimeout = TIMEOUT_MS
+                readTimeout = stageTimeoutMs()
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+            }
+            try {
+                conn.outputStream.use { it.write(json.toByteArray()) }
+                val code = conn.responseCode
+                val heads = conn.headerFields
+                    .filterKeys { it != null }
+                    .mapKeys { it.key.lowercase() }
+                    .mapValues { it.value.firstOrNull().orEmpty() }
+                if (code >= 400) {
+                    val err = conn.errorStream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+                    BinaryResponse(code, ByteArray(0), err, heads,
+                        (System.nanoTime() - started) / 1_000_000)
+                } else {
+                    val bytes = conn.inputStream.use { it.readBytes() }
+                    BinaryResponse(code, bytes, "", heads,
+                        (System.nanoTime() - started) / 1_000_000)
+                }
+            } catch (e: Exception) {
+                BinaryResponse(-1, ByteArray(0),
+                    e.javaClass.simpleName + ": " + (e.message ?: "no message"),
+                    emptyMap(), (System.nanoTime() - started) / 1_000_000)
+            } finally {
+                conn.disconnect()
+            }
+        }
+
+    /**
+     * ⭐ Raw bytes up, raw bytes down, with headers carrying the metadata.
+     *
+     * ⚠⚠ `/upscale` is the one endpoint on this server that is NOT JSON in
+     * either direction: the body is uncompressed RGB and the reply is a JPEG,
+     * with width/height/duration in `X-` headers. Base64 would inflate a 1024²
+     * RGB frame's 3 MB to 4 MB for a loopback socket that moves 1 MB in ~1.3 ms
+     * (`docs/ARCHITECTURE.md` §3), which is why it was written that way
+     * upstream and why it stays that way here.
+     *
+     * ⚠ `setFixedLengthStreamingMode` so a 3 MB body is streamed rather than
+     * buffered into the connection's own array first.
+     */
+    suspend fun postBytes(
+        path: String,
+        body: ByteArray,
+        headers: Map<String, String>,
+        contentType: String = "application/octet-stream",
+        /**
+         * ⚠⚠ SEPARATE from the connect timeout, and it has to be. [TIMEOUT_MS]
+         * is 6 s — sized for "is the server there", which is the right question
+         * for every JSON op on this client. It is the wrong question for an
+         * op that LOADS A MODEL: `/upscale` builds a QNN context from the
+         * weight file on the first call, and the app reported that as
+         * `SocketTimeoutException` on the node — a failure that reads as "the
+         * backend is broken" when the backend was working exactly as designed.
+         * Reported from the phone, 2026-09-10.
+         */
+        readTimeoutMs: Int = TIMEOUT_MS,
+    ): BinaryResponse = withContext(Dispatchers.IO) {
+        val started = System.nanoTime()
+        val conn = open(path).apply {
+            requestMethod = "POST"
+            connectTimeout = TIMEOUT_MS
+            readTimeout = readTimeoutMs
+            doOutput = true
+            setRequestProperty("Content-Type", contentType)
+            headers.forEach { (k, v) -> setRequestProperty(k, v) }
+            setFixedLengthStreamingMode(body.size)
+        }
+        try {
+            conn.outputStream.use { it.write(body) }
+            val code = conn.responseCode
+            val heads = conn.headerFields
+                .filterKeys { it != null }
+                .mapKeys { it.key.lowercase() }
+                .mapValues { it.value.firstOrNull().orEmpty() }
+            if (code >= 400) {
+                val err = conn.errorStream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+                BinaryResponse(code, ByteArray(0), err, heads,
+                    (System.nanoTime() - started) / 1_000_000)
+            } else {
+                BinaryResponse(code, conn.inputStream.use { it.readBytes() }, "", heads,
+                    (System.nanoTime() - started) / 1_000_000)
+            }
+        } catch (e: Exception) {
+            BinaryResponse(-1, ByteArray(0),
+                e.javaClass.simpleName + ": " + (e.message ?: "no message"),
+                emptyMap(), (System.nanoTime() - started) / 1_000_000)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * ⚠ Returns the response rather than throwing on a non-200. A harness that
+     * swallows a 404 into an exception message loses the status code, and the
+     * status code is usually the whole finding.
+     */
+    private suspend fun request(
+        method: String,
+        path: String,
+        body: String?,
+        /**
+         * ⚠⚠ Defaults to [STAGE_TIMEOUT_MS], not [TIMEOUT_MS]. Every endpoint
+         * that reaches this can do model work under `--lowram`; the probes pass
+         * the short one explicitly, which is the safe way round — a new
+         * endpoint added without thinking about it gets the patient timeout
+         * rather than a spurious six-second failure.
+         */
+        readTimeoutMs: Int = stageTimeoutMs(),
+    ): Response =
+        withContext(Dispatchers.IO) {
+            val started = System.nanoTime()
+            val conn = open(path).apply {
+                requestMethod = method
+                connectTimeout = TIMEOUT_MS
+                readTimeout = readTimeoutMs
+                if (body != null) {
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                }
+            }
+            try {
+                if (body != null) conn.outputStream.use { it.write(body.toByteArray()) }
+                val code = conn.responseCode
+                // errorStream, not inputStream, once the code is >= 400 -- reading
+                // the wrong one throws and the real status is lost.
+                val stream = if (code >= 400) conn.errorStream else conn.inputStream
+                val text = stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+                Response(code, text, (System.nanoTime() - started) / 1_000_000)
+            } catch (e: Exception) {
+                Response(-1, e.javaClass.simpleName + ": " + (e.message ?: "no message"),
+                    (System.nanoTime() - started) / 1_000_000)
+            } finally {
+                conn.disconnect()
+            }
+        }
+
+    /** One decoded SSE frame: the `event:` name and the `data:` payload. */
+    data class SseEvent(val name: String, val data: String, val atMs: Long)
+
+    /**
+     * ⭐⭐ The streaming request in flight, so a Run can be CANCELLED.
+     *
+     * ⚠⚠ **Cancelling the coroutine is not enough and never was.** The SSE
+     * loop sits in a blocking `readLine()` on a socket; coroutine cancellation
+     * does not interrupt that, so the read would keep going until the backend
+     * finished the render anyway — a Cancel button that stopped the UI and
+     * nothing else.
+     *
+     * ⇒ Cancel DISCONNECTS. The backend then fails its next `sink.write` and
+     * aborts the sample itself: *"Client disconnected, sample aborted"*
+     * (`main.cpp`), which its own comment calls the only way to stop a render,
+     * because `opSample()` holds the generation mutex throughout.
+     *
+     * ⚠ One slot is enough: the backend serialises every op behind that mutex,
+     * so there is never more than one stream open.
+     */
+    @Volatile
+    private var inFlight: HttpURLConnection? = null
+
+    /**
+     * Stop the streaming request, if any. Safe to call when there is none.
+     *
+     * ⚠ The read throws as a result — that is the POINT, and the caller must
+     * treat the resulting failure as a cancellation rather than as a backend
+     * error.
+     */
+    /**
+     * ⭐ When the streaming request in flight last heard anything (`System.nanoTime`). A DiT engine stuck inside one
+     * DSP call sends nothing, and only answers a hang-up between steps ([quietForMs] tells the two apart).
+     */
+    @Volatile
+    private var streamActivityAt: Long = 0L
+
+    /** Milliseconds since the stream last spoke; 0 when there is none. */
+    fun quietForMs(): Long = streamActivityAt.takeIf { it > 0L }?.let { (System.nanoTime() - it) / 1_000_000 } ?: 0L
+
+    fun abortInFlight(): Boolean {
+        val c = inFlight ?: return false
+        // ⚠ On the caller's thread, not the reader's: `disconnect()` is what
+        // makes the blocked `readLine()` return.
+        runCatching { c.disconnect() }
+        inFlight = null
+        return true
+    }
+
+    /**
+     * Read a `text/event-stream` response, calling [onEvent] as each frame
+     * ARRIVES.
+     *
+     * ⚠⚠ The whole value of this method is that it does not buffer, and nothing
+     * about its shape proves that. `HttpURLConnection` transparently requests
+     * gzip and Android's stack will happily accumulate a compressed body before
+     * handing any of it over, which turns a stream into one late lump that
+     * decodes to byte-identical events. That failure is invisible: the caller
+     * still gets every frame, still in order, still with the right contents.
+     *
+     * ⇒ Two defences. `Accept-Encoding: identity` stops the compression, and
+     * [SseEvent.atMs] stamps each frame with its arrival so the CALLER can
+     * prove the spread. tools/sample_stream.sh makes the same check on the
+     * shell side; a disagreement between them is a client bug, not a server
+     * one.
+     *
+     * ⚠ Its own read timeout. TIMEOUT_MS is 6 s, sized for /health, and a read
+     * timeout on a stream applies BETWEEN frames -- but a 20-step sample is
+     * ~3.5 s of frames and a cold first step can be slow, so a value tuned for
+     * a health probe would abort a working render.
+     */
+    suspend fun postSse(
+        path: String,
+        json: String,
+        readTimeoutMs: Int = stageTimeoutMs(),
+        onEvent: (SseEvent) -> Unit,
+    ): Response = withContext(Dispatchers.IO) {
+        val started = System.nanoTime()
+        fun sinceMs() = (System.nanoTime() - started) / 1_000_000
+        val conn = open(path).apply {
+            requestMethod = "POST"
+            connectTimeout = TIMEOUT_MS
+            readTimeout = readTimeoutMs
+            doOutput = true
+            doInput = true
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Accept", "text/event-stream")
+            setRequestProperty("Accept-Encoding", "identity")
+        }
+        inFlight = conn
+        streamActivityAt = System.nanoTime()
+        try {
+            conn.outputStream.use { it.write(json.toByteArray()) }
+            val code = conn.responseCode
+            if (code >= 400) {
+                // ⚠ A streaming endpoint still answers a bad request with a
+                // plain JSON 400 (the backend cannot know the body is bad until
+                // it parses it, which is before the stream opens). Read it as a
+                // body, not as a stream, or the error is lost.
+                val err = conn.errorStream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+                return@withContext Response(code, err, sinceMs())
+            }
+            var name = ""
+            val data = StringBuilder()
+            conn.inputStream.bufferedReader().use { r ->
+                while (true) {
+                    val line = r.readLine() ?: break
+                    streamActivityAt = System.nanoTime()
+                    when {
+                        // A blank line terminates a frame. Emit whatever the
+                        // preceding lines built and reset.
+                        line.isEmpty() -> {
+                            if (data.isNotEmpty()) {
+                                onEvent(SseEvent(name, data.toString(), sinceMs()))
+                                data.setLength(0)
+                                name = ""
+                            }
+                        }
+                        line.startsWith("event:") -> name = line.removePrefix("event:").trim()
+                        // ⚠ Concatenated, not overwritten. SSE allows a frame to
+                        // carry several `data:` lines and they join; a preview
+                        // image would be exactly that kind of payload.
+                        line.startsWith("data:") -> data.append(line.removePrefix("data:").trim())
+                        else -> Unit   // comments (`:`) and unknown fields
+                    }
+                }
+                // A stream that ends without its trailing blank line still has
+                // a frame in hand. Dropping it would lose `complete`.
+                if (data.isNotEmpty()) onEvent(SseEvent(name, data.toString(), sinceMs()))
+            }
+            Response(code, "", sinceMs())
+        } catch (e: Exception) {
+            Response(-1, e.javaClass.simpleName + ": " + (e.message ?: "no message"), sinceMs())
+        } finally {
+            // ⚠ Clear the slot before disconnecting, and only if it is still
+            // OURS: [abortInFlight] may already have replaced or nulled it.
+            if (inFlight === conn) inFlight = null
+            conn.disconnect()
+        }
+    }
+}
+
+/**
+ * The op surface, as the app sees it.
+ *
+ * ⚠ Deliberately thin. These mirror `backend-patches/003-op-endpoints.patch`
+ * one-for-one; anything cleverer belongs in the executor, not here, because a
+ * client that quietly reshapes a request makes a backend bug unattributable.
+ */
+object Ops {
+
+    /** What `/encode_text` returns. The tensor stays server-side; this is the handle. */
+    data class Cond(
+        val handle: String,
+        val seqLen: Int,
+        val hiddenDim: Int,
+        val negHash: String,
+        val posHash: String,
+        val serverMs: Long,
+        val wireMs: Long,
+    )
+
+    /**
+     * ⚠ Returns the raw JSON on failure rather than throwing a tidy message.
+     * The backend's error bodies name the actual problem (`latent size 3 !=
+     * expected 16384`), and rewriting that into "encode failed" throws away the
+     * only useful part.
+     */
+    sealed interface Result<out T> {
+        data class Ok<T>(val value: T) : Result<T>
+        data class Err(val code: Int, val body: String) : Result<Nothing>
+    }
+
+    suspend fun encodeText(prompt: String, negative: String): Result<Cond> {
+        val body = JSONObject()
+            .put("prompt", prompt)
+            .put("negative_prompt", negative)
+            .toString()
+        val r = Backend.post("/encode_text", body)
+        if (r.code != 200) return Result.Err(r.code, r.body)
+        return try {
+            val j = JSONObject(r.body)
+            Result.Ok(
+                Cond(
+                    handle = j.getString("handle"),
+                    seqLen = j.getInt("seq_len"),
+                    hiddenDim = j.getInt("hidden_dim"),
+                    negHash = j.optString("neg_hash"),
+                    posHash = j.optString("pos_hash"),
+                    serverMs = j.optLong("ms"),
+                    wireMs = r.millis,
+                )
+            )
+        } catch (e: Exception) {
+            Result.Err(r.code, "unparseable: ${r.body.take(200)}")
+        }
+    }
+
+
+    /**
+     * What `/sample?stream=1` returns. The latent stays server-side -- 4x64x64
+     * floats is 64 KB and a graph that moves it over the wire on every edge
+     * pays for nothing (docs/ARCHITECTURE.md section 6).
+     *
+     * [firstProgressMs] and [lastProgressMs] are the STREAMING EVIDENCE, and
+     * they are fields rather than logging because a caller cannot otherwise
+     * tell a stream from a buffered lump: the frames are identical either way.
+     * If first ~= last ~= serverMs, nothing streamed.
+     */
+    /**
+     * ⭐⭐ An SD 1.5 Swap render's per-request LoRA and ControlNet
+     * (`backend-patches/015`). Null fields are not sent: a template UNet with no
+     * LoRA and no hint is exactly the base model (zero `lora_S`, zero residuals).
+     *
+     * ⚠ The backend folds every one of these into the `/sample` handle key, but
+     * `lora_dir` by PATH — so a pack directory is named after its contents
+     * ([SwapInputs.packDir]), never reused for a different LoRA set.
+     */
+    /** ⭐ A1111's variation seed (backend 037): the noise slerped from the seed's toward [subseed]'s by [strength]. */
+    data class Variation(val subseed: Int, val strength: Double)
+
+    data class TemplateInputs(
+        val loraDir: String? = null,
+        val loraStrength: Double = 1.0,
+        /** An AI Hub-contract `controlnet.bin`; loaded on first use, kept until another is named. */
+        val controlnet: String? = null,
+        /** The HINT, 512² PNG — edges, depth or a pose skeleton, already made. */
+        val controlImage: ByteArray? = null,
+        val controlStrength: Double = 1.0,
+        /**
+         * ⭐ IP-Adapter (`backend-patches/016`): `pos/` + `neg/` K/V for a Swap v2
+         * UNet ([IpAdapter.ipDir]), named after its contents like [loraDir].
+         */
+        val ipDir: String? = null,
+    )
+
+    data class Sampled(
+        val handle: String,
+        val latentSha: String,
+        val steps: Int,
+        val seed: Int,
+        val serverMs: Long,
+        val wireMs: Long,
+        val progressEvents: Int,
+        val firstProgressMs: Long,
+        val lastProgressMs: Long,
+        /** How many progress frames actually carried an image. */
+        val previewFrames: Int = 0,
+    )
+
+    /**
+     * One `progress` frame: where the render is, when it said so, and — when
+     * previews were asked for and this step was on the stride — the
+     * partially-denoised image.
+     *
+     * ⚠ [preview] is decoded bytes, not base64. The wire carries base64 because
+     * SSE is text; keeping it that way past this boundary would mean every
+     * consumer decoded it again, and a preview is on the hot path of the only
+     * loop the user watches.
+     */
+    data class Progress(
+        val step: Int,
+        val total: Int,
+        val atMs: Long,
+        val preview: ByteArray? = null,
+        val previewFormat: String? = null,
+        /**
+         * ⭐ A phase of the node with its own bar ("pose 12/49" while Motion transfer builds its
+         * control video), or null for the node's main work. The run log names it beside the node.
+         */
+        val phase: String? = null,
+    )
+
+    /**
+     * prompt -> latent handle, with per-step progress.
+     *
+     * ⚠ Always asks for `?stream=1`. The plain shape exists for the shell
+     * scripts, which cannot read a stream with toybox; an app that has a
+     * progress bar to feed has no reason to prefer silence.
+     *
+     * ⚠ [onProgress] is called on the IO dispatcher, NOT the main thread. A
+     * caller updating Compose state from it must hop back itself -- doing that
+     * hop in here would put a per-step dispatch in the hot path of the only
+     * loop the user watches.
+     */
+    suspend fun sample(
+        prompt: String,
+        negative: String,
+        steps: Int = 20,
+        cfg: Double = 7.5,
+        seed: Int = 42,
+        width: Int = 512,
+        height: Int = 512,
+        /**
+         * Every Nth step carries a partially-denoised image, 0 for none.
+         *
+         * ⚠ NOT free, and the cost is not the transport: each preview is a
+         * whole VAE decode (~190 ms) against a ~130 ms sampler step, so a
+         * stride of 1 more than doubles a render. The `preview` op measures it
+         * rather than assuming.
+         */
+        previewStride: Int = 0,
+        /**
+         * ⚠ jpeg, not the backend's default of "raw". Raw is uncompressed RGB
+         * base64 — 1 MB per 512² frame — and it would make the transport look
+         * like the cost when the decode is.
+         */
+        previewFormat: String = "jpeg",
+        /**
+         * ⭐ img2img: start from this latent instead of from noise.
+         *
+         * ⚠ In the same VAE space `sample()` and `vaeEncode()` return, so a
+         * render can be fed straight back in without a decode/encode round
+         * trip — which would cost ~190 ms and 1.4% of the picture (measured)
+         * for nothing.
+         */
+        latentHandle: String? = null,
+        /**
+         * How much of the starting latent to destroy, 0..1.
+         *
+         * ⚠ 1.0 renoises completely, which is txt2img with extra steps. The
+         * backend defaults it to 0.6 rather than 1.0 for exactly that reason: a
+         * caller who forgot the field would get a picture with no trace of
+         * their input and no error to explain it.
+         */
+        denoise: Double = 0.6,
+        /**
+         * ⭐⭐ Which sampler the backend should use.
+         *
+         * ⚠⚠ **Was never sent at all until 2026-09-10.** `RequestParser.hpp`
+         * reads `json.value("scheduler", "dpm")`, so every render this app has
+         * ever produced used DPM -- including checkpoints published with a
+         * different one. Measured on device: on a distilled SDXL model at its
+         * own settings, `dpm` gives a crunchy over-sharpened picture and
+         * `euler_a` a clean one, same seed and steps and cfg.
+         *
+         * ⚠ Sent UNCONDITIONALLY, unlike `denoise` above: the backend folds
+         * `scheduler_type` into the sample handle's key (`main.cpp`), so
+         * omitting it on some calls and not others would make two requests that
+         * differ only in whether the field was present collide on one cached
+         * latent.
+         */
+        scheduler: String = ModelCatalog.DEFAULT_SCHEDULER,
+        /**
+         * ⭐ Conditioning from an `encode_text` node, so CLIP is a wire rather
+         * than a hidden step inside the sampler.
+         *
+         * ⚠ The prompt strings are still sent and still required — the backend
+         * refuses an empty prompt, and the prompt is part of the sample
+         * handle's key. When a handle is supplied the strings are NOT
+         * re-encoded, so what the UNet sees is exactly what the node produced.
+         */
+        condHandle: String? = null,
+        /**
+         * ⭐ `w:h` on a fixed-canvas family (SDXL, Anima), or null.
+         *
+         * ⚠⚠ **A request field, not a context-key field.** It costs no
+         * relaunch: `RequestParser.hpp` keeps the forced 1024² canvas and sets
+         * `aspect_pad_inpaint`, which paints a centered rectangle of this shape
+         * and masks the rest. ⚠ It needs a VAE encoder present, because the
+         * synthetic black canvas is encoded as the inpaint base latent --
+         * `SDXL_REQUIRED` lists `vae_encoder.bin` for that reason, and this app
+         * never passes `--no_img2img`.
+         *
+         * ⚠⚠ **The crop back out does NOT happen on this path.** `opSample`
+         * returns the latent before `generate()` reaches its own `cropCenter`,
+         * so what comes back is a full-canvas latent with the target rectangle
+         * painted inside it. [VaeDecodeNode] cuts it out after the decode.
+         */
+        aspect: String? = null,
+        /**
+         * ⭐⭐ The picture and mask an INPAINT node renders from, as PNGs.
+         *
+         * ⚠⚠ Consumed ONLY by a 9-channel inpainting model, which takes them as
+         * conditioning; every other backend drops both fields
+         * (`backend-patches/006`), so sending them to a plain checkpoint
+         * changes nothing and the caller's latent blend still does the work.
+         * The backend decides because it is the one that knows its UNet.
+         */
+        inpaintImage: ByteArray? = null,
+        inpaintMask: ByteArray? = null,
+        /** ⭐ SD 1.5 Swap only ([TemplateInputs]); every other model gets null. */
+        template: TemplateInputs? = null,
+        /** ⭐ A1111's variation seed (backend 037); null = the seed alone. */
+        variation: Variation? = null,
+        onProgress: (Progress) -> Unit = {},
+    ): Result<Sampled> {
+        val body = JSONObject()
+            .put("prompt", prompt)
+            .put("negative_prompt", negative)
+            .put("steps", steps)
+            .put("cfg", cfg)
+            .put("seed", seed)
+            .apply { variation?.let { put("subseed", it.subseed.toLong() and 0xFFFFFFFFL); put("subseed_strength", it.strength) } }
+            // ⭐ An SDXL CPU model's UNet on the GPU (MNN OpenCL, upstream's switch): 17.4 s a step at 1024² against
+            // 65 s on 4 CPU cores (the S25, 2026-10-19). The first GPU run writes `unet.mnnc` beside the model.
+            .apply { if (BackendProcess.launchedKey?.type == ModelCatalog.SDXL_MNN) put("use_opencl", true) }
+            .put("width", width)
+            .put("height", height)
+            .put("scheduler", scheduler)
+            .apply {
+                if (aspect != null) put("aspect_ratio", aspect)
+                if (condHandle != null) put("cond_handle", condHandle)
+                if (template != null) {
+                    template.loraDir?.let {
+                        put("lora_dir", it)
+                        put("lora_strength", template.loraStrength)
+                    }
+                    if (template.controlnet != null && template.controlImage != null) {
+                        put("controlnet", template.controlnet)
+                        put("control_image", android.util.Base64.encodeToString(template.controlImage, android.util.Base64.NO_WRAP))
+                        put("control_strength", template.controlStrength)
+                    }
+                    template.ipDir?.let { put("ip_dir", it) }
+                }
+                if (inpaintImage != null && inpaintMask != null) {
+                    put("inpaint_image", android.util.Base64.encodeToString(inpaintImage, android.util.Base64.NO_WRAP))
+                    put("inpaint_mask", android.util.Base64.encodeToString(inpaintMask, android.util.Base64.NO_WRAP))
+                }
+                if (latentHandle != null) {
+                    put("latent_handle", latentHandle)
+                    put("denoise", denoise)
+                }
+                if (previewStride > 0) {
+                    put("show_diffusion_process", true)
+                    put("show_diffusion_stride", previewStride)
+                    put("preview_format", previewFormat)
+                }
+            }
+            .toString()
+
+        var complete: JSONObject? = null
+        var streamError: String? = null
+        var nProgress = 0
+        var nPreviews = 0
+        var firstAt = -1L
+        var lastAt = -1L
+
+        val r = Backend.postSse("/sample?stream=1", body) { ev ->
+            // ⚠ Switch on the payload's own "type", not on the `event:` name.
+            // Both carry it, but a proxy or a client that only understood
+            // `data:` would drop the name and keep the payload -- so the
+            // payload is the one that has to be sufficient.
+            val j = try { JSONObject(ev.data) } catch (e: Exception) { null }
+            when (j?.optString("type")) {
+                "progress" -> {
+                    nProgress++
+                    if (firstAt < 0) firstAt = ev.atMs
+                    lastAt = ev.atMs
+                    // ⚠ A frame without an image is the NORMAL case: only every
+                    // Nth step carries one, and the backend also sends "" when a
+                    // preview decode failed. Both must read as "no picture this
+                    // step", not as an error.
+                    val b64 = j.optString("image")
+                    val bytes = if (b64.isNullOrEmpty()) null else try {
+                        android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                    } catch (e: Exception) {
+                        null
+                    }
+                    if (bytes != null) nPreviews++
+                    onProgress(
+                        Progress(
+                            j.optInt("step"), j.optInt("total_steps"), ev.atMs,
+                            bytes, j.optString("format").ifEmpty { null },
+                        )
+                    )
+                }
+                "complete" -> complete = j
+                "error" -> streamError = j.optString("message")
+                // ⚠ Not silent. An unrecognised frame means the backend and this
+                // client disagree about the contract, which is exactly the thing
+                // a harness exists to surface.
+                else -> streamError = streamError
+                    ?: "unrecognised frame \"${ev.name}\": ${ev.data.take(120)}"
+            }
+        }
+
+        if (r.code != 200) return Result.Err(r.code, r.body)
+        streamError?.let { return Result.Err(200, it) }
+        val j = complete
+            ?: return Result.Err(200, "stream ended after $nProgress progress frames " +
+                "with no complete event")
+
+        return Result.Ok(
+            Sampled(
+                handle = j.getString("handle"),
+                latentSha = j.optString("latent_sha"),
+                steps = j.optInt("steps", steps),
+                seed = j.optInt("seed", seed),
+                serverMs = j.optLong("ms"),
+                wireMs = r.millis,
+                progressEvents = nProgress,
+                firstProgressMs = firstAt,
+                lastProgressMs = lastAt,
+                previewFrames = nPreviews,
+            )
+        )
+    }
+
+    /**
+     * ⭐⭐ The WHOLE render in one call — prompt (and optionally a picture) in,
+     * a PNG out — through `/generate?stream=1`.
+     *
+     * ⚠⚠ For the DiT families (FLUX.2 Klein, Z-Image) only. Their engine owns
+     * the text encoder, the loop and the VAE as one call (`PipelineDit`), so
+     * `/encode_text`, `/sample` and `/vae_decode` do not exist for them, and
+     * the decomposed path every other sampler takes would throw.
+     *
+     * @param imagePng img2img: the picture, already at [width]x[height].
+     */
+    suspend fun generate(
+        prompt: String,
+        negative: String,
+        steps: Int,
+        cfg: Double,
+        seed: Int,
+        width: Int,
+        height: Int,
+        imagePng: ByteArray? = null,
+        denoise: Double = 0.6,
+        /**
+         * ⭐⭐ The inpaint mask — white is regenerated, black keeps the init
+         * image (`DitEngine.h`'s `mask_image` contract, and the same sense the
+         * SD pipelines use).
+         *
+         * ⚠ The backend refuses a mask with no `image` ("mask requires
+         * image"), so these two travel together or not at all.
+         */
+        maskPng: ByteArray? = null,
+        /**
+         * ⭐⭐ FLUX.2 Klein's native edit references — clean, separately
+         * VAE-encoded latents appended to the DiT token sequence, NOT noised
+         * into the generation latent like [imagePng].
+         *
+         * ⚠⚠ Each keeps its OWN aspect ratio on purpose, so these must be
+         * encoded from the source bitmap and never through `CropNode.render`,
+         * which fits a picture to the output canvas.
+         *
+         * ⚠ Klein only — the backend throws for any other family
+         * (`PipelineDit::generate`), and refuses the field outright unless the
+         * pipeline reports `supportsReferenceEditing`.
+         *
+         * ⚠⚠⚠ NOT reachable from the canvas, deliberately: extra
+         * references crashed LocalDream 3.0.0-alpha.2 on this phone
+         * (reported 2026-09-20), so nothing in the UI can send them. The
+         * `dit_edit` harness op is the only caller, which is how we find out
+         * whether that crash is upstream's or the engine's.
+         */
+        referencePngs: List<ByteArray> = emptyList(),
+        /**
+         * ⭐⭐ LoRA adapters for THIS render — a file path and a strength each.
+         *
+         * ⚠⚠ DiT families only. A QNN pipeline has no way to apply one: its
+         * graph is an AOT-compiled context binary with nowhere to put a branch,
+         * and the measured alternative costs 2.8x per UNet pass
+         * (`docs/ROADMAP.md` §2f). The backend ignores the field for those.
+         *
+         * ⚠ Whether a LoRA FITS the checkpoint is not decided here. The engine
+         * reports it by name — "(N / M) LoRA tensors have been applied" against
+         * "incompatible LoRA tensors have been skipped" — which is the only
+         * answer that reflects actual tensor shapes.
+         */
+        loras: List<Pair<String, Double>> = emptyList(),
+        /**
+         * ⭐ UltraFix ([UltraFix]): tiled img2img over a picture larger than the UNet graph —
+         * [width]x[height] are the PICTURE's (multiples of 8), [tileSize] the graph's.
+         * ⚠ SD 1.5 / SDXL QNN only; no mask, no ControlNet (`RequestParser.hpp`).
+         */
+        ultrafix: Boolean = false,
+        tileSize: Int = 512,
+        scheduler: String? = null,
+        onProgress: (Progress) -> Unit = {},
+    ): Result<Decoded> {
+        val body = JSONObject()
+            .put("prompt", prompt)
+            .put("negative_prompt", negative)
+            .put("steps", steps)
+            .put("cfg", cfg)
+            .put("seed", seed)
+            .put("width", width)
+            .put("height", height)
+            .put("output_format", "png")
+            .apply {
+                if (imagePng != null) {
+                    put("image", android.util.Base64.encodeToString(imagePng, android.util.Base64.NO_WRAP))
+                    put("denoise_strength", denoise)
+                }
+                if (maskPng != null) {
+                    put("mask", android.util.Base64.encodeToString(maskPng, android.util.Base64.NO_WRAP))
+                }
+                if (ultrafix) {
+                    put("ultrafix", true)
+                    put("tile_size", tileSize)
+                }
+                scheduler?.let { put("scheduler", it) }
+                // ⭐ The running model's own LoRA first, on every render ([BackendProcess.launchedOwnLora]).
+                val sent = listOfNotNull(BackendProcess.launchedOwnLora()?.let { it to 1.0 }) + loras
+                if (sent.isNotEmpty()) {
+                    put(
+                        "loras",
+                        org.json.JSONArray().apply {
+                            for ((path, mult) in sent) {
+                                put(JSONObject().put("path", path).put("multiplier", mult))
+                            }
+                        },
+                    )
+                }
+                if (referencePngs.isNotEmpty()) {
+                    put(
+                        "reference_images",
+                        org.json.JSONArray().apply {
+                            for (r in referencePngs) {
+                                put(android.util.Base64.encodeToString(r, android.util.Base64.NO_WRAP))
+                            }
+                        },
+                    )
+                }
+            }
+            .toString()
+
+        var complete: JSONObject? = null
+        var streamError: String? = null
+        val r = Backend.postSse("/generate?stream=1", body, readTimeoutMs = Backend.DIT_SSE_READ_TIMEOUT_MS) { ev ->
+            val j = try { JSONObject(ev.data) } catch (e: Exception) { null }
+            when (j?.optString("type")) {
+                "progress" -> onProgress(
+                    Progress(j.optInt("step"), j.optInt("total_steps"), ev.atMs, null, null)
+                )
+                "complete" -> complete = j
+                "error" -> streamError = j.optString("message")
+                else -> streamError = streamError
+                    ?: "unrecognised frame \"${ev.name}\": ${ev.data.take(120)}"
+            }
+        }
+        if (r.code != 200) return Result.Err(r.code, r.body)
+        streamError?.let { return Result.Err(200, it) }
+        val j = complete ?: return Result.Err(200, "stream ended with no complete event")
+        val png = try {
+            android.util.Base64.decode(j.getString("image"), android.util.Base64.DEFAULT)
+        } catch (e: Exception) {
+            return Result.Err(200, "complete event carried no readable image: ${e.message}")
+        }
+        blankPicture(png)?.let { return Result.Err(200, it) }
+        return Result.Ok(Decoded(png, "", j.optLong("generation_time_ms"), r.millis))
+    }
+
+    /**
+     * ⭐⭐ A picture of ONE colour is a failed render the engine did not notice.
+     *
+     * ⚠⚠ Reported 2026-10-17: two Snapdragon 8s Gen 4 (SM8735, v73) testers got solid grey from
+     * Z-Image and Klein 9B on 1.6.174, with "done" in the run log and so no error report to send;
+     * the 8 Gen 2 (also v73) renders clean. Turning it into an error puts the backend's log in the
+     * tester's hands. A real render is never flat to 2 levels, even downscaled 8x.
+     */
+    private fun blankPicture(png: ByteArray): String? {
+        val o = android.graphics.BitmapFactory.Options().apply { inSampleSize = 8 }
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size, o) ?: return null
+        val px = IntArray(bmp.width * bmp.height)
+        bmp.getPixels(px, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+        bmp.recycle()
+        val c = uniformColour(px) ?: return null
+        return "the engine returned a blank picture (every pixel #%06X). The render failed without an error; please share this report".format(c and 0xFFFFFF)
+    }
+
+    /** [pixels]' colour when every pixel is within [tolerance] of the first in each channel, else null. */
+    internal fun uniformColour(pixels: IntArray, tolerance: Int = 2): Int? {
+        if (pixels.isEmpty()) return null
+        val first = pixels[0]
+        for (p in pixels) {
+            for (shift in intArrayOf(0, 8, 16)) {
+                val d = ((p ushr shift) and 0xFF) - ((first ushr shift) and 0xFF)
+                if (d > tolerance || d < -tolerance) return null
+            }
+        }
+        return first
+    }
+
+    /** ⭐ What `/video` made: [frames] RGB frames of [width]x[height] in the NMV1 file at [path]. */
+    data class Clip(
+        val path: String,
+        val frames: Int,
+        val width: Int,
+        val height: Int,
+        val fps: Int,
+        val serverMs: Long,
+    )
+
+    /**
+     * ⭐⭐ Wan 2.2 text or image to video through `/video` (backend 028) — the whole clip in one
+     * call, like [generate]. The frames are NOT in the stream: the backend writes them to [out]
+     * as they are decoded (`NMV1`, int32 LE width, height, count, fps, then RGB8 frames), because
+     * 121 frames at 832x480 are 145 MB. [out] must be a path the backend process can write — the
+     * app's own storage, which it shares.
+     *
+     * @param startPng image to video: the start frame, already at exactly [width]x[height].
+     */
+    suspend fun video(
+        prompt: String,
+        negative: String,
+        width: Int,
+        height: Int,
+        frames: Int,
+        fps: Int,
+        seed: Long,
+        steps: Int,
+        sampleMethod: String,
+        sigmas: List<Double>,
+        tilingArgs: String,
+        out: String,
+        startPng: ByteArray? = null,
+        loras: List<Pair<String, Double>> = emptyList(),
+        onProgress: (Progress) -> Unit = {},
+        vaeTileSize: Int = 0,
+        /** ⭐ Backend 033: an NMV1 control video's PATH (too big for base64) and the reference picture. */
+        controlVideo: String? = null,
+        refPng: ByteArray? = null,
+    ): Result<Clip> {
+        val body = JSONObject()
+            .put("prompt", prompt)
+            .put("negative_prompt", negative)
+            .put("width", width)
+            .put("height", height)
+            .put("frames", frames)
+            .put("fps", fps)
+            .put("seed", seed)
+            .put("steps", steps)
+            .put("cfg", 1.0)
+            .put("sample_method", sampleMethod)
+            .put("sigmas", org.json.JSONArray(sigmas))
+            .put("temporal_tiling", true)
+            .put("tiling_args", tilingArgs)
+            // ⚠ Backend 031: an older backend ignores the key and decodes the whole frame.
+            .apply { if (vaeTileSize > 0) put("vae_tile_size", vaeTileSize) }
+            .put("out", out)
+            .apply {
+                if (startPng != null) {
+                    put("image", android.util.Base64.encodeToString(startPng, android.util.Base64.NO_WRAP))
+                }
+                if (controlVideo != null) put("control_video", controlVideo)
+                if (refPng != null) {
+                    put("ref_image", android.util.Base64.encodeToString(refPng, android.util.Base64.NO_WRAP))
+                }
+                if (loras.isNotEmpty()) {
+                    put(
+                        "loras",
+                        org.json.JSONArray().apply {
+                            for ((path, mult) in loras) {
+                                put(JSONObject().put("path", path).put("multiplier", mult))
+                            }
+                        },
+                    )
+                }
+            }
+            .toString()
+
+        var complete: JSONObject? = null
+        var streamError: String? = null
+        val r = Backend.postSse("/video", body, readTimeoutMs = Backend.DIT_SSE_READ_TIMEOUT_MS) { ev ->
+            val j = try { JSONObject(ev.data) } catch (e: Exception) { null }
+            when (j?.optString("type")) {
+                "progress" -> onProgress(
+                    Progress(j.optInt("step"), j.optInt("total_steps"), ev.atMs, null, null)
+                )
+                "complete" -> complete = j
+                "error" -> streamError = j.optString("message")
+                else -> streamError = streamError
+                    ?: "unrecognised frame \"${ev.name}\": ${ev.data.take(120)}"
+            }
+        }
+        if (r.code != 200) return Result.Err(r.code, r.body)
+        streamError?.let { return Result.Err(200, it) }
+        val j = complete ?: return Result.Err(200, "stream ended with no complete event")
+        return Result.Ok(
+            Clip(
+                j.optString("path", out), j.optInt("frames"), j.optInt("width"), j.optInt("height"),
+                j.optInt("fps", fps), j.optLong("generation_time_ms"),
+            )
+        )
+    }
+
+    /**
+     * What the backend still holds -- conditionings AND latents, as ids.
+     *
+     * ⭐ The executor's residency check (Executor.kt). A remembered handle is
+     * only usable while the process that owns it is still the process that owns
+     * it; a restart, an idle release or an eviction invalidates every one of
+     * them at once, and the app cannot know that from its own memory.
+     *
+     * ⚠ Returns null for "could not ask", NOT an empty set. Collapsing the two
+     * makes a down backend look like a cold cache, which turns one clear
+     * failure into a graph's worth of node failures.
+     *
+     * ⚠ Ignores the `kind` field here on purpose: the ids are already disjoint
+     * (`lat_`/`cond_`) and the executor checks the kind it EXPECTED against the
+     * value it remembered, which is the check that actually matters. `/handles`
+     * omitting a whole kind is a real bug that happened once
+     * (backend-patches/003-op-endpoints.patch), and it shows up as a prune, not
+     * as a wrong kind.
+     */
+    suspend fun handles(): Set<String>? {
+        val r = Backend.probe("/handles")
+        if (r.code != 200) return null
+        return try {
+            val arr = JSONObject(r.body).getJSONArray("handles")
+            (0 until arr.length()).map { arr.getJSONObject(it).getString("handle") }.toSet()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * pixels -> latent. The img2img half of the VAE, and the way a picture gets
+     * back INTO a graph.
+     *
+     * ⚠⚠ The latent it returns is in the SAME space `sample()` returns, so the
+     * two are interchangeable: a decoded render can be re-encoded, blended with
+     * a sampled latent, and decoded again. A handle that sometimes meant one
+     * space and sometimes the other would decode to plausible garbage with
+     * nothing to say which it was.
+     *
+     * ⚠ [seed] is not decoration: a VAE latent is `mean + std * noise`, so the
+     * seed is what makes the same image encode to the same latent twice — and a
+     * content-addressed handle over a non-deterministic op is a cache that
+     * never hits.
+     */
+    suspend fun vaeEncode(
+        png: ByteArray,
+        seed: Int = 42,
+        width: Int = 512,
+        height: Int = 512,
+    ): Result<Sampled> {
+        val body = JSONObject()
+            .put("image", android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP))
+            .put("seed", seed)
+            .put("width", width)
+            .put("height", height)
+            .toString()
+        val r = Backend.post("/vae_encode", body)
+        if (r.code != 200) return Result.Err(r.code, r.body)
+        return try {
+            val j = JSONObject(r.body)
+            Result.Ok(
+                Sampled(
+                    handle = j.getString("handle"),
+                    latentSha = j.optString("latent_sha"),
+                    steps = 0,
+                    seed = j.optInt("seed", seed),
+                    serverMs = j.optLong("ms"),
+                    wireMs = r.millis,
+                    progressEvents = 0,
+                    firstProgressMs = -1,
+                    lastProgressMs = -1,
+                )
+            )
+        } catch (e: Exception) {
+            Result.Err(r.code, "unparseable: ${r.body.take(200)}")
+        }
+    }
+
+    /** What `/latent_blend` returns: a new latent, keyed on both inputs and the mask. */
+    data class Blended(
+        val handle: String,
+        val latentSha: String,
+        val maskSha: String,
+        val wireMs: Long,
+    )
+
+    /**
+     * latent + latent + mask -> latent. RePaint-style blending, which is what
+     * makes inpainting a Tier 0 node (docs/ARCHITECTURE.md §2).
+     *
+     * ⚠⚠ **mask = 1 takes [b]**, matching `/generate`'s own per-step blend where
+     * the mask means "repaint". The two must agree: blending the other way
+     * round produces a plausible picture with the wrong region replaced, and
+     * nothing raises an error.
+     *
+     * ⚠ [maskPng] is a whole PNG, base64'd, and the BACKEND downsamples it to
+     * latent resolution. Doing the downsample here would be a second copy of a
+     * rule that already exists in `RequestParser` -- and the two disagreeing
+     * would mean a mask drawn for `/generate` meant something different in a
+     * graph.
+     */
+    suspend fun latentBlend(a: String, b: String, maskPng: ByteArray): Result<Blended> {
+        val body = JSONObject()
+            .put("a", a)
+            .put("b", b)
+            .put("mask", android.util.Base64.encodeToString(maskPng, android.util.Base64.NO_WRAP))
+            .toString()
+        val r = Backend.post("/latent_blend", body)
+        if (r.code != 200) return Result.Err(r.code, r.body)
+        return try {
+            val j = JSONObject(r.body)
+            Result.Ok(
+                Blended(
+                    handle = j.getString("handle"),
+                    latentSha = j.optString("latent_sha"),
+                    maskSha = j.optString("mask_sha"),
+                    wireMs = r.millis,
+                )
+            )
+        } catch (e: Exception) {
+            Result.Err(r.code, "unparseable: ${r.body.take(200)}")
+        }
+    }
+
+    data class Decoded(val png: ByteArray, val rgbSha: String, val serverMs: Long, val wireMs: Long)
+
+    /**
+     * ⭐ Uses `?binary=1`, so the PNG arrives as `image/png` rather than base64.
+     * Base64 inflates an image 33% and the device-side extraction of it is not
+     * reliable (see backend-patches/README.md).
+     */
+    suspend fun vaeDecode(
+        seed: Int? = null,
+        latentHandle: String? = null,
+        width: Int = 512,
+        height: Int = 512,
+    ): Result<Decoded> {
+        val body = JSONObject()
+            .put("width", width)
+            .put("height", height)
+            // A handle names a latent the sampler already produced; a seed asks
+            // the backend to decode fresh noise. Sending both would let the
+            // backend pick, and which it picked would not be visible here.
+            .apply {
+                if (latentHandle != null) put("latent_handle", latentHandle)
+                else if (seed != null) put("seed", seed)
+            }
+            .toString()
+        val r = Backend.postForBytes("/vae_decode?binary=1", body)
+        if (r.code != 200) return Result.Err(r.code, r.text)
+        return Result.Ok(
+            Decoded(
+                png = r.bytes,
+                rgbSha = r.headers["x-rgb-sha"] ?: "?",
+                serverMs = r.headers["x-ms"]?.toLongOrNull() ?: -1L,
+                wireMs = r.millis,
+            )
+        )
+    }
+
+    /**
+     * ⚠ Generous on purpose. The FIRST `/upscale` of a process pays a QNN
+     * context init off a 8-24 MB weight file before any pixels are touched, and
+     * a 4x of a 1024² frame is 16x the pixels of the input. Sized to fail on a
+     * genuine hang rather than on a cold load.
+     */
+    private const val UPSCALE_TIMEOUT_MS = 300_000
+
+    data class Upscaled(
+        val jpeg: ByteArray,
+        val width: Int,
+        val height: Int,
+        val serverMs: Long,
+        val wireMs: Long,
+    )
+
+    /**
+     * ⭐⭐ 4x a picture on the NPU, through the upscaler at [upscalerPath].
+     *
+     * ⚠⚠ **This op does NOT join the context key, and that is the whole reason
+     * an upscaler can live in the same graph as a sampler.** `/upscale` is
+     * registered in `main.cpp` OUTSIDE the `if (pipeline)` guards, and its
+     * handler builds the QNN model per request from the path in the header and
+     * frees it when the request ends. So it runs inside whichever backend
+     * process happens to be up, needs no relaunch, and costs no 2.3-5 s process
+     * transition (`docs/ARCHITECTURE.md` §4). ⚠ `--upscaler_mode` is unrelated:
+     * it means "a server with NO diffusion model", for upscale-only use.
+     *
+     * ⚠⚠ **Raw RGB up, JPEG down.** Not a typo and not JSON: the body is
+     * `3 * width * height` uncompressed bytes and the reply is a JPEG. A 1024²
+     * frame is 3 MB on a loopback socket that moves 1 MB in ~1.3 ms.
+     *
+     * ⚠ The path is a DEVICE path the backend opens itself, so the weights
+     * never cross the wire -- the same handle-not-buffer rule the rest of the
+     * op surface follows.
+     */
+    suspend fun upscale(
+        rgb: ByteArray,
+        width: Int,
+        height: Int,
+        upscalerPath: String,
+    ): Result<Upscaled> {
+        val want = 3L * width * height
+        // ⚠ Checked HERE, not left to the server. The backend throws a 400 with
+        // a good message, but this is a programming error on our side and the
+        // stack that produced the wrong buffer is long gone by then.
+        if (rgb.size.toLong() != want) {
+            return Result.Err(
+                -1,
+                "upscale: image is ${rgb.size} bytes, expected $want for ${width}x$height RGB",
+            )
+        }
+        val r = Backend.postBytes(
+            "/upscale",
+            rgb,
+            mapOf(
+                "X-Image-Width" to width.toString(),
+                "X-Image-Height" to height.toString(),
+                "X-Upscaler-Path" to upscalerPath,
+            ),
+            readTimeoutMs = UPSCALE_TIMEOUT_MS,
+        )
+        if (r.code != 200) return Result.Err(r.code, r.text)
+        return Result.Ok(
+            Upscaled(
+                jpeg = r.bytes,
+                // ⚠ From the RESPONSE, never assumed to be 4x the input. The
+                // scale factor is a property of the weight file, and a 2x
+                // upscaler would otherwise be reported as 4x by a node that
+                // never looked.
+                width = r.headers["x-output-width"]?.toIntOrNull() ?: 0,
+                height = r.headers["x-output-height"]?.toIntOrNull() ?: 0,
+                serverMs = r.headers["x-duration-ms"]?.toLongOrNull() ?: -1L,
+                wireMs = r.millis,
+            )
+        )
+    }
+}

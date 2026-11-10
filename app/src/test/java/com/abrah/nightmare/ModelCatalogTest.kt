@@ -1,0 +1,779 @@
+package com.abrah.nightmare
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * The catalog is data, and these are the invariants that make it usable data.
+ *
+ * ⚠ The byte counts cannot be checked here — they are facts about a remote
+ * repo. What CAN be checked is that nothing is zero or duplicated, which is how
+ * a transcription slip actually shows up: [ModelInstaller] compares the finished
+ * download against `bytes`, so a wrong number fails every install of that model
+ * with "size mismatch" and a right-looking file on disk.
+ */
+class ModelCatalogTest {
+
+    @Test
+    fun everyModelHasADistinctIdAndArchive() {
+        val ids = ModelCatalog.all.map { it.id }
+        assertEquals("duplicate model id", ids.size, ids.toSet().size)
+        // ⚠ Across EVERY tier, not just the preferred one: two entries sharing
+        // a `_min` archive would download one model's weights under another's
+        // name, and only on the phones that take that tier.
+        // ⚠ Not a plain-file package's build, which names no archive; its
+        // FILES are checked the same way below.
+        val archives = ModelCatalog.all.filter { it.files.isEmpty() }.flatMap { m -> m.builds.map { it.archive } }
+        assertEquals("duplicate archive", archives.size, archives.toSet().size)
+        for (m in ModelCatalog.all.filter { it.files.isNotEmpty() }) {
+            assertEquals("${m.id}: duplicate file name", m.files.size, m.files.map { it.name }.toSet().size)
+            assertEquals("${m.id}: files must be exactly what the backend loads", m.requiredFiles.toSet(), m.files.map { it.name }.toSet())
+            assertTrue("${m.id}: DiT is v69+ only", m.builds.all { it.minArch >= ModelCatalog.DIT_V69_MIN_ARCH })
+        }
+    }
+
+    @Test
+    fun everyModelHasAPlausibleSize() {
+        // An SD1.5 QNN build is ~1 GB; an SDXL one ~3.7 GB. A zero or a wildly
+        // wrong figure is a transcription slip, and the installer enforces it as
+        // a failure -- so the bound is per family, not one loose range that
+        // would wave a mistyped SD1.5 size through as a small SDXL.
+        for (spec in ModelCatalog.sd15Models) {
+            for (b in spec.builds) {
+                assertTrue("${spec.id} ${b.tier} ${b.bytes}", b.bytes in 900_000_000..1_500_000_000)
+            }
+        }
+        for (spec in ModelCatalog.sdxlModels) {
+            for (b in spec.builds) {
+                assertTrue("${spec.id} ${b.tier} ${b.bytes}", b.bytes in 3_000_000_000..4_500_000_000)
+            }
+        }
+    }
+
+    /** ⚠ The tier is what decides which HTP the archive runs on. */
+    @Test
+    fun everyArchiveCarriesItsOwnTier() {
+        // ⚠ `builtIn`, not `all`: this is about the archives WE publish, and an
+        // imported model has none. `all` also varies with what is on the disk
+        // of whoever is running the suite.
+        // ⚠ Nor a community conversion: hosted under its converter's own name, its arch read from the `soc` in its
+        // `swap_features.json` instead ([ModelCatalog.communityModels]).
+        for (spec in ModelCatalog.builtIn.filter { it.files.isEmpty() && !it.community }) {
+            for (b in spec.builds) {
+                assertTrue("${b.archive} is not ${b.tier}", b.archive.endsWith("${b.tier}.zip"))
+            }
+        }
+        assertEquals(ModelCatalog.TIER, ModelCatalog.builtIn.first().best!!.tier)
+    }
+
+    /**
+     * ⚠⚠ SDXL is published `_8gen3` only, which is a v75 context. The tier and
+     * the arch gate are two statements of ONE fact, and the pair drifting apart
+     * is how a 3.7 GB download reaches a phone that cannot load it.
+     */
+    @Test
+    fun theArchGateAgreesWithTheTier() {
+        for (spec in ModelCatalog.sdxlModels) {
+            assertEquals("${spec.id} builds", 1, spec.builds.size)
+            assertEquals("${spec.id} tier", ModelCatalog.SDXL_TIER, spec.best!!.tier)
+            assertEquals("${spec.id} minArch", 75, spec.best!!.minArch)
+        }
+        // ⚠ xororz publishes all three tiers; our own conversions have no
+        // `_8gen1` (DreamUI never built one), so an 8 Gen 1 takes `_min` there.
+        for (spec in ModelCatalog.sd15Models.filter { it.backendType == ModelCatalog.SD15_NPU }) {
+            assertEquals("${spec.id} tiers", 3, spec.builds.size)
+        }
+        // ⭐ Whatever the count, every build's gate states its tier's arch.
+        val archOf = mapOf(ModelCatalog.TIER to 73, ModelCatalog.TIER_8GEN1 to 69, ModelCatalog.TIER_MIN to 68)
+        for (spec in ModelCatalog.sd15Models) {
+            assertEquals("${spec.id} tier", ModelCatalog.TIER, spec.best!!.tier)
+            for (b in spec.builds) assertEquals("${b.archive} minArch", archOf[b.tier], b.minArch)
+        }
+    }
+
+    /**
+     * ⚠⚠ A build's extra archives carry resolution patches, and a patch is a
+     * byte-diff against ONE `unet.bin` — so an extra must be cut for the SAME
+     * tier as the build that fetches it. An `_8gen2` patch on a `_min` install
+     * reconstructs garbage and is still discovered and offered as a size.
+     */
+    @Test
+    fun anExtraArchiveBelongsToItsBuildsTier() {
+        for (spec in ModelCatalog.builtIn) {
+            for (b in spec.builds) {
+                for ((name, bytes) in b.extras) {
+                    assertTrue("$name is not ${b.tier}", name.endsWith("${b.tier}.zip"))
+                    assertTrue("$name has no size", bytes > 0)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun theDefaultModelIsInTheCatalog() {
+        assertTrue("V1_MODEL is not a catalog entry", ModelCatalog.byId(V1_MODEL) != null)
+        assertEquals("V1_MODEL should be listed first", V1_MODEL, ModelCatalog.all.first().id)
+    }
+
+    /**
+     * ⚠⚠ The extractor matches on BASENAME, and this is the check that it keeps
+     * the right things. Getting it wrong in the permissive direction unpacks a
+     * gigabyte of files nothing reads; in the strict direction it silently
+     * produces a model that is missing a file, which fails at first render.
+     */
+    @Test
+    fun theExtractorKeepsTheRequiredFilesAndThePatches() {
+        for (spec in ModelCatalog.all) {
+            for (name in spec.requiredFiles) {
+                assertTrue("${spec.id}: $name must be kept", spec.wanted(name))
+            }
+            // Every resolution patch, whatever it is called -- naming them
+            // individually is how four rectangular patches per archive came to
+            // be thrown away unnoticed in DreamUI.
+            for (p in listOf("768.patch", "512x768.patch", "1024x768.patch")) {
+                assertTrue("${spec.id}: $p must be kept", spec.wanted(p))
+            }
+            for (junk in listOf("README.md", "config.json", "unet.onnx", "")) {
+                assertFalse("${spec.id}: $junk must not be kept", spec.wanted(junk))
+            }
+        }
+    }
+
+    /**
+     * ⚠⚠ Swap v2's marker is OPTIONAL, so it is not a required file — and the first
+     * v2 download dropped it: installed, rendered, and refused every reference picture
+     * (2026-09-30). Every default Swap model must keep it.
+     */
+    @Test
+    fun swapModelsKeepTheIpAdapterMarker() {
+        val swap = ModelCatalog.all.filter { it.family == Family.SD15_SWAP }
+        assertTrue(swap.isNotEmpty())
+        for (spec in swap) {
+            assertTrue("${spec.id}: ${IpAdapter.TARGETS_FILE} must be kept", spec.wanted(IpAdapter.TARGETS_FILE))
+            assertTrue("${spec.id}: lora_targets.json must be kept", spec.wanted(TemplateLora.TARGETS_FILE))
+        }
+    }
+
+    /**
+     * ⚠⚠ The one that would fail silently. `clip_2.mnn.weight` is CLIP-G's
+     * EXTERNAL weight file -- MNN splits the bigger encoder into graph plus
+     * weights, and `clip_2.mnn` will not load without it. Drop it and the
+     * install passes every size check and dies at the first prompt.
+     */
+    @Test
+    fun sdxlKeepsBothEncodersAndClipGsExternalWeights() {
+        val spec = ModelCatalog.sdxlModels.first()
+        for (name in listOf(
+            "clip.mnn", "clip_2.mnn", "clip_2.mnn.weight",
+            "pos_emb.bin", "token_emb.bin", "pos_emb_2.bin", "token_emb_2.bin",
+        )) {
+            assertTrue("$name must be required", name in spec.requiredFiles)
+            assertTrue("$name must be extracted", spec.wanted(name))
+        }
+        // ⚠ And NOT SD1.5's single encoder, which is a different file entirely.
+        assertFalse("clip_v2.mnn" in spec.requiredFiles)
+    }
+
+    /** ⚠ img2img is a graph edge here, so the encoder is required in BOTH families. */
+    @Test
+    fun everyFamilyRequiresTheVaeEncoder() {
+        // ⚠ Not the DiT families: their engine carries its own VAE
+        // (`vae.safetensors`) and does image to image inside one call.
+        for (spec in ModelCatalog.all.filterNot { it.isDit }) {
+            assertTrue(spec.id, "vae_encoder.bin" in spec.requiredFiles)
+        }
+    }
+
+    /**
+     * ⭐ SDXL lives in a DIFFERENT repository. Assuming one base URL is how a
+     * second family produces 404s that read as network trouble.
+     */
+    @Test
+    fun eachFamilyFetchesFromItsOwnRepository() {
+        // ⚠ xororz's SD 1.5 checkpoints. The 9-channel inpaint entry is OURS
+        // (DreamUI's conversion) and lives in its own repository — asserted
+        // below, so it cannot drift onto his URL and 404.
+        for (spec in ModelCatalog.sd15Models.filter { it.backendType == ModelCatalog.SD15_NPU }) {
+            for (b in spec.builds) {
+                assertTrue(spec.url(b), spec.url(b).startsWith(ModelCatalog.SD15_BASE_URL))
+            }
+        }
+        for (spec in ModelCatalog.sd15Models.filter { it.backendType == ModelCatalog.SD15_NPU_INPAINT }) {
+            for (b in spec.builds) {
+                assertTrue(spec.url(b), !spec.url(b).startsWith(ModelCatalog.SD15_BASE_URL))
+            }
+        }
+        for (spec in ModelCatalog.sdxlModels) {
+            for (b in spec.builds) {
+                assertTrue(spec.url(b), spec.url(b).startsWith(ModelCatalog.SDXL_BASE_URL))
+            }
+        }
+    }
+
+    /**
+     * ⚠⚠ 1024, and `--lowram`, on every SDXL entry. The resolution is not a
+     * default that can be overridden: the backend forces 1024 inside its request
+     * parser for `--type sdxl` whatever the client sends, so a 512 here renders
+     * 1024 and reports success. And `--lowram` is not tuning -- a ~3x UNet at
+     * 1024 does not fit beside its VAE and two encoders.
+     */
+    @Test
+    fun everySdxlEntryIs1024AndLowram() {
+        for (spec in ModelCatalog.sdxlModels) {
+            assertEquals("${spec.id} family", Family.SDXL, spec.family)
+            assertEquals("${spec.id} --type", "sdxl", spec.backendType)
+            assertEquals("${spec.id} native", Res(1024, 1024), spec.native)
+            assertTrue("${spec.id} needs --lowram", spec.lowram)
+        }
+    }
+
+    // ---- family, runtime, backend type, resolution ------------------------
+
+    /**
+     * Every SD 1.5 entry is still exactly that: one size, and a `--type` from
+     * the SD 1.5 layout — plain, or with the 9-channel inpainting `conv_in`
+     * (2026-09-19), which the backend patches and serves the same way.
+     */
+    @Test
+    fun everySd15EntryIsSd15NpuAt512() {
+        for (spec in ModelCatalog.sd15Models) {
+            assertEquals("${spec.id} family", Family.SD15, spec.family)
+            assertEquals("${spec.id} runtime", Runtime.NPU, spec.runtime)
+            assertTrue(
+                "${spec.id} --type ${spec.backendType}",
+                spec.backendType in listOf(ModelCatalog.SD15_NPU, ModelCatalog.SD15_NPU_INPAINT),
+            )
+            assertEquals("${spec.id} native size", Res(512, 512), spec.native)
+            assertFalse("${spec.id} must not ask for --lowram", spec.lowram)
+        }
+    }
+
+    /**
+     * ⚠ Every family in the catalogue must be one the BACKEND knows, and one
+     * whose files we actually list. A family added as data with no required-file
+     * list is the failure that reports "not installed" forever.
+     */
+    @Test
+    fun everyEntryBelongsToAFamilyTheBackendAndTheInstallerBothKnow() {
+        for (spec in ModelCatalog.all) {
+            assertTrue(
+                "${spec.id} --type ${spec.backendType}",
+                // ⚠ `anima` since 2026-09-16 — `main.cpp` has built it all along.
+                // ⚠ `sd15npu_inpaint` since 2026-09-19, the same way.
+                // ⚠ `klein`/`zimage` since 2026-09-19 (backend-patches/007).
+                // ⚠ `qwen21` since 2026-09-27 (backend-patches/013).
+                // ⚠ `krea2` since 2026-09-28 (backend-patches/014).
+                // ⚠ `iris` since 2026-10-16 (backend-patches/035).
+                spec.backendType in listOf("sd15npu", "sd15npu_inpaint", "sdxl", "anima", "klein", "zimage", "qwen21", "krea2", "iris"),
+            )
+            assertTrue("${spec.id} has no required files", spec.requiredFiles.isNotEmpty())
+            assertTrue("${spec.id} has no resolution", spec.resolutions.isNotEmpty())
+        }
+    }
+
+    /**
+     * ⭐⭐ The launch and every `contextKey()` read ONE function, so they cannot
+     * disagree. ⚠ The mismatch they would produce is silent: `sdxl` forces 1024
+     * inside the backend's request parser whatever the client sends.
+     */
+    @Test
+    fun theBackendTypeComesFromTheCatalogEntry() {
+        assertEquals(ModelCatalog.SD15_NPU, ModelCatalog.backendTypeOf(V1_MODEL))
+        assertEquals(Res(512, 512), ModelCatalog.resolutionOf(V1_MODEL))
+    }
+
+    /**
+     * ⚠ An id with no catalogue entry keeps today's answer rather than throwing:
+     * a model directory pushed by hand over adb is a real developer path, and
+     * the tests and harness fixtures use ids like `"m"`.
+     */
+    @Test
+    fun anUncataloguedIdFallsBackToTheSd15Default() {
+        assertEquals(ModelCatalog.SD15_NPU, ModelCatalog.backendTypeOf("pushed-by-hand"))
+        assertEquals(Res(512, 512), ModelCatalog.resolutionOf("pushed-by-hand"))
+    }
+
+    // ---- which build a given phone gets ----------------------------------
+
+    private fun caps(arch: Int, vtcm: Int, ram: Long = 0L) =
+        DeviceProbe.Caps(arch = arch, vtcmMb = vtcm, measured = true, soc = "TEST", ramBytes = ram)
+
+    /**
+     * ⭐ Krea 2 Turbo on the 12 GB class and up (2026-10-14; it was 16 GB only), with a 4 GiB budget
+     * below the 16 GB class; Klein 9B on any 8 Elite. The `totalMem` figures are the classes' real
+     * ones ([Prefs.RAM_12GB_CLASS_BYTES], [Prefs.LOWRAM_BELOW_BYTES]).
+     * ⚠ Unknown RAM (0) is OFFERED, never hidden — the [DeviceProbe.Caps.known] rule.
+     */
+    @Test
+    fun krea2NeedsATwelveGigabytePhoneAndABudgetOnIt() {
+        val krea = ModelCatalog.byId("krea2_turbo")!!
+        val klein9 = ModelCatalog.byId("flux2_klein_9b")!!
+        val eight = 7_650_000L * 1024     // an 8 GB phone's MemTotal
+        val twelve = 11_379_968L * 1024   // this S25 Ultra's MemTotal
+        val sixteen = 15L shl 30
+        assertTrue(krea.buildFor(caps(79, 8, twelve)) != null)
+        assertTrue(krea.buildFor(caps(79, 8, sixteen)) != null)
+        assertTrue(krea.buildFor(caps(79, 8, 0L)) != null)
+        assertEquals(null, krea.buildFor(caps(79, 8, eight)))
+        // ⚠ The row names the class it needs: 12 GB, not the old 16.
+        assertEquals(Prefs.RAM_12GB_CLASS_BYTES, krea.ramNeeded(caps(79, 8, eight)))
+        assertEquals(12, Prefs.ramClassGb(krea.ramNeeded(caps(79, 8, eight))))
+        assertEquals(16, Prefs.ramClassGb(Prefs.LOWRAM_BELOW_BYTES))
+        // ⚠ An 8 Gen 2 is refused by the chip (no RAM figure): Krea 2 faults the v73 skel.
+        assertEquals(0L, krea.ramNeeded(caps(73, 8, eight)))
+        assertTrue(klein9.buildFor(caps(79, 8, twelve)) != null)
+        // ⭐ The budget from what is FREE at launch on the 12 GB class (the S25, 2026-10-17: 5.36 GB free
+        // at 4 GiB fell to 1.82): whole when it fits, 5 or 4 when not; none on 16 GB or unknown RAM.
+        assertEquals("4", BackendProcess.kreaBudget(krea, twelve, 5_360_000_000L))
+        assertEquals("5", BackendProcess.kreaBudget(krea, twelve, 6_500_000_000L))
+        assertEquals(null, BackendProcess.kreaBudget(krea, twelve, 7_500_000_000L))
+        assertEquals("4", BackendProcess.kreaBudget(krea, twelve, 0L))
+        assertEquals(null, BackendProcess.kreaBudget(krea, sixteen, 1_000_000_000L))
+        assertEquals(null, BackendProcess.kreaBudget(krea, 0L, 0L))
+        assertEquals(null, BackendProcess.kreaBudget(klein9, twelve, 0L))
+        // ⭐ Z-Image Turbo too (a 12 GB realme reaped at 1024², Saved #7193), on `all=disk` so the budget evicts;
+        // never on a 16 GB phone, and never another family.
+        val zimage = ModelCatalog.byId("z_image_turbo")!!
+        assertEquals("4", BackendProcess.kreaBudget(zimage, twelve, 4_627_000_000L))
+        assertEquals(null, BackendProcess.kreaBudget(zimage, sixteen, 1_000_000_000L))
+        assertTrue(BackendProcess.streamsLikeKrea(zimage, twelve))
+        assertEquals(false, BackendProcess.streamsLikeKrea(zimage, sixteen))
+        assertEquals(false, BackendProcess.streamsLikeKrea(klein9, twelve))
+        // ⭐ Ideogram 4 streams the same way (the app was reaped loading it whole on the S25, 2026-10-18).
+        val ideo = ModelCatalog.byId("ideogram_4_turbo")!!
+        assertEquals("4", BackendProcess.kreaBudget(ideo, twelve, 6_000_000_000L))
+        assertEquals(null, BackendProcess.kreaBudget(ideo, sixteen, 6_000_000_000L))
+        // ⭐ Fibo 2.0 Edit too (reaped loading its 6.3 GB whole on the S25, 2026-10-27).
+        val fibo = ModelCatalog.byId("fibo2_edit_turbo")!!
+        assertEquals("4", BackendProcess.kreaBudget(fibo, twelve, 6_000_000_000L))
+        assertEquals(null, BackendProcess.kreaBudget(fibo, sixteen, 6_000_000_000L))
+        assertEquals(null, ideo.buildFor(caps(79, 8, eight)))
+        // ⭐ GitHub #30: Klein 9B gets the smaller 8 Gen 3 budget; every other DiT keeps 2.75.
+        assertEquals("2.25", BackendProcess.lowArchDitBudget(klein9, 75))
+        assertEquals("2.75", BackendProcess.lowArchDitBudget(krea, 75))
+        assertEquals("2.75", BackendProcess.lowArchDitBudget(ModelCatalog.byId("flux2_klein_4b"), 75))
+        // ⭐ A real 8 Gen 2 maps ~2.5 GB per session: each budget 0.75 GiB smaller (an SM8550 failed at 2.5).
+        assertEquals("1.5", BackendProcess.lowArchDitBudget(klein9, 73))
+        assertEquals("2.0", BackendProcess.lowArchDitBudget(ModelCatalog.byId("z_image_turbo"), 73))
+        // ⭐ SWIGLU stays on the CPU at v73 only: its 16-bit DMA strides fault on Klein's fused rows.
+        assertEquals("CONV_2D_UPSCALE|CONCAT", BackendProcess.lowArchOpFilter(75))
+        assertEquals("CONV_2D_UPSCALE|CONCAT|SWIGLU", BackendProcess.lowArchOpFilter(73))
+    }
+
+    /** ⭐ MOSS-Image's own encoder (24 Q5_K `ssm_out` blocks, measured) passes the NPU-type check; another size does not. */
+    @Test
+    fun theCataloguesOwnEncoderSkipsTheTypeCheck() {
+        val moss = ModelCatalog.byId("moss_image")!!
+        assertEquals(true, BackendProcess.shipsThisEncoder(moss, 5_379_417_312L))
+        assertEquals(false, BackendProcess.shipsThisEncoder(moss, 5_680_522_464L))
+        assertEquals("dmd8.safetensors", moss.ownLora)
+        assertEquals(Family.MOSS, moss.family)
+        // ⭐ An import (no files of its own) with its own copy of that encoder passes too (a tester's Moody, 1.6.214).
+        val import = moss.copy(id = "moody", files = emptyList(), isCustom = true)
+        assertEquals(true, BackendProcess.shipsThisEncoder(import, 5_379_417_312L))
+        assertEquals(false, BackendProcess.shipsThisEncoder(import, 5_680_522_464L))
+    }
+
+    /**
+     * ⭐ MOSS Base borrows SFT's encoder, VAE and tokenizer, never SFT's DiT or LoRA: those have the same names and
+     * sizes but other urls (Saved #6990: Base read installed at 0 MB with SFT present, and could not start).
+     */
+    @Test
+    fun mossBaseBorrowsOnlyWhatSftShares() {
+        val base = ModelCatalog.byId("moss_image_base")!!
+        val sft = ModelCatalog.byId("moss_image")!!
+        // ⚠ Sparse, and deleted whatever happens: a plain setLength writes SFT's ~10 GB of zeros on Windows, and a
+        // failed run left 8 GB in Temp (2026-10-22, "not enough space on the disk").
+        val root = kotlin.io.path.createTempDirectory().toFile()
+        try {
+            val own = java.io.File(root, base.id).apply { mkdirs() }
+            val donor = java.io.File(root, sft.id).apply { mkdirs() }
+            sft.files.forEach { f -> sparseFile(java.io.File(donor, f.name), f.bytes) }
+            val borrowed = base.files.filter { base.borrows(own, it) }.map { it.name }
+            assertEquals(listOf("llm.gguf", "vae.safetensors", "tokenizer.json"), borrowed)
+            // ⚠ The trap: SFT's DiT and LoRA are exactly Base's sizes.
+            assertEquals(base.files.first { it.name == "dit.gguf" }.bytes, sft.files.first { it.name == "dit.gguf" }.bytes)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    /** ⭐ MOSS Turbo: the LoRA is baked into its DiT, so no run-time LoRA; SFT's three parts borrowed, as Base's. */
+    @Test
+    fun mossTurboHasNoOwnLoraAndBorrowsSftsParts() {
+        val turbo = ModelCatalog.byId("moss_image_turbo")!!
+        val sft = ModelCatalog.byId("moss_image")!!
+        assertEquals(null, turbo.ownLora)
+        assertEquals(Family.MOSS, turbo.family)
+        val root = kotlin.io.path.createTempDirectory().toFile()
+        try {
+            val own = java.io.File(root, turbo.id).apply { mkdirs() }
+            val donor = java.io.File(root, sft.id).apply { mkdirs() }
+            sft.files.forEach { f -> sparseFile(java.io.File(donor, f.name), f.bytes) }
+            assertEquals(listOf("llm.gguf", "vae.safetensors", "tokenizer.json"), turbo.files.filter { turbo.borrows(own, it) }.map { it.name })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    /** ⭐ Ideogram 4: the MOSS shape (own encoder, own LoRA on every render, a `krea2` launch), on the 8 Elite only. */
+    @Test
+    fun ideogramCarriesItsTurboLoraAndOwnEncoder() {
+        val ideo = ModelCatalog.byId("ideogram_4_turbo")!!
+        assertEquals(Family.IDEOGRAM, ideo.family)
+        assertEquals("turbotime.safetensors", ideo.ownLora)
+        assertEquals(ModelCatalog.KREA2, ideo.backendType)
+        assertEquals(true, ideo.ownDitParts)
+        assertEquals(true, BackendProcess.shipsThisEncoder(ideo, 4_787_333_984L))
+        assertEquals(listOf("dit.gguf", "llm.gguf", "vae.safetensors", "tokenizer.json", "turbotime.safetensors"), ideo.requiredFiles)
+        assertEquals(ModelCatalog.DIT_MIN_ARCH, ideo.builds.single().minArch)
+        assertEquals(8, ideo.steps)
+    }
+
+    /**
+     * ⭐ FLUX.3 Image Klein: Krea 2's encoder and tokenizer from the same urls (the same bytes), Klein's VAE from
+     * Ideogram's url, a `krea2` launch, 16 steps at CFG 1, the 8 Elite only until a lower chip is measured.
+     */
+    @Test
+    fun flux3KleinUsesKreaEncoderAndKleinVae() {
+        val f3 = ModelCatalog.byId("flux3_klein")!!
+        assertEquals(Family.FLUX3, f3.family)
+        assertEquals(ModelCatalog.KREA2, f3.backendType)
+        assertEquals(true, f3.ownDitParts)
+        assertEquals(null, f3.ownLora)
+        assertEquals(listOf("dit.gguf", "llm.gguf", "vae.safetensors", "tokenizer.json"), f3.requiredFiles)
+        // ⭐ v75 since 1.6.249: the engine carries `dit/055`'s cut points, so the 8 Gen 3's 2.75 GiB streams it.
+        assertEquals(ModelCatalog.DIT_GGML_MIN_ARCH, f3.builds.single().minArch)
+        assertEquals(16, f3.steps)
+        val krea = ModelCatalog.byId("krea2_turbo")!!
+        val ideo = ModelCatalog.byId("ideogram_4_turbo")!!
+        fun url(spec: ModelSpec, name: String) = spec.files.single { it.name == name }.url
+        assertEquals(url(krea, "llm.gguf"), url(f3, "llm.gguf"))
+        assertEquals(url(krea, "tokenizer.json"), url(f3, "tokenizer.json"))
+        assertEquals(url(ideo, "vae.safetensors"), url(f3, "vae.safetensors"))
+        assertEquals(true, BackendProcess.shipsThisEncoder(f3, 2_375_774_112L))
+        assertEquals("krea2_turbo", f3.partsFrom)
+    }
+
+    /** ⭐ Only a chip KNOWN to be below v73 gets the CPU encoder: an unrecognised one reads as the v68 floor. */
+    @Test
+    fun onlyAKnownOldChipRunsTheDitOnTheCpu() {
+        assertEquals(true, BackendProcess.ditOnCpu(DeviceProbe.Caps(69, 8, measured = false, soc = "SM8450")))
+        assertEquals(false, BackendProcess.ditOnCpu(DeviceProbe.Caps(73, 8, measured = false, soc = "SM8550")))
+        assertEquals(false, BackendProcess.ditOnCpu(DeviceProbe.Caps(DeviceProbe.FLOOR_ARCH, 2, measured = false, soc = "SM9999")))
+        assertEquals(true, BackendProcess.ditOnCpu(DeviceProbe.Caps(DeviceProbe.FLOOR_ARCH, 2, measured = true, soc = "SM9999")))
+    }
+
+    /** ⭐ GitHub #52: the engine is told the table's arch, so a failed DSP query cannot fall back to v73. */
+    @Test
+    fun theEngineIsToldTheArchTheChipTableKnows() {
+        fun caps(soc: String, arch: Int) = DeviceProbe.Caps(arch, 8, measured = false, soc = soc)
+        assertEquals("75", BackendProcess.ditArchEnv(caps("SM8650", 75)))
+        assertEquals("79", BackendProcess.ditArchEnv(caps("SM8750", 79)))
+        assertEquals("73", BackendProcess.ditArchEnv(caps("SM8635", 73)))
+        // ⭐ v69 has our skel (dit/034), and the engine would floor a queried v69 at v73 without being told.
+        assertEquals("69", BackendProcess.ditArchEnv(caps("SM8450", 69)))
+        assertEquals("69", BackendProcess.ditArchEnv(caps("SM8475", 69)))
+        // ⚠ No skel for v68.
+        assertEquals(null, BackendProcess.ditArchEnv(caps("SM8350", 68)))
+        // ⚠ A chip the table does not name keeps the engine's own query.
+        assertEquals(null, BackendProcess.ditArchEnv(caps("SM9999", 75)))
+        // ⭐ The 8 Elite Gen 6 is not in the table, and the engine caps a QUERIED arch at v81: told 85, measured or
+        // named by its part number, it opens the v85 skel (dit/033, local-dream alpha.6's change).
+        assertEquals("85", BackendProcess.ditArchEnv(caps("SM8975", 85)))
+        assertEquals("85", BackendProcess.ditArchEnv(DeviceProbe.Caps(85, 12, measured = true, soc = "SM8975")))
+        assertEquals("75", BackendProcess.ditArchEnv(DeviceProbe.Caps(75, 8, measured = true, soc = "SM9999")))
+    }
+
+    /**
+     * ⭐ 8 Gen 3 (v75) DiT, alpha (`docs/DIT.md` §9e): the quantised builds only. FP8 stays v79 —
+     * below it the engine runs `F8_E4M3` matmuls on the CPU — and Qwen hands a v75 phone its
+     * Q4_0 build whatever its RAM.
+     */
+    @Test
+    fun anEightGenThreeGetsTheQuantisedDitBuildsOnly() {
+        val sixteen = 15L shl 30
+        val v75 = caps(75, 8, sixteen)
+        assertTrue(ModelCatalog.byId("flux2_klein_9b")!!.buildFor(v75) != null)
+        assertTrue(ModelCatalog.byId("krea2_turbo")!!.buildFor(v75) != null)
+        // ⭐ Klein 4B: its Q8_0 GGUF on v75, the FP8 on v79 (two builds, Qwen's way).
+        val klein4 = ModelCatalog.byId("flux2_klein_4b")!!
+        assertTrue(klein4.buildFor(v75)!!.files.any { it.name == "dit.gguf" })
+        assertTrue(klein4.buildFor(caps(79, 8, sixteen))!!.files.any { it.name == "dit.safetensors" })
+        // ⭐ Z-Image: leejet's Q4_0 GGUF on v75 since engine dit/025 (docs/DIT.md §2e), Kijai's FP8 on v79.
+        val zimage = ModelCatalog.byId("z_image_turbo")!!
+        assertTrue(zimage.buildFor(v75)!!.files.any { it.name == "dit.gguf" })
+        assertTrue(zimage.buildFor(caps(79, 8, sixteen))!!.files.any { it.name == "dit.safetensors" })
+        val qwen = ModelCatalog.byId("qwen_image_2_1")!!
+        assertTrue(qwen.buildFor(v75)!!.files.any { it.name == "dit.gguf" })
+        assertTrue(qwen.buildFor(caps(79, 8, sixteen))!!.files.any { it.name == "dit.safetensors" })
+        // ⭐ v73 (8 Gen 2, 8s Gen 4), alpha: ONLY what rendered right on the S25 forced to the v73 skel
+        // ([ModelCatalog.DIT_V73_MIN_ARCH], `docs/DEVICES.md` §3b). The quantised build, never FP8.
+        val v73 = caps(73, 8, sixteen)
+        assertTrue(zimage.buildFor(v73)!!.files.any { it.name == "dit.gguf" })
+        for (id in listOf("flux2_klein_9b", "anima_turbo_1_1", "iris_3b_turbo")) {
+            assertTrue("$id on v73", ModelCatalog.byId(id)!!.buildFor(v73) != null)
+        }
+        // ⭐ v69 (8 Gen 1), alpha: only what rendered right on the S25 forced to the v69 skel (`docs/DEVICES.md` §3c).
+        val v69 = caps(69, 8, sixteen)
+        val onV69 = ModelCatalog.all.filter { it.isDit && it.buildFor(v69) != null }.map { it.id }.toSet()
+        assertEquals(setOf("anima_turbo_1_1", "anima_29b_preview"), onV69)
+        // ⚠ Not run right at v73 (or, Klein 4B, the user's call): they keep the v75 floor.
+        for (id in listOf("flux2_klein_4b", "qwen_image_2_1", "qwen_image_2_1_turbo", "krea2_turbo", "wan22_ti2v_turbo")) {
+            assertEquals("$id must not open on v73", null, ModelCatalog.byId(id)!!.buildFor(v73))
+        }
+        assertEquals(75, ModelCatalog.DIT_GGML_MIN_ARCH)
+        // ⭐ The 8s Gen 3 is v73 with less VTCM: the v73 builds take it as alpha (2026-10-17, ggml sizes its work
+        // to the session's VTCM); a v75 build still needs 8 MB.
+        assertEquals(73, ModelCatalog.byId("flux2_klein_9b")!!.buildFor(caps(73, 2, sixteen))?.minArch)
+        assertEquals(null, ModelCatalog.byId("krea2_turbo")!!.buildFor(caps(75, 2, sixteen)))
+        assertEquals(null, ModelCatalog.byId("flux2_klein_9b")!!.buildFor(caps(69, 8, sixteen)))
+    }
+
+    /**
+     * ⭐ Qwen Image 2.1: FP8 on the 16 GB class, Q4_0 below it — never refused.
+     * The FP8 DiT got the foreground app lmkd-killed on the 12 GB S25 Ultra
+     * (2026-10-06, `docs/DIT.md` §9b). ⚠ Unknown RAM is offered the BEST build.
+     */
+    @Test
+    fun qwenShipsFp8OnlyToSixteenGigabytePhones() {
+        val qwen = ModelCatalog.byId("qwen_image_2_1")!!
+        val twelve = 11_379_968L * 1024
+        val sixteen = 15L shl 30
+        fun dit(ram: Long) = qwen.buildFor(caps(79, 8, ram))!!.files.first { it.name.startsWith("dit.") }
+        assertEquals(ModelCatalog.QWEN21_Q4, dit(twelve))
+        assertEquals(ModelCatalog.QWEN21_FP8, dit(sixteen))
+        assertEquals(ModelCatalog.QWEN21_FP8, dit(0L))
+        assertEquals(0L, qwen.ramNeeded(caps(79, 8, twelve)))
+        // ⚠ Each build's size is its own files' sum — the installer's only integrity check.
+        for (b in qwen.builds) assertEquals(b.files.sumOf { it.bytes }, b.bytes)
+    }
+
+    /**
+     * ⭐ Qwen Image 2.1 Turbo: a second entry beside the base (2026-10-14), 8 steps, one Q4_0 build for
+     * every phone from v75, the base's parts in its OWN directory (the backend reads no other).
+     */
+    @Test
+    fun qwenTurboIsASecondEntryWithTheBasesParts() {
+        val turbo = ModelCatalog.byId("qwen_image_2_1_turbo")!!
+        assertEquals(Family.QWEN21, turbo.family)
+        assertEquals(8, turbo.steps)
+        assertTrue(turbo.ownDitParts)
+        for (ram in listOf(11_379_968L * 1024, 15L shl 30, 0L)) for (arch in listOf(75, 79)) {
+            val files = turbo.buildFor(caps(arch, 8, ram))!!.files.ifEmpty { turbo.files }
+            assertEquals(ModelCatalog.QWEN21_TURBO_Q4, files.first { it.name.startsWith("dit.") })
+        }
+        assertEquals(ModelCatalog.QWEN21_SHARED, turbo.files.drop(1))
+        assertEquals(ModelCatalog.QWEN21_REQUIRED.sorted(), turbo.requiredFiles.sorted())
+        assertEquals(turbo.files.sumOf { it.bytes }, turbo.builds.single().bytes)
+        // ⚠ The base keeps its id and its two builds: flows and installs made before point at it.
+        assertEquals(2, ModelCatalog.byId("qwen_image_2_1")!!.builds.size)
+    }
+
+    /**
+     * ⭐ Klein 9B STARTS at 768² (5 of 5 there, 3 of 4 at 1024² on 12 GB) —
+     * and ⚠ its context key does not move with it: [ModelSpec.native] is
+     * still the DiT constant every DiT process is keyed on.
+     */
+    @Test
+    fun klein9bStartsAt768WithoutMovingItsContextKey() {
+        val klein9 = ModelCatalog.byId("flux2_klein_9b")!!
+        assertEquals(Res(768, 768), klein9.bornAt)
+        assertEquals(ModelCatalog.DIT_RES, klein9.native)
+        assertEquals(ModelCatalog.DIT_RES, ModelCatalog.byId("flux2_klein_4b")!!.bornAt)
+    }
+
+    /**
+     * ⭐⭐ AbsoluteReality Inpaint: the right build per phone, and the portrait
+     * patch ONLY with the build it was cut against. A `_min` install that got
+     * the `_8gen2` patch would offer 512×768 and render garbage at it; with no
+     * patch on disk, `availableResolutions` offers 512 alone.
+     */
+    @Test
+    fun theInpaintModelServesMinWithoutThePortraitPatch() {
+        val spec = ModelCatalog.byId("absreality_inpaint")!!
+        // 8 Elite / 8 Gen 3 / 8 Gen 2: the fast build, with 512×768.
+        for (arch in listOf(79, 75, 73)) {
+            val b = spec.buildFor(caps(arch, 8))!!
+            assertEquals("v$arch", ModelCatalog.TIER, b.tier)
+            assertEquals("v$arch patch", 1, b.extras.size)
+        }
+        // 8 Gen 1 (no `_8gen1` of ours), 8s Gen 3 (v73, small VTCM), 888: `_min`, 512 only.
+        for ((arch, vtcm) in listOf(69 to 8, 73 to 2, 68 to 2)) {
+            val b = spec.buildFor(caps(arch, vtcm))!!
+            assertEquals("v$arch/${vtcm}MB", ModelCatalog.TIER_MIN, b.tier)
+            assertTrue("v$arch/${vtcm}MB must fetch no patch", b.extras.isEmpty())
+        }
+    }
+
+    /**
+     * ⭐⭐ The whole point of the tiers. ⚠ Contexts run FORWARD ONLY, so an
+     * 8 Gen 1 (v69, 8 MB) must NOT be handed the v73 `_8gen2` build: it would
+     * fail at load after a gigabyte, not run slowly.
+     */
+    @Test
+    fun eachHtpGetsTheBestBuildItCanActuallyLoad() {
+        val m = ModelCatalog.byId(V1_MODEL)!!
+        assertEquals(ModelCatalog.TIER, m.buildFor(caps(79, 8))!!.tier)   // 8 Elite
+        assertEquals(ModelCatalog.TIER, m.buildFor(caps(73, 8))!!.tier)   // 8 Gen 2
+        assertEquals(ModelCatalog.TIER_8GEN1, m.buildFor(caps(69, 8))!!.tier) // 8 Gen 1
+        assertEquals(ModelCatalog.TIER_MIN, m.buildFor(caps(68, 2))!!.tier)   // 888
+    }
+
+    /**
+     * ⚠⚠ VTCM is a gate of its own and is NOT implied by the arch. The 8s Gen 3
+     * is newer than an 8 Gen 2, reports a v73 HTP, and has under 8 MB — so it
+     * takes `_min` despite an arch that would otherwise allow `_8gen2`.
+     */
+    @Test
+    fun aBigArchWithSmallVtcmStillFallsToMin() {
+        val m = ModelCatalog.byId(V1_MODEL)!!
+        assertEquals(ModelCatalog.TIER_MIN, m.buildFor(caps(73, 2))!!.tier)
+    }
+
+    /**
+     * ⚠⚠ SDXL publishes `_8gen3` only, so below v75 the honest answer is NONE.
+     * A fallback here would spend 3.5 GB on a file the chip rejects at load.
+     */
+    @Test
+    fun sdxlHasNothingToOfferAnOlderHtp() {
+        val x = ModelCatalog.sdxlModels.first()
+        assertNull(x.buildFor(caps(73, 8)))
+        assertNull(x.buildFor(caps(69, 8)))
+        assertNotNull(x.buildFor(caps(75, 8)))
+        assertNotNull(x.buildFor(caps(79, 8)))
+    }
+
+    /**
+     * ⚠ Every arch a build can demand must be one the APK ships libraries for,
+     * or the device fails NPU init before the model is even reached — with an
+     * error naming neither.
+     */
+    @Test
+    fun everyBuildsArchIsOneWeStageLibrariesFor() {
+        for (spec in ModelCatalog.all) {
+            for (b in spec.builds) {
+                assertTrue(
+                    "${spec.id} ${b.tier} wants v${b.minArch}, not staged",
+                    b.minArch in DeviceProbe.STAGED_ARCHES,
+                )
+            }
+        }
+    }
+
+    /** ⚠ Best-first is [ModelSpec.buildFor]'s contract, not a nicety. */
+    @Test
+    fun buildsAreOrderedBestFirst() {
+        for (spec in ModelCatalog.all) {
+            val arches = spec.builds.map { it.minArch }
+            assertEquals("${spec.id} builds out of order", arches.sortedDescending(), arches)
+        }
+    }
+
+    /** [ModelSpec.native] is the FIRST resolution, not the smallest or the last. */
+    @Test
+    fun nativeIsTheFirstResolutionListed() {
+        val spec = ModelCatalog.all.first().copy(
+            resolutions = listOf(Res(1024, 1024), Res(512, 512)),
+        )
+        assertEquals(Res(1024, 1024), spec.native)
+    }
+
+    // ---- the general-purpose prompts ------------------------------------
+
+    /**
+     * ⭐⭐⭐ **No checkpoint opens on a blank prompt box.** That is the whole
+     * point of [Family.prompt], and the case it was added for is the one with
+     * no catalogue entry at all — an IMPORTED model, whose own text is empty
+     * by design ([CustomModels]).
+     */
+    @Test
+    fun everyCheckpointHasSomethingToStartFrom() {
+        for (spec in ModelCatalog.all + ModelCatalog.all.first().copy(prompt = "", negative = "")) {
+            assertTrue("${spec.id} opens on nothing", spec.starterPrompt.isNotBlank())
+            // ⚠ Except a DiT model: distilled to cfg 1, it never reads a
+            // negative, and upstream ships both with an empty one.
+            if (!spec.isDit) assertTrue("${spec.id} has no negative", spec.starterNegative.isNotBlank())
+        }
+    }
+
+    /**
+     * ⚠⚠ A checkpoint's OWN text still wins. The family default is a fallback,
+     * not a replacement — the upstream-verbatim rule of 2026-09-12 stands.
+     */
+    @Test
+    fun aCheckpointsOwnPromptBeatsTheFamilyDefault() {
+        val anime = ModelCatalog.byId("anythingv5")!!
+        assertEquals(anime.prompt, anime.starterPrompt)
+        assertTrue("it must not be the generic one", anime.starterPrompt != Family.SD15.prompt)
+    }
+
+    /**
+     * ⚠⚠⚠ **No SUBJECT in a general-purpose prompt**, which is the property
+     * that makes it general. The SDXL default used to append "a majestic cat
+     * sitting on a windowsill at sunset," to eight checkpoints whose authors
+     * said nothing — a cat the user had to delete before typing.
+     *
+     * ⚠ Tested as "no `a <noun>` phrase", which is crude and is the shape every
+     * subject in this file happens to have; it is a tripwire for someone
+     * pasting a demo prompt in here, not a grammar.
+     */
+    @Test
+    fun theFamilyDefaultsNameNoSubject() {
+        for (f in Family.entries) {
+            for (text in listOf(f.prompt, f.negative)) {
+                assertTrue(
+                    "${f.name} names a subject: $text",
+                    Regex("\ba (cat|girl|man|woman|dog|photo of)\b").find(text) == null,
+                )
+            }
+        }
+    }
+
+    /**
+     * ⭐ Anima is catalogued with its AUTHOR's recipe — read off all nine
+     * archives' `config.json` on 2026-09-16 — and only the samplers its backend
+     * tells apart. A turbo checkpoint on 20 steps / cfg 7.5 / `dpm` burns.
+     */
+    @Test
+    fun animaCarriesItsPublishedRecipe() {
+        assertEquals(9, ModelCatalog.animaModels.size)
+        for (spec in ModelCatalog.animaModels) {
+            assertEquals(Family.ANIMA, spec.family)
+            assertEquals("anima", spec.backendType)
+            assertEquals(Triple("euler", 10, 1.0), Triple(spec.scheduler, spec.steps, spec.cfg))
+            assertEquals(75, spec.minHtpArch)
+            assertTrue(spec.lowram)
+            assertTrue("unet_part1.bin" in spec.requiredFiles)
+            assertTrue(spec.url(spec.best!!).startsWith("https://huggingface.co/xororz/anima-qnn/"))
+        }
+        assertEquals(listOf("euler", "euler_a"), ModelCatalog.schedulersFor(Family.ANIMA))
+        assertEquals("anima.sample", SdSampler.typeFor(Family.ANIMA, inpaint = false))
+        assertEquals("anima.inpaint", SdSampler.typeFor(Family.ANIMA, inpaint = true))
+    }
+
+    @Test
+    fun communityConversionsAreV75BuildsWithTheFilesTheirKindNeeds() {
+        // ⭐ npuforge on an 8 Gen 3 (SM8650): v75 contexts, so the 8 Gen 3 and later; read from each zip by range.
+        val c = ModelCatalog.communityModels
+        assertEquals(4, c.size)
+        assertTrue(c.all { it.community && it.minHtpArch == 75 && it.builds.single().minArch == 75 })
+        assertTrue(c.all { it.baseUrl.startsWith("https://huggingface.co/JIONing/") })
+        assertTrue(c.all { it in ModelCatalog.builtIn })
+        val swaps = c.filter { it.family == Family.SDXL_SWAP }
+        assertEquals(2, swaps.size)
+        assertTrue(swaps.all { it.requiredFiles == ModelCatalog.SDXL_SWAP_V2_REQUIRED && it.promptTokens == 462 })
+        assertTrue(swaps.all { ModelFeatures.IP_ADAPTER in it.featureSet && ModelFeatures.CONTROLNET in it.featureSet })
+        // ⚠ The DMD two are PLAIN SDXL at 231 tokens: without `qnn_context.txt` they would be read as 77.
+        val dmd = c.filter { it.family == Family.SDXL }
+        assertEquals(2, dmd.size)
+        assertTrue(dmd.all { CustomModels.LONG_CONTEXT_FILE in it.requiredFiles && it.promptTokens == 231 })
+        assertTrue(dmd.all { it.scheduler == "lcm" && it.steps == 8 && it.cfg == 1.0 })
+        // ⚠ The control: ours are not community.
+        assertTrue(ModelCatalog.sdxlSwapModels.none { it.community })
+    }
+}

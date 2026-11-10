@@ -1,0 +1,456 @@
+package com.abrah.nightmare
+
+import android.content.Context
+import android.os.Build
+import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.File
+
+/**
+ * What this phone's NPU actually is — and it cannot be inferred from the name.
+ *
+ * ⚠⚠ **"Snapdragon 8 Gen 2 or newer" is not the requirement and never was.** It
+ * is a *date* test, and the hardware is not ordered by date: the 8s Gen 3
+ * (SM8635) is newer than an 8 Gen 2 and fails everything, because the "s" tier
+ * reuses the flagship name with a cut-down HTP. A QNN context binary declares
+ * every feature it needs and the device rejects the **first** one it lacks —
+ * arch, then VTCM, then fp16 — one at a time, so fixing one reveals the next.
+ * All of this is measured, not extrapolated: `../LocalDream/docs/DEVICE-SUPPORT.md`.
+ *
+ * ⇒ Two numbers decide everything here: the HTP **arch** and its **VTCM** in MB.
+ * [measure] gets both from the hardware; [caps] falls back to a table only until
+ * it has.
+ */
+object DeviceProbe {
+
+    private const val TAG = "DeviceProbe"
+
+    /**
+     * SoC → HTP arch token, e.g. `V79`. Copied verbatim from DreamUI, which
+     * built it from measurements and shipping reports.
+     *
+     * ⚠⚠ **Never guess an entry.** `libQnnHtp.so` dispatches on the arch of the
+     * DEVICE, not of the context binary, so the matching Stub/Skel pair must be
+     * unpacked or NPU init fails outright — with nothing in the error pointing
+     * at the cause. An SoC that is absent here is safe: [runtimeLibs] then
+     * unpacks *every* arch and lets QNN choose. A wrong entry is not safe.
+     */
+    // ⚠ `internal`, not private: `UnknownChipGateTest` asserts that a chip the
+    // table knows still comes from the TABLE rather than the part-number parse.
+    internal val SOC_TO_ARCH = mapOf(
+        "SM8350" to 68,                     // 888 / 888+
+        "SM8450" to 69, "SM8475" to 69,     // 8 Gen 1 / 8+ Gen 1
+        "SM8550" to 73, "SM8550P" to 73,    // 8 Gen 2
+        "QCS8550" to 73, "QCM8550" to 73,
+        "SM8650" to 75, "SM8650P" to 75,    // 8 Gen 3
+        "SM8750" to 79, "SM8750P" to 79,    // 8 Elite
+        "SM8850" to 81, "SM8850P" to 81,    // 8 Elite Gen 5
+        // ⭐ MEASURED on a Xiaomi 25053PC47G through `--device_info`, not read
+        // off a spec sheet: v73 and 8 MB. It is the newest chip in the table and
+        // the one that most looks like it should be higher.
+        "SM8735" to 73,                     // 8s Gen 4
+        // ⭐ v73 with UNDER 8 MB of VTCM (`docs/DEVICES.md` §1), so not in [SOC_HAS_8MB_VTCM]: SD 1.5 keeps
+        // `_min`; the v73 DiT builds take it as alpha ([ModelCatalog.DIT_V73_MIN_VTCM_MB], 2026-10-17).
+        "SM8635" to 73,                     // 8s Gen 3
+    )
+
+    /**
+     * SoCs known to carry the **8 MB** of VTCM that xororz's `_8gen1`/`_8gen2`
+     * graphs ask for.
+     *
+     * ⚠⚠ Deliberately a SEPARATE table from [SOC_TO_ARCH], and they must never
+     * be merged. That one decides which Skel to unpack and breaks NPU init when
+     * wrong; this one only decides which archive to download and costs a wasted
+     * download when wrong. ⚠ VTCM is not implied by the marketing generation —
+     * the SM8635 is an "8s Gen 3", newer than an 8 Gen 2, and has less than
+     * 8 MB. Its backend and device create fine, proving the arch is supported,
+     * and only the context load fails.
+     */
+    private val SOC_HAS_8MB_VTCM = setOf(
+        "SM8450", "SM8475",                        // 8 Gen 1 — 8 MB on a v69 HTP
+        "SM8550", "SM8550P", "QCS8550", "QCM8550", // 8 Gen 2
+        "SM8650", "SM8650P",                       // 8 Gen 3
+        "SM8750", "SM8750P",                       // 8 Elite
+        "SM8850", "SM8850P",                       // 8 Elite Gen 5
+        "SM8735", "SM8845",
+    )
+
+    /** Every arch whose libraries the APK carries. ⚠ Keep in step with `tools/stage_backend.ps1`. */
+    val STAGED_ARCHES = listOf(68, 69, 73, 75, 79, 81)
+
+    /** ⭐ Arches served by a DOWNLOADED runtime ([QnnPack]: v85, QAIRT 2.51), fetched on that phone only. */
+    val PACK_ARCHES: Set<Int> get() = QnnPack.ARCHES
+
+    /**
+     * ⭐⭐ Chips whose DiT models run with the NPU's matrix unit OFF (`GGML_HEXAGON_NHMX=0`), to the name a person
+     * knows them by (`docs/DEVICES.md` §3b). With HMX every picture came back flat grey, and with the decode on the
+     * CPU (1.6.185-1.6.192) as NOISE: Diagnose on a tester's 8s Gen 4 (Z-Image, Klein 9B, Anima 2.9B) and an 8s Gen 3
+     * (Anima Turbo 1.1) found `no_hmx` the only leg with a picture in it; `vae_cpu`'s "clean" was the seed's noise
+     * decoded (two Anima models, one thumbnail byte for byte). The 8 Gen 2 is clean on the same v73 skel with HMX.
+     * Cost at 256x256, 2 steps: Anima 55 s for 29, Z-Image 113 s for 25, Klein 9B 323 s for 34.
+     * ⭐ The 8 Gen 1 / 8+ Gen 1 (v69) for another reason: ggml's HMX kernels are v73+ code, so its skel
+     * (`dit/034`) runs HVX only, and the same launch (HMX off, decode on the CPU) is what it gets.
+     */
+    val DIT_NO_HMX_SOCS = mapOf(
+        "SM8735" to "8s Gen 4", "SM8635" to "8s Gen 3", "SM8450" to "8 Gen 1", "SM8475" to "8+ Gen 1",
+    )
+
+    /**
+     * The HTP as far as we know it.
+     *
+     * ⚠ [measured] is the whole point of the type. An unmeasured guess is good
+     * enough to pick a download and **not** good enough to promise a user their
+     * phone works, so the flag travels with the numbers rather than being lost
+     * at the call site.
+     */
+    data class Caps(
+        val arch: Int,
+        val vtcmMb: Int,
+        val measured: Boolean,
+        /** `SM8750` — shown to the user, and the key both tables above use. */
+        val soc: String,
+        /**
+         * ⭐ `MemTotal` in bytes; 0 = unknown ([ModelCatalog]'s `Build.minRamBytes`).
+         * ⚠ Defaults to unknown rather than reading the system, so a test that
+         * builds a Caps never sees its HOST's RAM; [caps] and [measure] fill it.
+         */
+        val ramBytes: Long = 0L,
+    ) {
+        /** ⚠ The APK has to carry this arch's Skel, or NPU init fails whatever the model. */
+        val staged: Boolean get() = arch in STAGED_ARCHES || arch in PACK_ARCHES
+
+        /** ⭐ DiT models run with HMX off on this chip: a known one ([DIT_NO_HMX_SOCS]), or its self-test failed ([hmxBad]). */
+        val ditNoHmx: Boolean get() = soc in DIT_NO_HMX_SOCS || hmxBad
+
+        /**
+         * ⭐⭐⭐ **Do we actually KNOW this chip, or is [arch] the floor
+         * because nothing recognised it?**
+         *
+         * ⚠⚠⚠ Anything that HIDES a feature must ask this first. An
+         * unmeasured chip that matched no table and no part number reads as
+         * v68, and treating that as "too old" is exactly the 2026-09-20 bug
+         * where a Snapdragon 8 Gen 5 owner was told every SDXL, Anima and
+         * FLUX row was beyond their phone (`docs/DEVICES.md`).
+         *
+         * ⇒ Gate on `!supportsArch(n) && known` — an unknown chip is offered
+         * the feature and finds out by trying, which is recoverable. Hiding it
+         * is not.
+         */
+        val known: Boolean get() = measured || arch != FLOOR_ARCH
+
+        /**
+         * ⚠ A floor, never an allowlist: newer archs run older contexts — but only an arch the APK
+         * ships a Skel for ([staged]). An 8 Elite Gen 6 (2026-10-09, "Device Creation failure")
+         * is newer than every Skel we have, so it runs nothing on the NPU, old contexts included.
+         */
+        fun supportsArch(min: Int): Boolean = staged && arch >= min
+
+        /** ⭐ A chip whose NPU is newer than every arch this APK's runtime knows. */
+        val npuTooNew: Boolean get() = arch > ((STAGED_ARCHES + PACK_ARCHES).maxOrNull() ?: 0)
+    }
+
+    /**
+     * ⭐⭐ **This phone's HMX failed the engine's self-test** (`dit/030`: one Q4_0 matmul on HMX against the CPU at
+     * session start). The user's call (2026-10-19): ACT on it, so a chip no list names (#58's SM7750, Anima flat grey)
+     * gets HMX off after its first DiT launch, not after a report. Two SM8735 said `WRONG (zeros)`, rel-err 1.0000.
+     * ⚠ Only a WRONG or FAILED from a launch with HMX ON sets it ([recordHmxSelfTest]); a launch with HMX off says
+     * "skipped". Kept per phone across restarts: the chip does not change. Loaded by [loadHmxVerdict] at app start.
+     */
+    @Volatile
+    var hmxBad: Boolean = false
+        private set
+
+    private const val HMX_PREFS = "device_probe"
+    private const val HMX_BAD_KEY = "hmx_self_test_bad"
+
+    fun loadHmxVerdict(context: Context) {
+        val prefs = context.getSharedPreferences(HMX_PREFS, Context.MODE_PRIVATE)
+        hmxBad = prefs.getBoolean(HMX_BAD_KEY, false)
+        packFallback = prefs.getInt(PACK_FALLBACK_KEY, 0).takeIf { it > 0 }
+        packConfirmed = prefs.getInt(PACK_CONFIRMED_KEY, 0).takeIf { it > 0 }
+    }
+
+    /**
+     * ⭐ The arch a phone runs on after its GUESSED pack arch would not load ([learnPackFallback]); null until then.
+     * ⚠ GitHub #61/#62: the first real SM8975 failed `Failed to load skel, error: 1002` on the V85 trio, and its v85
+     * is [archFromPartNumber]'s guess. The context binaries run forward-only, so a v81-class chip runs them on the
+     * APK's own 2.50 runtime and V81 trio. Kept per phone, like [hmxBad]: the chip does not change.
+     */
+    @Volatile
+    var packFallback: Int? = null
+        private set
+
+    private const val PACK_FALLBACK_KEY = "pack_fallback_arch"
+    const val PACK_FALLBACK_ARCH = 81
+
+    /**
+     * ⭐ A pack arch QNN itself named on this phone ([dspPackArch]): the fallback is never learned again. Per phone.
+     * ⚠ A real SM8975 (OnePlus PYB110, 1.6.213): stuck on the learned v81 fallback, the 2.50 runtime asked for
+     * `libQnnHtpV85Stub.so` on every launch. Only [measure] dropped the fallback, and it ran where the app crashed.
+     */
+    @Volatile
+    private var packConfirmed: Int? = null
+    private const val PACK_CONFIRMED_KEY = "pack_confirmed_arch"
+
+    /** ⚠ Pure: the pack arch whose stub a launch asked for and did not find (the DSP's real arch), or null. */
+    fun dspPackArch(tail: List<String>): Int? = tail.firstNotNullOfOrNull {
+        Regex("""libQnnHtpV(\d+)Stub\.so" not found""").find(it)?.groupValues?.get(1)?.toIntOrNull()
+    }?.takeIf { it in PACK_ARCHES }
+
+    /**
+     * ⭐ The v81 fallback was wrong: the launch asked for a pack arch's stub ([dspPackArch]). Drop it, remember the arch,
+     * and the caller relaunches once on the pack ([HarnessOps.launchBackend]). True when it changed something.
+     */
+    fun unlearnPackFallback(context: Context, tail: List<String>): Boolean {
+        if (packFallback == null) return false
+        val arch = dspPackArch(tail) ?: return false
+        packFallback = null
+        packConfirmed = arch
+        context.getSharedPreferences(HMX_PREFS, Context.MODE_PRIVATE).edit()
+            .remove(PACK_FALLBACK_KEY).putInt(PACK_CONFIRMED_KEY, arch).apply()
+        Log.w(TAG, "the DSP asked for the v$arch stub on ${soc()}: the v$PACK_FALLBACK_ARCH fallback is dropped")
+        return true
+    }
+
+    /** ⚠ Pure: a backend log that died loading the NPU skel (the transport, before any model). */
+    fun skelLoadFailed(tail: List<String>): Boolean =
+        tail.any { "Failed to load skel" in it || "Transport layer setup failed" in it }
+
+    /**
+     * ⭐ A launch on a guessed pack arch died at the skel ([skelLoadFailed]): remember [PACK_FALLBACK_ARCH] and say so.
+     * True when NEW, so the caller relaunches once ([HarnessOps.launchBackend]). ⚠ Never on a measured or tabled chip.
+     */
+    fun learnPackFallback(context: Context, tail: List<String>): Boolean {
+        if (packFallback != null || packConfirmed != null || measured != null || SOC_TO_ARCH[soc()] != null) return false
+        if (archFromPartNumber(soc()) !in PACK_ARCHES || !skelLoadFailed(tail)) return false
+        packFallback = PACK_FALLBACK_ARCH
+        context.getSharedPreferences(HMX_PREFS, Context.MODE_PRIVATE).edit().putInt(PACK_FALLBACK_KEY, PACK_FALLBACK_ARCH).apply()
+        Log.w(TAG, "the v${archFromPartNumber(soc())} skel would not load on ${soc()}: running as v$PACK_FALLBACK_ARCH from now on")
+        return true
+    }
+
+    /** ⭐ The self-test said this HMX is wrong ([BackendProcess.engineNpuLine]'s "hmx"): remembered. True when NEW. */
+    fun recordHmxSelfTest(context: Context, verdict: String): Boolean {
+        if (!hmxSelfTestFailed(verdict) || hmxBad) return false
+        hmxBad = true
+        context.getSharedPreferences(HMX_PREFS, Context.MODE_PRIVATE).edit().putBoolean(HMX_BAD_KEY, true).apply()
+        Log.w(TAG, "HMX self-test failed on ${soc()}: DiT models run with HMX off from now on ($verdict)")
+        return true
+    }
+
+    /** ⚠ Pure: "HMX self-test WRONG (zeros), rel-err 1.0000…" or "…FAILED" is a failure; ok / skipped are not. */
+    fun hmxSelfTestFailed(verdict: String): Boolean {
+        val v = verdict.removePrefix("HMX self-test").trim()
+        return v.startsWith("WRONG") || v.startsWith("FAILED")
+    }
+
+    /** Set once [measure] succeeds. ⚠ Volatile: written on IO, read on main. */
+    @Volatile
+    var measured: Caps? = null
+        private set
+
+    /**
+     * ⭐ The phone's RAM, from `/proc/meminfo` — readable by any app and with no
+     * Context, which [caps] does not have. The same figure as
+     * `ActivityManager.MemoryInfo.totalMem` ([Prefs.LOWRAM_BELOW_BYTES] has the
+     * two phone classes). 0 when it cannot be read (the JVM tests).
+     */
+    fun totalRamBytes(): Long = runCatching {
+        java.io.File("/proc/meminfo").useLines { lines ->
+            lines.first { it.startsWith("MemTotal:") }
+                .filter { it.isDigit() }.toLong() * 1024L
+        }
+    }.getOrDefault(0L)
+
+    /** The SoC as Android reports it, uppercased — the key for both tables. */
+    fun soc(): String = (Build.SOC_MODEL ?: "").uppercase()
+
+    /**
+     * ⭐⭐ What to gate and label with.
+     *
+     * ⚠ A measurement always wins. Failing that, the tables; failing those, the
+     * **floor** — v68 with 2 MB, which is what `_min` needs and what runs
+     * anywhere. Guessing high on an unknown chip is what hands a user a
+     * gigabyte their HTP then refuses, which is the failure mode this whole
+     * file exists to avoid.
+     */
+    fun caps(): Caps {
+        measured?.let { return it }
+        val soc = soc()
+        return Caps(
+            arch = SOC_TO_ARCH[soc] ?: packFallback ?: archFromPartNumber(soc) ?: FLOOR_ARCH,
+            vtcmMb = when {
+                soc in SOC_HAS_8MB_VTCM -> 8
+                // ⚠ A chip NEWER than every 8 MB part we know is far likelier
+                // to have 8 MB than 2: every flagship since the 8 Gen 1 has.
+                // ⚠⚠ Still only a guess, and `runsOn` may hand out a download
+                // the HTP refuses — which is why [needsMeasuring] asks for the
+                // real numbers rather than leaving this standing.
+                archFromPartNumber(soc) != null -> 8
+                else -> FLOOR_VTCM_MB
+            },
+            measured = false,
+            soc = soc,
+            ramBytes = totalRamBytes(),
+        )
+    }
+
+    /**
+     * ⭐⭐⭐ An arch for a chip no table knows, read out of its PART NUMBER.
+     *
+     * ⚠⚠ The tables are an allowlist, and an allowlist is wrong by default
+     * the day a new chip ships. Reported 2026-09-20 by a Snapdragon 8 Gen 5
+     * owner: every SDXL, Anima and FLUX row read "this device cannot run it",
+     * because their `Build.SOC_MODEL` is not one of the strings above and the
+     * floor below is v68 with 2 MB — a guess, presented as a fact about their
+     * hardware.
+     *
+     * ⭐ The shape is upstream's own (`DitEngine.isSupportedDevice`, local-dream):
+     * take the digits out of `SM8850P` and compare the NUMBER. It needs no
+     * maintenance when a chip ships, which is the same reasoning the video
+     * gate uses a real canary binary rather than a SoC allowlist
+     * (`docs/NEODRAGON.md` §4).
+     *
+     * ⚠ Only ever used UPWARD, for a part number at or above the newest one
+     * we know. An unknown chip BELOW that is genuinely unknown — Qualcomm's
+     * numbering is only roughly chronological (SM8635 is an "8s Gen 3" with
+     * less than 8 MB of VTCM) — so those keep the floor.
+     *
+     * ⚠⚠ And only within the newest GENERATION (the same hundred: SM885x, SM8860). A part
+     * number a whole generation on (SM8950, SM8975 — the 8 Elite Gen 6) carries a new HTP,
+     * and was handed v81 until a user's npuforge compile died with "Device Creation failure"
+     * (2026-10-09): no Skel here knows it. It gets [NEWER_THAN_STAGED], which every NPU
+     * gate refuses ([Caps.supportsArch]) and the device sheet explains.
+     * ⭐ ONE generation on is assumed v85 since 1.6.202 (the user's call 2026-10-19): its runtime is fetched
+     * ([QnnPack]) and the probe then MEASURES with it. Two generations on is still [NEWER_THAN_STAGED].
+     */
+    internal fun archFromPartNumber(soc: String): Int? {
+        if (!soc.startsWith("SM")) return null
+        val n = soc.dropWhile { !it.isDigit() }.takeWhile { it.isDigit() }.toIntOrNull()
+            ?: return null
+        val newestKnown = SOC_TO_ARCH.keys.mapNotNull { partNumberOf(it) }.maxOrNull() ?: return null
+        if (n < newestKnown) return null
+        if (n / 100 == newestKnown / 100 + 1) return PACK_ARCHES.maxOrNull() ?: NEWER_THAN_STAGED
+        if (n / 100 > newestKnown / 100) return NEWER_THAN_STAGED
+        return SOC_TO_ARCH.values.maxOrNull()
+    }
+
+    /** ⚠ Not an arch: "newer than every Skel this APK ships" — see [archFromPartNumber]. */
+    const val NEWER_THAN_STAGED = 99
+
+    private fun partNumberOf(soc: String): Int? =
+        soc.dropWhile { !it.isDigit() }.takeWhile { it.isDigit() }.toIntOrNull()
+
+    /**
+     * ⭐⭐ True when the guess above is doing real work and should be replaced
+     * by a measurement. An unknown chip is exactly the case where assuming is
+     * worst, and `--device_info` reads the arch and VTCM off the hardware.
+     */
+    fun needsMeasuring(): Boolean = measured == null && soc() !in SOC_TO_ARCH
+
+    /** v68 / 2 MB — what `_min` is built for, and the safe answer for an unknown chip. */
+    const val FLOOR_ARCH = 68
+    const val FLOOR_VTCM_MB = 2
+
+    /**
+     * Which QNN libraries this device needs unpacked.
+     *
+     * ⚠ The shared pair plus ONE arch trio, not all six: the full set is ~150 MB
+     * and [BackendProcess] re-copies it on every start. ⚠⚠ An unrecognised SoC
+     * gets **every** arch — QNN then picks, which is slower to unpack and
+     * always correct, where a guessed arch is fast and sometimes fatal.
+     */
+    fun runtimeLibs(all: List<String>): List<String> {
+        // ⭐ A pack arch (v85) unpacks only the shared pair here; [QnnPack.overlay] lays its own over them.
+        val arch = SOC_TO_ARCH[soc()] ?: measured?.arch ?: packFallback ?: archFromPartNumber(soc())?.takeIf { it in PACK_ARCHES } ?: return all
+        val token = "V$arch"
+        return all.filter { n ->
+            // Shared libraries carry no arch token; the per-arch trio does.
+            !ARCH_TOKEN.containsMatchIn(n) || n.contains(token)
+        }
+    }
+
+    private val ARCH_TOKEN = Regex("V\\d{2}")
+
+    /**
+     * Ask the HTP what it is: `--device_info` prints one line of JSON and exits.
+     *
+     * ⭐ It calls `QnnDevice_getPlatformInfo`, which needs **no model, no
+     * context and no server** — so the answer is available before a ~1 GB
+     * download is committed to, which is the entire reason it is worth having.
+     *
+     * ```
+     * {"ok":true,"devices":[{"device_id":0,"vtcm_mb":8,"soc_model":69,"arch":79,…}]}
+     * ```
+     *
+     * ⚠⚠ It measures arch and VTCM **only, not fp16**. A clean probe is not a
+     * promise that a model will load, and must never be shown to a user as one.
+     *
+     * ⚠ Returns null rather than throwing: an unprobeable device still has the
+     * tables, and losing the app to a diagnostic would be absurd.
+     */
+    private const val PROBE_TIMEOUT_S = 20L
+
+    suspend fun measure(context: Context): Caps? = withContext(Dispatchers.IO) {
+        try {
+            val exe = File(context.applicationInfo.nativeLibraryDir, BackendProcess.EXECUTABLE)
+            if (!exe.exists()) return@withContext null
+            val runtime = BackendProcess.prepareRuntime(context)
+            val p = ProcessBuilder(
+                exe.absolutePath, "--device_info", "--lib_dir", runtime.absolutePath,
+            ).apply {
+                redirectErrorStream(true)
+                environment()["LD_LIBRARY_PATH"] = listOf(
+                    runtime.absolutePath, "/system/lib64", "/vendor/lib64",
+                ).joinToString(":")
+                environment()["DSP_LIBRARY_PATH"] = runtime.absolutePath
+            }.start()
+            // ⚠ A wedged DSP never closes the child's stdout, and `readText` would hold this IO thread (and the
+            // child) for ever. The probe answers in well under a second; past [PROBE_TIMEOUT_S] it is killed, the
+            // read ends, and the tables stand in as for any unprobeable phone.
+            // ⚠⚠ The interrupt below lands in `waitFor` on every clean probe: uncaught on a bare Thread it killed
+            // the WHOLE APP on opening Models or Device (1.6.212-217, testers on 8 Elite Gen 5, the S25 too).
+            val watchdog = Thread {
+                try {
+                    if (!p.waitFor(PROBE_TIMEOUT_S, java.util.concurrent.TimeUnit.SECONDS)) {
+                        Log.w(TAG, "device_info did not exit in $PROBE_TIMEOUT_S s; killing it")
+                        p.destroyForcibly()
+                    }
+                } catch (_: InterruptedException) {
+                }
+            }.apply { isDaemon = true; name = "device-probe-watchdog"; start() }
+            val out = p.inputStream.bufferedReader().use { it.readText() }
+            p.waitFor()
+            watchdog.interrupt()
+
+            // ⚠ The JSON is one line among the runtime's own chatter, so it is
+            // found rather than assumed to be the whole output.
+            val line = out.lineSequence().firstOrNull { it.trimStart().startsWith("{") && "devices" in it }
+                ?: run { Log.w(TAG, "no device_info json in: ${out.take(400)}"); return@withContext null }
+            val d = JSONObject(line).optJSONArray("devices")?.optJSONObject(0)
+                ?: return@withContext null
+            val caps = Caps(
+                arch = d.optInt("arch", FLOOR_ARCH),
+                vtcmMb = d.optInt("vtcm_mb", FLOOR_VTCM_MB),
+                measured = true,
+                soc = soc(),
+                ramBytes = totalRamBytes(),
+            )
+            Log.i(TAG, "probed $caps")
+            measured = caps
+            // ⚠ A MEASURED pack arch outranks a learned fallback: 2.50 cannot drive a v85 DSP at all, so the v81
+            // fallback (a guess about a part number) only ever made things worse once the chip had answered.
+            if (caps.arch in PACK_ARCHES && packFallback != null) {
+                packFallback = null
+                context.getSharedPreferences(HMX_PREFS, Context.MODE_PRIVATE).edit().remove(PACK_FALLBACK_KEY).apply()
+                Log.w(TAG, "measured v${caps.arch}: the v$PACK_FALLBACK_ARCH fallback is dropped")
+            }
+            caps
+        } catch (e: Throwable) {
+            Log.w(TAG, "device probe failed", e)
+            null
+        }
+    }
+}

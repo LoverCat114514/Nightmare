@@ -1,0 +1,592 @@
+package com.abrah.nightmare
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Resolution — the third of the [ContextKey] that binds at backend launch, and
+ * the aspect ratio that deliberately does not.
+ *
+ * ⚠⚠ **The load-bearing test here is [aspectTargetMirrorsTheBackendsArithmetic].**
+ * `ModelCatalog.aspectTarget` is a SECOND COPY of a sum that lives in
+ * `RequestParser.hpp`: the backend uses it to place the rectangle it paints,
+ * and the app uses it to cut that rectangle back out ([VaeDecodeNode]). If the
+ * two drift, the result is a plausible picture cropped off centre or at the
+ * wrong size, with nothing anywhere reporting a problem. The expectations below
+ * are the C++ evaluated by hand, not this function's own output.
+ */
+class ResolutionTest {
+
+    // ---- patch names -----------------------------------------------------
+
+    /**
+     * ⚠ Square and rectangular patches are named differently and are NOT
+     * interchangeable — `768.patch` is a square graph, `512x768.patch` a
+     * portrait one. Handing a portrait build the square patch loads a graph of
+     * the wrong shape and the backend does not check.
+     */
+    @Test
+    fun patchNamesMatchWhatTheConversionPipelineEmits() {
+        assertEquals("768.patch", Res(768, 768).patchName)
+        assertEquals("1024.patch", Res(1024, 1024).patchName)
+        assertEquals("512x768.patch", Res(512, 768).patchName)
+        assertEquals("768x512.patch", Res(768, 512).patchName)
+    }
+
+    /** ⚠ 512² is the base `unet.bin` itself, so it needs no patch at all. */
+    @Test
+    fun theBaseResolutionNeedsNoPatch() {
+        assertNull(Res(512, 512).patchName)
+    }
+
+    /** Round trip: every name this emits must parse back to the same size. */
+    @Test
+    fun patchNamesRoundTrip() {
+        for (r in listOf(Res(768, 768), Res(1024, 1024), Res(512, 768), Res(1024, 768))) {
+            assertEquals(r, Res.fromPatch(r.patchName!!))
+        }
+    }
+
+    /**
+     * ⚠ A directory holds more than patches. Anything that is not one must
+     * parse to null rather than to a plausible size — `unet.bin` becoming a
+     * resolution would put a size nobody can serve in the picker.
+     */
+    @Test
+    fun nonPatchFilenamesParseToNothing() {
+        for (n in listOf("unet.bin", "clip_v2.mnn", "config.json", "patch", ".patch", "x.patch", "512x.patch")) {
+            assertNull("\"$n\" should not parse as a resolution", Res.fromPatch(n))
+        }
+    }
+
+    // ---- the aspect mirror ----------------------------------------------
+
+    /**
+     * ⭐⭐ Every expectation here is `RequestParser.hpp` worked by hand:
+     *
+     *     if (rw >= rh) { tw = 1024; th = (int)((1024.0*rh)/rw); th = (th/8)*8; }
+     *     else          { th = 1024; tw = (int)((1024.0*rw)/rh); tw = (tw/8)*8; }
+     *
+     * ⚠ The `/8*8` floor is not decoration: 16:9 gives 576 exactly, but 3:2
+     * gives 682.67 which truncates to 682 and then floors to **680**, not 683
+     * and not 688. A "close enough" ratio here is a crop of the wrong size.
+     */
+    @Test
+    fun aspectTargetMirrorsTheBackendsArithmetic() {
+        val canvas = Res(1024, 1024)
+        assertEquals(Res(1024, 576), ModelCatalog.aspectTarget("16:9", canvas))
+        assertEquals(Res(576, 1024), ModelCatalog.aspectTarget("9:16", canvas))
+        assertEquals(Res(1024, 768), ModelCatalog.aspectTarget("4:3", canvas))
+        assertEquals(Res(768, 1024), ModelCatalog.aspectTarget("3:4", canvas))
+        // 1024*2/3 = 682.666 -> 682 -> 680
+        assertEquals(Res(1024, 680), ModelCatalog.aspectTarget("3:2", canvas))
+        assertEquals(Res(680, 1024), ModelCatalog.aspectTarget("2:3", canvas))
+    }
+
+    /**
+     * ⚠⚠ The backend guards its whole aspect block on `!(rw == rh)`, so a
+     * square ratio means "no crop" there. Returning a size here instead would
+     * make the app cut a rectangle the backend never painted.
+     */
+    @Test
+    fun asquareRatioMeansNoCrop() {
+        assertNull(ModelCatalog.aspectTarget("1:1", Res(1024, 1024)))
+        assertNull(ModelCatalog.aspectTarget("4:4", Res(1024, 1024)))
+    }
+
+    /**
+     * ⚠ The backend catches its `std::stoi` and falls through to plain 1:1, so
+     * malformed input is "no crop" and never an error. The app must agree, or
+     * a typo would crop a picture the backend rendered square.
+     */
+    @Test
+    fun malformedRatiosMeanNoCrop() {
+        for (bad in listOf("", "16", "16:", ":9", "16:0", "0:9", "-1:2", "wide", "16:9:2")) {
+            assertNull("\"$bad\" should mean no crop", ModelCatalog.aspectTarget(bad, Res(1024, 1024)))
+        }
+    }
+
+    /** ⚠ Every shipped chip must resolve, or the picker offers a dead option. */
+    @Test
+    fun everyShippedAspectResolves() {
+        val canvas = ModelCatalog.SDXL_NPU_RES
+        for (a in ModelCatalog.ASPECTS) {
+            if (a == ModelCatalog.DEFAULT_ASPECT) continue
+            val t = ModelCatalog.aspectTarget(a, canvas)
+            assertNotNull("$a did not resolve", t)
+            // ⚠ Never bigger than the canvas: [VaeDecodeNode] refuses that
+            // rather than clamping, so a chip that produced one would be a
+            // guaranteed failed render.
+            assertTrue("$a is larger than the canvas", t!!.width <= canvas.width && t.height <= canvas.height)
+            assertEquals("$a is not 8-aligned", 0, t.width % 8)
+            assertEquals("$a is not 8-aligned", 0, t.height % 8)
+        }
+    }
+
+    /** ⚠ The long edge is pinned to the canvas; only the short one moves. */
+    @Test
+    fun theLongEdgeAlwaysFillsTheCanvas() {
+        val canvas = Res(1024, 1024)
+        for (a in ModelCatalog.ASPECTS) {
+            val t = ModelCatalog.aspectTarget(a, canvas) ?: continue
+            assertEquals("$a leaves the long edge short", 1024, maxOf(t.width, t.height))
+        }
+    }
+
+    /**
+     * ⚠⚠ **A stale `aspect` on an SD 1.5 node must be IGNORED, not obeyed.**
+     *
+     * Reported from the phone, 2026-09-11: a decode came back **432x768** —
+     * 768 with a 9:16 left over from an SDXL session applied to it. The backend
+     * only reads `aspect_ratio` for `sdxl`/`anima`, so it had rendered a full
+     * frame while the app cropped it anyway; the picture was a crop of
+     * something nothing had padded.
+     *
+     * ⚠ The param is deliberately still THERE — `applyDefaults` keeps undeclared
+     * params, which is what restores the user's choice if they switch back. The
+     * fix is at the point of use.
+     */
+    @Test
+    fun aStaleAspectIsIgnoredOnAFixedSizeFamily() {
+        val sd15 = Node(
+            "s", "sd15.sample",
+            mapOf("model" to V1_MODEL, "width" to "768", "height" to "768", "aspect" to "9:16"),
+        )
+        assertNull("SD 1.5 must ignore a leftover aspect", nodeAspect(sd15))
+
+        // ⭐ …and a fixed-canvas family must still honour it, or the guard has
+        // simply broken the feature instead of scoping it.
+        val xl = ModelCatalog.all.first { it.family == Family.SDXL }
+        val sdxl = Node(
+            "s", "sd15.sample",
+            mapOf("model" to xl.id, "width" to "1024", "height" to "1024", "aspect" to "9:16"),
+        )
+        assertEquals("9:16", nodeAspect(sdxl))
+
+        // ⚠ An unknown model names no family, so it acts on nothing.
+        assertNull(nodeAspect(Node("s", "sd15.sample", mapOf("model" to "gone", "aspect" to "9:16"))))
+    }
+
+    // ---- the context key -------------------------------------------------
+
+    /**
+     * ⭐ Resolution is in the key, so two sizes are two processes. This is the
+     * fact that makes a size a launch-bound field rather than a widget.
+     */
+    @Test
+    fun twoResolutionsAreTwoContextKeys() {
+        val a = ContextKey("sd15npu", V1_MODEL, 512, 512)
+        val b = ContextKey("sd15npu", V1_MODEL, 768, 512)
+        assertTrue(a != b)
+    }
+
+    /**
+     * ⚠⚠ An aspect change must NOT move the context key — that is the whole
+     * difference between it and a resolution, and getting it wrong would spend
+     * a 2.3-5 s relaunch to change a crop.
+     */
+    @Test
+    fun anAspectIsNotPartOfTheContextKey() {
+        val square = Node(
+            "s", "sd15.sample",
+            mapOf("model" to V1_MODEL, "width" to "1024", "height" to "1024", "aspect" to "1:1"),
+        )
+        val wide = square.copy(params = square.params + ("aspect" to "16:9"))
+        assertEquals(backendContextKey(square), backendContextKey(wide))
+    }
+
+    /**
+     * ⚠ GitHub #60: an SDXL node holding a size its frozen canvas is not (1536x2048) launched the backend at it,
+     * rendered 1024², and the 3:4 crop asked 1152x1536 of that. Launch, render and crop now read the canvas.
+     */
+    @Test
+    fun aFixedCanvasIgnoresAStraySizeOnTheNode() {
+        val sdxl = ModelCatalog.byId("sdxl_dreamshaper")!!
+        val node = Node(
+            "g", "sdxl.sample",
+            mapOf("model" to sdxl.id, "width" to "1536", "height" to "2048", "aspect" to "3:4"),
+        )
+        val key = backendContextKey(node)
+        assertEquals(sdxl.native, Res(key.width, key.height))
+        val p = SdSampler.SDXL.effectiveParams(node)
+        assertEquals(sdxl.native.width.toString(), p["width"])
+        assertEquals(sdxl.native.height.toString(), p["height"])
+        assertEquals(768 to 1024, SdSampler.framedSize(node))
+    }
+
+    // ---- the knob itself -------------------------------------------------
+
+    /** Every node that names a checkpoint, i.e. everything that forces a launch. */
+    private val backendNodes
+        get() = NODE_TYPES.values.filter { t -> t.widgets.any { it.name == "model" && it.contextKey } }
+            // ⚠ Not the DiT samplers: their size is a REQUEST field — see
+            // `aDitSizeIsNotAContextKey` below.
+            .filterNot { (it as? SdSampler)?.family?.dit == true }
+
+    /**
+     * ⭐⭐ A DiT sampler's size costs no relaunch: sliders on the engine's grid,
+     * NOT context keys — and the context key ignores them ([backendContextKey]).
+     */
+    @Test
+    fun aDitSizeIsNotAContextKey() {
+        for (t in listOf(SdSampler.FLUX2, SdSampler.ZIMAGE)) {
+            val w = t.widgets.associateBy { it.name }
+            for (axis in listOf("width", "height")) {
+                val k = w.getValue(axis)
+                assertTrue("${t.name}.$axis must not relaunch", !k.contextKey)
+                assertEquals(ModelCatalog.DIT_STEP, k.step)
+                assertEquals(ModelCatalog.DIT_MIN.toDouble(), k.min)
+                assertEquals(ModelCatalog.DIT_MAX.toDouble(), k.max)
+            }
+            // ⭐ Since backend 029 (GitHub #19) the engine takes the node's sampler by name: offered,
+            // and like the size it is a request field, never a relaunch.
+            val sch = w.getValue("scheduler")
+            assertTrue("${t.name}.scheduler must not relaunch", !sch.contextKey)
+            assertEquals(ModelCatalog.DIT_SCHEDULERS, sch.options)
+            assertEquals(ModelCatalog.DIT_DEFAULT_SAMPLER, sch.default)
+        }
+        val a = Node("f", SdSampler.FLUX2.name, mapOf("model" to "flux2_klein_4b", "width" to "512", "height" to "2048"))
+        val b = Node("f", SdSampler.FLUX2.name, mapOf("model" to "flux2_klein_4b", "width" to "1536", "height" to "768"))
+        assertEquals("a resize must not change the context key", backendContextKey(a), backendContextKey(b))
+    }
+
+    /**
+     * ⭐⭐⭐ **The DiT grid is upstream's grid**, and this is the assertion
+     * that says so.
+     *
+     * ⚠⚠ [ModelCatalog.DIT_STEP] read 256 until 2026-09-21 while its own
+     * comment claimed to be quoting upstream, which is `SIZE_STEP = 64`
+     * (`local-dream/.../data/DitResolution.kt`). Nothing failed, because the
+     * only thing that checked the grid was a table built FROM it — a test that
+     * asked the code to agree with itself. This one names the numbers.
+     */
+    @Test
+    fun theDitGridIsUpstreams() {
+        assertEquals(512, ModelCatalog.DIT_MIN)
+        assertEquals(2048, ModelCatalog.DIT_MAX)
+        assertEquals(64, ModelCatalog.DIT_STEP)
+        // ⚠ [ModelCatalog.ditSnap] offsets from DIT_MIN, which is only the same
+        // as upstream's `round(v / STEP) * STEP` because MIN is a multiple of it.
+        assertEquals(0, ModelCatalog.DIT_MIN % ModelCatalog.DIT_STEP)
+        // ⭐ The size the report asked for, unreachable under the old table.
+        assertTrue("1280 must be on the grid", ModelCatalog.ditSupported(1280))
+        assertTrue("960 must be on the grid", ModelCatalog.ditSupported(960))
+        assertTrue("1280x960 is 4:3", ModelCatalog.ditSupported(1280) && ModelCatalog.ditSupported(960))
+        // ⚠ [ditSnap] repairs, [ditSupported] refuses — they are not the same
+        // question and a caller picks one on purpose.
+        assertTrue(!ModelCatalog.ditSupported(1000))
+        assertEquals(1024, ModelCatalog.ditSnap(1000))
+        assertTrue(!ModelCatalog.ditSupported(256))
+        assertEquals(512, ModelCatalog.ditSnap(256))
+        assertEquals(2048, ModelCatalog.ditSnap(9999))
+        // ⚠ Everything the grid claims really is snappable to itself.
+        var v = ModelCatalog.DIT_MIN
+        while (v <= ModelCatalog.DIT_MAX) {
+            assertTrue("$v", ModelCatalog.ditSupported(v))
+            assertEquals(v, ModelCatalog.ditSnap(v))
+            v += ModelCatalog.DIT_STEP
+        }
+    }
+
+    /**
+     * ⭐⭐ **[ModelCatalog.ditFit] lands on the grid and hits the ratio
+     * exactly whenever the grid holds an exact pair.**
+     *
+     * ⚠⚠ The ratio is the primary key and the area only breaks its ties.
+     * That is the clause the 2026-09-21 report turns on: rank by area first and
+     * a 4:3 photo gets 1216x896, which is 1.8% off and a size nobody
+     * recognises. ⚠ 16:9 is the documented cost of the rule — `16k x 9k` on a
+     * 64-px grid forces k to a multiple of 64, so 1024x576 is the only exact
+     * pair anywhere near 1024².
+     */
+    @Test
+    fun ditFitHitsTheRatioAndStaysOnTheGrid() {
+        val at1024 = Res(1024, 1024)
+        for (aspect in listOf(1f, 4f / 3f, 3f / 4f, 3f / 2f, 16f / 9f, 9f / 16f, 1.37f)) {
+            val got = ModelCatalog.ditFit(aspect, at1024)
+            assertTrue("$aspect -> $got off the grid", ModelCatalog.ditSupported(got.width))
+            assertTrue("$aspect -> $got off the grid", ModelCatalog.ditSupported(got.height))
+            // ⚠ Within one grid step of the ratio asked for — the most any
+            // snapped pair can promise, and every case above beats it easily.
+            val ratio = got.width.toDouble() / got.height
+            assertTrue(
+                "$aspect -> $got is ${"%.3f".format(ratio)}",
+                kotlin.math.abs(ratio - aspect) / aspect <= 0.05,
+            )
+        }
+        // ⭐ The reported case: a 4:3 photo on a node rendering 1024² reaches
+        // 1280x960 — exact, and the size the report named. The old table could
+        // offer only 1024x768 or 2048x1536.
+        assertEquals(Res(1280, 960), ModelCatalog.ditFit(4f / 3f, at1024))
+        assertEquals(Res(960, 1280), ModelCatalog.ditFit(3f / 4f, at1024))
+        // ⭐ Exact where the grid allows it, at an area near what the node had.
+        assertEquals(Res(1344, 896), ModelCatalog.ditFit(3f / 2f, at1024))
+        assertEquals(Res(1024, 1024), ModelCatalog.ditFit(1f, at1024))
+        // ⚠⚠ The documented cost of ratio-first: 16:9's only exact pairs on a
+        // 64 grid are 1024x576 and 2048x1152.
+        assertEquals(Res(1024, 576), ModelCatalog.ditFit(16f / 9f, at1024))
+        // ⚠ The area tie-break really is a tie-break — the same ratio from a
+        // bigger node comes back bigger.
+        assertEquals(Res(2048, 1536), ModelCatalog.ditFit(4f / 3f, Res(2048, 2048)))
+        assertEquals(Res(768, 576), ModelCatalog.ditFit(4f / 3f, Res(768, 768)))
+        // ⚠ A degenerate aspect changes nothing rather than throwing: it comes
+        // from a bitmap's own dimensions and a zero there is a bug elsewhere.
+        assertEquals(at1024, ModelCatalog.ditFit(0f, at1024))
+        assertEquals(at1024, ModelCatalog.ditFit(Float.NaN, at1024))
+    }
+
+    /**
+     * ⚠⚠ A picture changes the SHAPE, never the cost: a 1600x1536 photo (25:24, exact only at 1600x1536) moved a
+     * FLUX.2 edit set to 640x1152 to 1600x1536 and lmkd reaped the app (2026-10-23). Every shape stays within
+     * [ModelCatalog.DIT_FIT_MAX_GROW] of the node's area.
+     */
+    @Test
+    fun ditFitNeverGrowsTheAreaPastTheCap() {
+        val node = Res(640, 1152)
+        val got = ModelCatalog.ditFit(1600f / 1536f, node)
+        assertTrue("$got", got.width.toLong() * got.height <= node.width.toLong() * node.height * ModelCatalog.DIT_FIT_MAX_GROW)
+        assertTrue("$got is landscape-ish like the photo", got.width >= got.height)
+        for (aspect in listOf(0.5f, 0.6f, 25f / 24f, 1.3f, 1.9f, 2.4f)) {
+            // ⚠ Not from 512²: the 512 minimum edge makes 1:2 cost 512x1024 whatever the cap.
+            for (start in listOf(Res(640, 1152), Res(768, 768), Res(1024, 1024))) {
+                val r = ModelCatalog.ditFit(aspect, start)
+                assertTrue("$aspect from $start -> $r", r.width.toLong() * r.height <= start.width.toLong() * start.height * ModelCatalog.DIT_FIT_MAX_GROW)
+            }
+        }
+    }
+
+    /**
+     * ⭐⭐ **The size is editable and the model is not**, on every backend node.
+     *
+     * ⚠⚠ This pair is the whole reason [Widget.contextKey] exists as a field of
+     * its own. Both knobs are bound at backend launch, so a single flag once
+     * meant both "rewrite this graph-wide" and "the user may not touch it" —
+     * and unlocking the size would have quietly dropped it out of
+     * [contextKeyRetarget], leaving a graph with two context keys and no way
+     * back by hand. The two properties are asserted together here so they
+     * cannot drift apart again.
+     */
+    @Test
+    fun sizeIsEditableAndModelIsNotOnEveryBackendNode() {
+        assertTrue("no backend nodes found", backendNodes.isNotEmpty())
+        for (t in backendNodes) {
+            val w = t.widgets.associateBy { it.name }
+            for (axis in listOf("width", "height")) {
+                val k = w[axis] ?: error("${t.name} has no \"$axis\"")
+                assertTrue("${t.name}.$axis must stay a context key", k.contextKey)
+                assertNull("${t.name}.$axis must be editable now", k.locked)
+            }
+            assertEquals(
+                "${t.name}.model must stay locked",
+                CONTEXT_KEY_LOCK, w["model"]?.locked,
+            )
+        }
+    }
+
+    /**
+     * ⚠ The retarget is driven by the widget declaration, so a node carrying a
+     * param merely NAMED `width` must not be rewritten. That property was free
+     * while the filter was `locked == CONTEXT_KEY_LOCK`; it has to survive the
+     * move to [Widget.contextKey].
+     */
+    @Test
+    fun aPlainParamCalledWidthIsNotRetargeted() {
+        val g = Graph(
+            listOf(
+                Node("text", "sd.clip_encode", mapOf("prompt" to "x", "negative" to "")),
+                // ⚠ `image.crop` really does carry sizes — `out_w`/`out_h` — and
+                // they are consumer-derived, never context-key. It is the exact
+                // node a name-matching retarget would corrupt.
+                Node("frame", "image.crop", mapOf("out_w" to "512", "out_h" to "512")),
+            )
+        )
+        val spec = ModelCatalog.byId(V1_MODEL)!!
+        assertTrue(contextKeyRetarget(g, NODE_TYPES, spec, Res(768, 512)).isEmpty())
+        assertTrue(contextKeyResolutions(g, NODE_TYPES).isEmpty())
+    }
+
+    /**
+     * ⚠⚠ `image.crop` and `image.mask` stay `sizedByConsumer` — the cropper
+     * FOLLOWS the render size, it does not drive it. `Framing.kt` resolves
+     * demand backwards to a fixed point, and inverting that direction is what
+     * the "cropper drives" option would have cost.
+     */
+    @Test
+    fun theCropperFollowsRatherThanDrives() {
+        assertTrue(NODE_TYPES.getValue("image.mask").sizedByConsumer)
+        // ⚠ …and it carries no context key, so it never forces a launch.
+        assertNull(NODE_TYPES.getValue("image.mask").contextKey(Node("c", "image.mask")))
+        // ⚠ `image.crop` is gone (2026-09-17) — the samplers frame their own input.
+        assertNull(NODE_TYPES["image.crop"])
+    }
+
+    // ---- retargeting -----------------------------------------------------
+
+    private fun graph() = Graph(
+        listOf(
+            Node("text", "sd.clip_encode", mapOf("prompt" to "a cat", "negative" to "")),
+            Node(
+                "sample", "sd15.sample",
+                mapOf("model" to V1_MODEL, "width" to "512", "height" to "512"),
+                sources("cond" to "text"),
+            ),
+            Node(
+                "decode", "sd.vae_decode",
+                mapOf("model" to V1_MODEL, "width" to "512", "height" to "512"),
+                sources("latent" to "sample"),
+            ),
+        )
+    )
+
+    /**
+     * ⭐⭐ Choosing a resolution rewrites EVERY backend node, which is what keeps
+     * §5.2's one-key-per-graph pin true while the size is editable. A retarget
+     * that missed one would leave a graph the executor refuses, with three
+     * locked knobs and no way back by hand.
+     */
+    @Test
+    fun choosingAResolutionRewritesEveryBackendNode() {
+        val spec = ModelCatalog.byId(V1_MODEL)!!
+        val changes = contextKeyRetarget(graph(), NODE_TYPES, spec, Res(768, 1024))
+        assertEquals(setOf("sample", "decode"), changes.keys)
+        for ((_, p) in changes) {
+            assertEquals("768", p["width"])
+            assertEquals("1024", p["height"])
+            // ⚠ The model is unchanged, so it must not appear as a change --
+            // callers distinguish "nothing to do" from "done" by emptiness.
+            assertNull(p["model"])
+        }
+    }
+
+    /**
+     * ⚠⚠ **Only what actually MOVED is reported**, per axis. Going 512x512 ->
+     * 768x512 changes the width alone, and the height must be absent rather
+     * than restated: a caller folds these onto the node, and an entry that
+     * reports an unchanged value makes "nothing to do" indistinguishable from
+     * "done" — which is the one thing [contextKeyRetarget]'s contract promises.
+     */
+    @Test
+    fun onlyTheAxisThatMovedIsReported() {
+        val spec = ModelCatalog.byId(V1_MODEL)!!
+        val changes = contextKeyRetarget(graph(), NODE_TYPES, spec, Res(768, 512))
+        assertEquals(setOf("sample", "decode"), changes.keys)
+        for ((_, p) in changes) {
+            assertEquals("768", p["width"])
+            assertNull("height did not move and must not be reported", p["height"])
+        }
+        // ⚠ And a size that is already right is no edit at all.
+        assertTrue(contextKeyRetarget(graph(), NODE_TYPES, spec, Res(512, 512)).isEmpty())
+    }
+
+    /** ⚠ The whole graph at one size is one key, which is what may run. */
+    @Test
+    fun aRetargetedGraphNamesExactlyOneKey() {
+        val spec = ModelCatalog.byId(V1_MODEL)!!
+        val changes = contextKeyRetarget(graph(), NODE_TYPES, spec, Res(768, 512))
+        val moved = Graph(
+            graph().nodes.map { n -> changes[n.id]?.let { n.copy(params = n.params + it) } ?: n }
+        )
+        val keys = moved.nodes.mapNotNull { NODE_TYPES[it.type]?.contextKey(it) }.toSet()
+        assertEquals(1, keys.size)
+        assertEquals(768, keys.first().width)
+        assertEquals(512, keys.first().height)
+    }
+
+    /**
+     * ⭐ Reading the sizes back off a graph, for the adoption a workflow gets
+     * when it is opened. A graph saved at 768x512 must select 768x512, or it
+     * renders against a backend launched for the picker's size.
+     */
+    @Test
+    fun aGraphsOwnResolutionCanBeReadBack() {
+        val spec = ModelCatalog.byId(V1_MODEL)!!
+        val changes = contextKeyRetarget(graph(), NODE_TYPES, spec, Res(768, 512))
+        val moved = Graph(
+            graph().nodes.map { n -> changes[n.id]?.let { n.copy(params = n.params + it) } ?: n }
+        )
+        assertEquals(listOf(Res(768, 512)), contextKeyResolutions(moved, NODE_TYPES))
+    }
+
+    /**
+     * ⚠ A node with no context-key knobs contributes nothing. `sd.clip_encode`
+     * carries no size, and a graph of only those needs no backend at all.
+     */
+    @Test
+    fun nodesWithoutAContextKeyContributeNoResolution() {
+        val g = Graph(listOf(Node("text", "sd.clip_encode", mapOf("prompt" to "x", "negative" to ""))))
+        assertTrue(contextKeyResolutions(g, NODE_TYPES).isEmpty())
+    }
+
+    /**
+     * ⭐ Aspect is written graph-wide by widget, so the sampler and the decoder
+     * cannot disagree — and they must not, because one places the rectangle and
+     * the other cuts it out.
+     */
+    @Test
+    fun anAspectIsWrittenToEveryNodeThatDeclaresIt() {
+        // ⚠ The FIXED-CANVAS aspect only: `image.crop` has an `aspect` of its own.
+        val declaring = NODE_TYPES.filterValues { t ->
+            t.widgets.any { it.name == "aspect" && it.options == ModelCatalog.ASPECTS }
+        }.keys
+        val changes = aspectRetarget(graph(), NODE_TYPES, "16:9")
+        // ⚠ Guarded: the chip only exists on a fixed-canvas family, and the
+        // default selection is SD 1.5. The assertion is that the set of nodes
+        // rewritten is exactly the set that declares the knob -- whichever that
+        // turns out to be -- never a hardcoded pair.
+        assertEquals(
+            graph().nodes.filter { it.type in declaring }.map { it.id }.toSet(),
+            changes.keys,
+        )
+    }
+
+    /** ⚠ No change means no entry, so a caller can tell "already right" from "done". */
+    @Test
+    fun anUnchangedAspectProducesNoEdit() {
+        val g = Graph(graph().nodes.map { it.copy(params = it.params + ("aspect" to "16:9")) })
+        assertTrue(aspectRetarget(g, NODE_TYPES, "16:9").isEmpty())
+    }
+
+    /**
+     * ⭐ GitHub #33: "keep my settings" keeps the size, pulled inside the new model's sizes. A DiT
+     * model snaps to its grid; a fixed-size NPU model takes its own listed size.
+     */
+    @Test
+    fun aKeptSizeIsClampedToTheNewModel() {
+        val dit = ModelCatalog.all.first { it.isDit }
+        assertEquals(Res(832, 1216), ModelCatalog.keptSize(dit, 832, 1216))
+        assertEquals(Res(ModelCatalog.DIT_MAX, ModelCatalog.DIT_MIN), ModelCatalog.keptSize(dit, 4000, 100))
+        val sdxl = ModelCatalog.byId("sdxl_dreamshaper")!!
+        assertEquals(ModelCatalog.SDXL_NPU_RES, ModelCatalog.keptSize(sdxl, 832, 1216))
+    }
+
+    /**
+     * ⭐ GitHub #35: a reference run over what an 8 Gen 3 measured to fit is warned about, with the
+     * largest same-shape canvas that fits; v79 and unmeasured models are never warned.
+     */
+    @Test
+    fun aReferenceRunOverTheMeasuredFitSuggestsASmallerCanvas() {
+        assertEquals(Res(896, 896), SdSampler.refFitSuggestion("flux2_klein_9b", 75, 1024, 1024))
+        assertEquals(Res(768, 1152), SdSampler.refFitSuggestion("flux2_klein_9b", 75, 832, 1216))
+        assertEquals(Res(960, 1088), SdSampler.refFitSuggestion("qwen_image_2_1_turbo", 75, 1024, 1152))
+        assertNull(SdSampler.refFitSuggestion("flux2_klein_9b", 75, 896, 1024))
+        assertNull(SdSampler.refFitSuggestion("flux2_klein_9b", 79, 1024, 1024))
+        assertNull(SdSampler.refFitSuggestion("flux2_klein_4b", 75, 2048, 2048))
+    }
+
+    /** ⭐ The DiT Shape shortcut (a tester's 5:3 and 9:7, 2026-10-16): exact pairs near the size held. */
+    @Test
+    fun ditShapeLandsOnExactPairsAndNamesThem() {
+        val square = Res(1024, 1024)
+        assertEquals(Res(1280, 768), ModelCatalog.ditFit(ModelCatalog.ratioValue("5:3")!!, square))
+        assertEquals(Res(1152, 896), ModelCatalog.ditFit(ModelCatalog.ratioValue("9:7")!!, square))
+        assertEquals(Res(896, 1152), ModelCatalog.ditFit(ModelCatalog.ratioValue("7:9")!!, square))
+        assertEquals("5:3", ModelCatalog.ratioOf(Res(1280, 768)))
+        assertEquals("16:9", ModelCatalog.ratioOf(Res(1024, 576)))
+        assertEquals("1:1", ModelCatalog.ratioOf(square))
+        assertNull(ModelCatalog.ratioOf(Res(1088, 1024)))
+        assertNull(ModelCatalog.ratioValue("wide"))
+    }
+}

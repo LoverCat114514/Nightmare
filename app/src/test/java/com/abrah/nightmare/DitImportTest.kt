@@ -1,0 +1,567 @@
+package com.abrah.nightmare
+
+import androidx.test.core.app.ApplicationProvider
+import java.io.ByteArrayInputStream
+import java.io.File
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+
+/**
+ * ⭐⭐ Importing a plain `.safetensors` as a DiT model — the feature proven on
+ * device 2026-09-21 (`docs/ROADMAP.md` §2b), with a button on it.
+ *
+ * ⚠ These cover the parts that are OURS: the structural check, the marker, the
+ * shared parts and the refusals. Whether a given file is really a Z-Image is
+ * the engine's job and it does it properly; nothing here pretends otherwise.
+ */
+@RunWith(RobolectricTestRunner::class)
+class DitImportTest {
+
+    private val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+    private val zimage = ModelCatalog.ditModels.first { it.id == "z_image_turbo" }
+
+    /** A minimal but STRUCTURALLY REAL safetensors: 8-byte length, then JSON. */
+    private fun safetensors(json: String): ByteArray {
+        val body = json.toByteArray()
+        val head = ByteArray(8)
+        var n = body.size.toLong()
+        for (i in 0 until 8) { head[i] = (n and 0xFF).toByte(); n = n shr 8 }
+        return head + body + ByteArray(64)
+    }
+
+    private fun sparse(f: File, bytes: Long) {
+        sparseFile(f, bytes)
+    }
+
+    private fun installBuiltIn(spec: ModelSpec = zimage) {
+        val d = spec.dir(ctx).apply { mkdirs() }
+        for (f in spec.files) sparse(File(d, f.name), f.bytes)
+    }
+
+    /**
+     * ⚠⚠ [CustomModels.importDit] fetches `libdit_engine.so` since
+     * 2026-09-21 — an import no longer rides in behind a built-in package, so
+     * it can no longer assume the engine came with one. Without this the tests
+     * would reach the network, which is both slow and a lie about what they
+     * cover.
+     */
+    private fun fakeEngine() {
+        DitEngine.file(ctx).also { sparse(it, DitEngine.FILE_BYTES) }
+        File(DitEngine.dir(ctx), ".dit-engine").writeText(DitEngine.URL)
+        assertTrue("the engine fixture does not read as installed", DitEngine.isInstalled(ctx))
+    }
+
+    private val realCopy = CustomModels.copyPart
+
+    /** ⚠ A sparse copy: the real one writes each fixture's gigabytes out ([CustomModels.copyPart]). */
+    @Before
+    fun sparseCopies() {
+        CustomModels.copyPart = { from, to -> sparseFile(to, from.length()) }
+    }
+
+    @After
+    fun clean() {
+        CustomModels.copyPart = realCopy
+        ModelCatalog.root(ctx).deleteRecursively()
+        // ⚠⚠ `CustomModels.scanned` is object state and OUTLIVES the test,
+        // so a leftover entry would let [itIsInTheCatalogueAfterImporting]
+        // pass on the previous test's scan. Scanning an empty root clears it.
+        CustomModels.scan(ctx)
+    }
+
+    @Test
+    fun itImportsAndIsRecognisedAsZImage() {
+        fakeEngine()
+        installBuiltIn()
+        val spec = CustomModels.importDit(
+            ctx, "myzit", Family.ZIMAGE,
+            open = { ByteArrayInputStream(safetensors("""{"a.weight":{"dtype":"F8_E4M3"}}""")) },
+        )
+        assertEquals(Family.ZIMAGE, spec.family)
+        assertEquals(ModelCatalog.ZIMAGE, spec.backendType)
+        assertTrue("the family marker was not written", File(spec.dir(ctx), "ZIMAGE").isFile)
+        assertTrue("the byo marker was not written", File(spec.dir(ctx), ModelSpec.BRING_YOUR_OWN).isFile)
+        // ⭐ The point of the whole exercise: installed WITHOUT its own copy of
+        // the 2.6 GB of shared parts.
+        assertTrue("an imported model should read as installed", spec.installed(ctx))
+        assertTrue(
+            "the shared parts were copied into the model instead of shared",
+            !File(spec.dir(ctx), "llm.gguf").exists(),
+        )
+        assertTrue(
+            "the shared parts are missing",
+            File(File(ModelCatalog.root(ctx), CustomModels.DIT_SHARED), "llm.gguf").exists(),
+        )
+    }
+
+    /**
+     * ⭐⭐⭐ **A turbo checkpoint imports with TURBO defaults.**
+     *
+     * ⚠⚠⚠ Shipped wrong on 2026-09-21: `customSpec` set the knobs with
+     * `if (family == ANIMA) … else DEFAULT_*`, the DiT families were added to
+     * the detection and not to that chain, and an imported Z-Image inherited
+     * SD's `dpm`/20/7.5. It RENDERED — at roughly five times the cost, because
+     * cfg above 1 makes the engine run the unconditional pass too — which is
+     * why only a stopwatch on the phone caught it. ⇒ Assert the numbers, per
+     * family, against the built-in they are copied from.
+     */
+    @Test
+    fun itImportsWithTheFamilysDefaultsNotSds() {
+        fakeEngine()
+        installBuiltIn()
+        val spec = CustomModels.importDit(
+            ctx, "myzit", Family.ZIMAGE,
+            open = { ByteArrayInputStream(safetensors("""{"a.weight":{"dtype":"F8_E4M3"}}""")) },
+        )
+        val builtIn = ModelCatalog.byId("z_image_turbo")!!
+        assertEquals("steps", builtIn.steps, spec.steps)
+        assertEquals("cfg", builtIn.cfg, spec.cfg, 0.0)
+        assertEquals("scheduler", builtIn.scheduler, spec.scheduler)
+        // ⚠ The arch floor belongs to the engine, so an import knows it even
+        // though a QNN import cannot know its own — v75 since 1.6.125 (`docs/DIT.md` §9e).
+        assertEquals("arch floor", ModelCatalog.DIT_GGML_MIN_ARCH, spec.minHtpArch)
+        assertEquals("lowram", builtIn.lowram, spec.lowram)
+    }
+
+    /**
+     * ⚠⚠ The same assertion for FLUX.2, and it is not redundant: `lowram`
+     * was `family != SD15`, so the two DiT families disagreed with each other
+     * and Klein's built-in says `false` on purpose (`docs/LEGACY.md`).
+     */
+    @Test
+    fun anImportedKleinDoesNotAskForLowram() {
+        fakeEngine()
+        val klein = ModelCatalog.byId("flux2_klein_4b")!!
+        installBuiltIn(klein)
+        val spec = CustomModels.importDit(
+            ctx, "myklein", Family.FLUX2,
+            open = { ByteArrayInputStream(safetensors("""{"a.weight":{"dtype":"F8_E4M3"}}""")) },
+        )
+        assertEquals("lowram", klein.lowram, spec.lowram)
+        assertEquals("steps", klein.steps, spec.steps)
+        assertEquals("cfg", klein.cfg, spec.cfg, 0.0)
+    }
+
+    /**
+     * ⭐⭐⭐ **An import weighs what it LOADS, not what its folder holds.**
+     *
+     * ⚠⚠⚠ The bug: the shared directory saved 2.6 GB of disk and made the
+     * model look 2.6 GB lighter to the residency gate, which releases a
+     * checkpoint over 65% of device RAM between runs. The built-in was
+     * released and the import — the same weights — was not, so the SECOND
+     * run was killed by lmkd. ⇒ An imported DiT must weigh the same as the
+     * built-in it borrows from.
+     */
+    @Test
+    fun anImportWeighsTheSameAsTheBuiltInItBorrowsFrom() {
+        fakeEngine()
+        installBuiltIn()
+        val spec = CustomModels.importDit(
+            ctx, "myzit", Family.ZIMAGE,
+            open = { ByteArrayInputStream(safetensors("""{"a.weight":{"dtype":"F8_E4M3"}}""")) },
+        )
+        // ⚠⚠ The TWO family-agnostic files, not three. The VAE moved into the
+        // model's own directory on 2026-09-21 — it differs per family and one
+        // shared copy could only ever be right for one of them — so it is
+        // counted by [ModelSpec.bytesOnDisk] rather than borrowed.
+        val shared = listOf("llm.gguf", "tokenizer.json")
+            .sumOf { n -> zimage.files.first { it.name == n }.bytes }
+        assertTrue(
+            "the shared parts must not count as disk in this directory",
+            spec.bytesOnDisk(ctx) < shared,
+        )
+        assertEquals(
+            "a launch loads the weights, its own VAE AND the shared parts",
+            spec.bytesOnDisk(ctx) + shared,
+            spec.loadedBytes(ctx),
+        )
+    }
+
+    /**
+     * ⭐⭐⭐ **The catalogue knows it, not just the caller.**
+     *
+     * ⚠⚠ The bug this is here for shipped: [CustomModels.importDit] built
+     * a [ModelSpec] and returned it without re-scanning, so the very next
+     * `selectModel` hit `require(ModelCatalog.byId(newId) != null)` and a
+     * 6 GB import that had worked perfectly reported "import failed: unknown
+     * model". ⇒ An import is not finished until [ModelCatalog.byId] answers.
+     */
+    @Test
+    fun itIsInTheCatalogueAfterImporting() {
+        fakeEngine()
+        installBuiltIn()
+        CustomModels.importDit(
+            ctx, "myzit", Family.ZIMAGE,
+            open = { ByteArrayInputStream(safetensors("""{"a.weight":{"dtype":"F8_E4M3"}}""")) },
+        )
+        assertTrue(
+            "the imported model is not in the catalogue, so it cannot be selected",
+            ModelCatalog.byId("myzit") != null,
+        )
+        assertTrue(
+            "the imported model is not in CustomModels.registered",
+            CustomModels.registered.any { it.id == "myzit" },
+        )
+    }
+
+    /**
+     * ⭐⭐⭐ **With nothing installed, an import DOWNLOADS its parts rather
+     * than refusing.** Replaced `itRefusesWhenTheBuiltInIsNotInstalled`
+     * 2026-09-21.
+     *
+     * ⚠⚠ The old test asserted the refusal *"install <family> first"*, which
+     * a user hit on the FLUX.2 tab: told to download a 6.7 GB package to obtain
+     * 2.6 GB of it. The parts have public URLs and were already declared on the
+     * built-in spec, so the refusal was never true.
+     *
+     * ⚠ The PLAN is asserted, not the download — the decision is the
+     * behaviour, and it stops being observable once the bytes have moved.
+     */
+    @Test
+    fun withNothingInstalledEveryPartIsFetched() {
+        val plan = CustomModels.ditPartsPlan(ctx, Family.ZIMAGE, File(ModelCatalog.root(ctx), "myzit"))
+        assertEquals("all three parts, none of them the weights", 3, plan.size)
+        assertTrue("nothing should be copyable", plan.all { it.from == null })
+        assertTrue(
+            "the weights must never be a shared part",
+            plan.none { it.file.name == ModelSpec.DIT_WEIGHTS },
+        )
+        // ⚠ ~2.6 GB, which is what the import card promises.
+        assertTrue("expected ~2.6 GB, got ${plan.sumOf { it.file.bytes } shr 20} MB",
+            plan.sumOf { it.file.bytes } in 2_400_000_000L..2_800_000_000L)
+    }
+
+    /**
+     * ⭐⭐⭐ **The VAE is NOT shared between the two DiT families, and a
+     * cross-family import must not borrow one.**
+     *
+     * ⚠⚠⚠ This is the 2026-09-21 bug, and it was silent. [CustomModels.DIT_SHARED]
+     * is ONE directory for both families, so an import copied its own VAE over
+     * whatever was there: importing a FLUX checkpoint gave every previously
+     * imported Z-Image Klein's VAE, and re-importing a Z-Image flipped it back.
+     * The two families' imports could not coexist. Measured on device: Klein's
+     * VAE is `1f01ec90…` and Z-Image's is `5c8c2087…`, while `llm.gguf` and
+     * `tokenizer.json` really are byte-identical across both.
+     */
+    @Test
+    fun aKleinInstallLendsItsTextEncoderButNotItsVae() {
+        val klein = ModelCatalog.ditModels.first { it.id == "flux2_klein_4b" }
+        installBuiltIn(klein)
+        val plan = CustomModels.ditPartsPlan(ctx, Family.ZIMAGE, File(ModelCatalog.root(ctx), "myzit"))
+        val by = plan.associateBy { it.file.name }
+        for (shared in listOf("llm.gguf", "tokenizer.json")) {
+            assertEquals(
+                "$shared is byte-identical across the families and should be copied",
+                klein.dir(ctx), by.getValue(shared).from?.parentFile,
+            )
+        }
+        assertEquals(
+            "a Z-Image import must never take Klein's VAE",
+            null, by.getValue("vae.safetensors").from,
+        )
+        // ⚠ …and it lands in the MODEL's directory, not the shared one, which
+        // is what `ditFile()` prefers and what ends the collision.
+        assertEquals("myzit", by.getValue("vae.safetensors").dest.parentFile.name)
+        assertEquals(
+            CustomModels.DIT_SHARED, by.getValue("llm.gguf").dest.parentFile.name,
+        )
+    }
+
+    /** ⭐ A second import of the same family costs nothing: it copies. */
+    @Test
+    fun aSecondImportOfTheSameFamilyCopiesEverything() {
+        fakeEngine()
+        installBuiltIn()
+        CustomModels.importDit(
+            ctx, "myzit", Family.ZIMAGE,
+            open = { ByteArrayInputStream(safetensors("""{"a.weight":{"dtype":"F8_E4M3"}}""")) },
+        )
+        val plan = CustomModels.ditPartsPlan(ctx, Family.ZIMAGE, File(ModelCatalog.root(ctx), "other"))
+        assertEquals("only the VAE is not already in place", 1, plan.size)
+        assertEquals("vae.safetensors", plan[0].file.name)
+        assertTrue("it should be copied from the first import, not fetched", plan[0].from != null)
+    }
+
+    /** ⚠ A zip, or anything that is not a safetensors, is refused up front. */
+    @Test
+    fun itRefusesSomethingThatIsNotASafetensors() {
+        fakeEngine()
+        installBuiltIn()
+        val zip = byteArrayOf(0x50, 0x4B, 0x03, 0x04) + ByteArray(256)
+        val e = runCatching {
+            CustomModels.importDit(ctx, "nope", Family.ZIMAGE, open = { ByteArrayInputStream(zip) })
+        }.exceptionOrNull()
+        assertTrue("a zip should be refused", e != null)
+        assertTrue("nothing should be left behind", !File(ModelCatalog.root(ctx), "nope").exists())
+    }
+
+    /**
+     * ⭐ An SD/SDXL checkpoint is the likely mistake, and it needs the
+     * conversion pipeline rather than a copy — so it is named, not just refused.
+     */
+    @Test
+    fun itNamesAnSdxlCheckpointRatherThanJustFailing() {
+        fakeEngine()
+        installBuiltIn()
+        val sdxl = safetensors("""{"conditioner.embedders.0.transformer.x":{"dtype":"F16"}}""")
+        val e = runCatching {
+            CustomModels.importDit(ctx, "wrong", Family.ZIMAGE, open = { ByteArrayInputStream(sdxl) })
+        }.exceptionOrNull()
+        assertTrue("expected a refusal", e != null)
+        assertTrue("it should say what the file looks like: ${e?.message}",
+            e!!.message!!.contains("SDXL"))
+    }
+
+    // ---- the family, read off the checkpoint ------------------------------
+
+    /**
+     * ⚠ The names are the REAL ones, taken from the two packages on the phone
+     * 2026-09-22 — a fixture invented to match the matcher proves nothing.
+     */
+    private val zimageNames = """
+        {"model.diffusion_model.cap_embedder.1.weight":{},
+         "model.diffusion_model.noise_refiner.0.attention.qkv.weight":{},
+         "model.diffusion_model.context_refiner.0.attention.out.weight":{},
+         "model.diffusion_model.layers.0.attention.qkv.weight":{}}
+    """.trimIndent()
+
+    private val kleinNames = """
+        {"double_blocks.0.img_attn.qkv.weight":{},
+         "single_blocks.0.linear1.weight":{},
+         "img_in.weight":{},
+         "txt_in.weight":{}}
+    """.trimIndent()
+
+    @Test
+    fun itTellsTheTwoDitFamiliesApartFromTheirTensorNames() {
+        assertEquals(Family.ZIMAGE, CustomModels.ditFamilyOf(zimageNames))
+        assertEquals(Family.FLUX2, CustomModels.ditFamilyOf(kleinNames))
+        // ⚠ Null, not a guess: the import and the scan both treat null as
+        // "the file says nothing", which is the only safe reading.
+        assertEquals(null, CustomModels.ditFamilyOf("""{"a.weight":{}}"""))
+    }
+
+    /**
+     * ⭐ Klein 9B is refused, 4B is not — and the lines are COPIED from the two
+     * real headers (our 4B package; `wikeeyang/Flux2-Klein-9B-True-V3`), read
+     * 2026-09-28, for the reason the note above gives.
+     */
+        /** ⭐ Anima 2B and 2.9B (40 blocks) pass; another depth or a wider one is refused; the LLM adapter's own blocks never count. */
+    @Test
+    fun anima2bAnd29bImport() {
+        fun anima(blocks: Int, width: Int) = buildString {
+            append("{\"model.diffusion_model.x_embedder.proj.1.weight\":{\"dtype\":\"BF16\",\"shape\":[$width,68],\"data_offsets\":[0,1]}")
+            for (i in 0 until blocks) append(",\"model.diffusion_model.blocks.$i.self_attn.q_proj.weight\":{\"dtype\":\"BF16\",\"shape\":[$width,$width],\"data_offsets\":[0,1]}")
+            append(",\"model.diffusion_model.llm_adapter.blocks.45.mlp.weight\":{\"dtype\":\"BF16\",\"shape\":[1,1],\"data_offsets\":[0,1]}}")
+        }
+        assertEquals(null, CustomModels.animaSizeProblem(anima(28, 2048)))
+        assertEquals(null, CustomModels.animaSizeProblem(anima(40, 2048)))
+        assertTrue(CustomModels.animaSizeProblem(anima(52, 2048))!!.contains("52 blocks"))
+        // ⭐ The count that picks base-model defaults for a 2.9B ([CustomModels.ANIMA29_MARK]); the adapter's 46 ignored.
+        assertEquals(40, CustomModels.animaBlocks(anima(40, 2048)))
+        assertEquals(28, CustomModels.animaBlocks(anima(28, 2048)))
+        assertTrue(CustomModels.animaSizeProblem(anima(28, 2560))!!.contains("width 2560"))
+        // ⚠ No shape and no blocks says nothing: never refuse on silence.
+        assertEquals(null, CustomModels.animaSizeProblem("{}"))
+    }
+
+    /** ⭐ GitHub #50: a 4-bit ComfyUI checkpoint is refused at import; fp8 and int8 are not. Lines from the real header. */
+    @Test
+    fun packedFourBitCheckpointsAreRefused() {
+        val int4 = """{"__metadata__":{"_quantization_metadata":"{\"format_version\": \"1.0\", \"layers\": """ +
+            """{\"blocks.0.attn.gate\": {\"format\": \"convrot_w4a4\", \"convrot_groupsize\": 256, \"quant_group_size\": 64}}}",""" +
+            """"converted_by":"Star Ultimate Model Converter"},"blocks.0.attn.wq.weight":{"dtype":"I8","shape":[6144,3072],"data_offsets":[0,1]}}"""
+        assertTrue(CustomModels.packedQuantProblem(int4)!!.contains("convrot_w4a4"))
+        val int8 = int4.replace("convrot_w4a4", "int8_tensorwise")
+        assertEquals(null, CustomModels.packedQuantProblem(int8))
+        assertEquals(null, CustomModels.packedQuantProblem(kleinNames))
+    }
+
+    @Test
+    fun itTellsKlein9bFromKlein4bByWidth() {
+        val k4 = """{"img_in.weight":{"dtype":"BF16","shape":[3072,128],"data_offsets":[265033344,265819776]}}"""
+        val k9 = """{"img_in.weight":{"dtype":"BF16","shape":[4096, 128],"data_offsets":[0,1048576]}}"""
+        assertEquals(false, CustomModels.isKlein9b(k4))
+        assertEquals(true, CustomModels.isKlein9b(k9))
+        // ⚠ No width at all says nothing — never refuse on silence.
+        assertEquals(false, CustomModels.isKlein9b(kleinNames))
+    }
+
+    /**
+     * ⭐⭐⭐ **A folder pushed over adb, with no marker in it, is a model.**
+     *
+     * Reported 2026-09-22: *"you have to import from the app now"*. The marker
+     * is now a cache — see [CustomModels.ZIMAGE_MARK].
+     *
+     * ⚠⚠ The marker written is UPSTREAM's name (`ZIMAGE` / `KLEIN`) since
+     * 2026-09-22, so a folder this app makes is one LocalDream can read —
+     * `UpstreamMarkerTest` is where that contract lives.
+     */
+    @Test
+    fun aMarkerlessDitFolderIsAdoptedByAScan() {
+        val dir = File(ModelCatalog.root(ctx), "pushed").apply { mkdirs() }
+        File(dir, ModelSpec.DIT_WEIGHTS).writeBytes(safetensors(zimageNames))
+        val found = CustomModels.scan(ctx).singleOrNull { it.id == "pushed" }
+        assertTrue("a marker-less DiT folder was not picked up", found != null)
+        assertEquals(Family.ZIMAGE, found!!.family)
+        assertEquals(ModelCatalog.ZIMAGE, found.backendType)
+        // ⚠ Written, so the next scan is a stat rather than a header read.
+        assertTrue(
+            "the marker was not cached",
+            File(dir, "ZIMAGE").isFile,
+        )
+    }
+
+    /**
+     * ⭐ A MOSS import takes the built-in's 8-step speed-up by default (the user, 2026-10-24): the DONOR's LoRA, 8 steps,
+     * CFG 1. ⋮ switches it off (25 steps, CFG 3, no LoRA); a few-step import never takes it (it would distil twice).
+     */
+    @Test
+    fun aMossImportTakesTheDonorsSpeedUpUntilSwitchedOff() {
+        val donor = File(ModelCatalog.root(ctx), "moss_image").apply { mkdirs() }
+        File(donor, ModelCatalog.MOSS_LORA).writeBytes(ByteArray(16))
+        val dir = File(ModelCatalog.root(ctx), "mossimport").apply { mkdirs() }
+        File(dir, CustomModels.DIT_GGUF).writeBytes(ByteArray(16))
+        File(dir, CustomModels.MOSS_MARK).writeBytes(ByteArray(0))
+        File(dir, CustomModels.PARTS_FROM_FILE).writeText("moss_image")
+        fun spec() = CustomModels.scan(ctx).single { it.id == "mossimport" }
+        assertEquals(ModelCatalog.MOSS_LORA, spec().ownLora)
+        assertEquals(8, spec().steps)
+        assertEquals(1.0, spec().cfg, 0.0)
+        assertEquals(File(donor, ModelCatalog.MOSS_LORA), spec().ownLoraFile(dir))
+        CustomModels.setMossSpeed(dir, false)
+        assertEquals(null, spec().ownLora)
+        assertEquals(25, spec().steps)
+        CustomModels.setMossSpeed(dir, true)
+        File(dir, CustomModels.MOSS_FEW_STEP_MARK).writeBytes(ByteArray(0))
+        assertEquals(null, spec().ownLora)
+    }
+
+    /** ⚠ …and the same folder holding Klein weights reads as FLUX.2. */
+    @Test
+    fun aMarkerlessKleinFolderReadsAsFlux2() {
+        val dir = File(ModelCatalog.root(ctx), "pushedklein").apply { mkdirs() }
+        File(dir, ModelSpec.DIT_WEIGHTS).writeBytes(safetensors(kleinNames))
+        val found = CustomModels.scan(ctx).singleOrNull { it.id == "pushedklein" }
+        assertEquals(Family.FLUX2, found?.family)
+        assertTrue(File(dir, "KLEIN").isFile)
+    }
+
+    /**
+     * ⭐ The mistake the SD/SDXL list cannot catch: the right KIND of file on
+     * the wrong family's tab, which would otherwise copy 6 GB and fail at Run.
+     */
+    @Test
+    fun itRefusesAKleinCheckpointOnTheZImageTab() {
+        fakeEngine()
+        installBuiltIn()
+        val e = runCatching {
+            CustomModels.importDit(
+                ctx, "mixed", Family.ZIMAGE,
+                open = { ByteArrayInputStream(safetensors(kleinNames)) },
+            )
+        }.exceptionOrNull()
+        assertTrue("expected a refusal", e != null)
+        assertTrue(
+            "it should name both families: ${e?.message}",
+            e!!.message!!.contains(Family.FLUX2.label),
+        )
+        assertTrue("nothing should be left behind", !File(ModelCatalog.root(ctx), "mixed").exists())
+    }
+    // ---- the Models "+" import: what a picked file is (2026-10-14) ---------
+
+    @Test
+    fun theImportTellsTheKindsApart() {
+        fun kind(bytes: ByteArray, name: String = "x.safetensors") =
+            CustomModels.sniffImport(name) { ByteArrayInputStream(bytes) }
+        val zip = byteArrayOf(0x50, 0x4B, 0x03, 0x04) + ByteArray(64)
+        assertEquals(CustomModels.ImportKind.Zip, kind(zip, "model.zip"))
+        // ⭐ The report: a CivitAI Anima file, which the Anima page refused for not being a zip.
+        val anima = safetensors("""{"net.llm_adapter.x":{},"net.t_embedder.1":{},"net.x_embedder.proj":{}}""")
+        assertEquals(CustomModels.ImportKind.Checkpoint(Family.ANIMA_DIT), kind(anima))
+        val lora = safetensors("""{"lora_unet_double_blocks_0.lora_down.weight":{}}""")
+        assertEquals(CustomModels.ImportKind.Lora, kind(lora))
+        val sdxl = safetensors("""{"conditioner.embedders.0.transformer.x":{"dtype":"F16"}}""")
+        assertTrue(kind(sdxl) is CustomModels.ImportKind.NeedsConverting)
+        // ⚠ Names that say nothing: a checkpoint of no known family — the popup asks.
+        assertEquals(CustomModels.ImportKind.Checkpoint(null), kind(safetensors("""{"blocks.0.w":{}}""")))
+        assertEquals(CustomModels.ImportKind.Upscaler, kind(ByteArray(64) { 7 }, "4x.bin"))
+        assertEquals(CustomModels.ImportKind.Unknown, kind(ByteArray(64) { 7 }, "notes.txt"))
+    }
+
+    /** ⭐ MOSS-Image imports (2026-10-22): read off molbal's Turbo GGUF and Moody Moss Mix's fp8 / int8 headers. */
+    @Test fun mossIsReadOffItsNamesAndInt8Converts() {
+        val moss = """{"video_embedder.weight":{"dtype":"BF16","shape":[3072,128],"data_offsets":[0,1]},""" +
+            """"shared_block_modulation.weight":{"dtype":"BF16","shape":[18432,3072],"data_offsets":[1,2]},""" +
+            """"layers.0.proj.qkv.weight":{"dtype":"F8_E4M3","shape":[9216,3072],"data_offsets":[2,3]}}"""
+        assertEquals(Family.MOSS, CustomModels.ditFamilyOf(moss))
+        val fp8 = CustomModels.DitHead(moss, false, emptySet())
+        assertEquals(CustomModels.DitVariant.MOSS, CustomModels.checkDit(fp8, null))
+        assertEquals(null, CustomModels.int8Problem(fp8))
+        // ⭐ ComfyUI int8 in a safetensors is converted at import ([Int8Gguf]), so not refused; the I8 weight decides.
+        val int8 = moss.replace("\"F8_E4M3\"", "\"I8\"")
+        assertEquals(null, CustomModels.int8Problem(CustomModels.DitHead(int8, false, emptySet())))
+        assertTrue(Int8Gguf.converts(CustomModels.DitHead(int8, false, emptySet())))
+        val scaleOnly = moss.replace("\"layers.0.proj.qkv.weight\"", "\"layers.0.proj.qkv.comfy_quant\"").replace("\"F8_E4M3\"", "\"U8\"")
+        assertEquals(false, Int8Gguf.converts(CustomModels.DitHead(scaleOnly, false, emptySet())))
+        assertEquals(false, Int8Gguf.converts(fp8))
+        assertTrue(CustomModels.int8Problem(CustomModels.DitHead(moss, true, setOf("BF16", "I8"))) != null)
+        assertEquals(null, CustomModels.int8Problem(CustomModels.DitHead(moss, true, setOf("BF16", "Q4_0"))))
+    }
+
+    /** ⭐ A KJ Z-Image carries `t_embedder.` and `x_embedder.`: two Anima hits, so Anima needs `llm_adapter.` too. */
+    @Test fun aZImageWithEmbedderNamesIsNotAnima() {
+        val kj = """{"cap_embedder.0.weight":{},"noise_refiner.0.attention.qkv.weight":{},"t_embedder.mlp.0.weight":{},"x_embedder.weight":{}}"""
+        assertEquals(Family.ZIMAGE, CustomModels.ditFamilyOf(kj))
+        val anima = """{"llm_adapter.blocks.0.w":{},"t_embedder.1.linear_1.weight":{},"x_embedder.proj.1.weight":{}}"""
+        assertEquals(Family.ANIMA_DIT, CustomModels.ditFamilyOf(anima))
+    }
+
+    @Test fun mossFewStepComesFromTheName() {
+        assertTrue(CustomModels.mossFewStep("mossImageTurboGGUF8_v10_3308669"))
+        assertTrue(CustomModels.mossFewStep("moss_8step_dmd"))
+        assertEquals(false, CustomModels.mossFewStep("moodyMossMixFreeDownload_v1025STEPSCFG3_3307707"))
+        assertEquals(false, CustomModels.mossFewStep("moss-image-sft-q8_0"))
+    }
+
+    /**
+     * ⭐ FLUX.3 and Qwen Image 2.1 import (1.6.249). Both carry FLUX.2's names too: leejet's FLUX.3 GGUF read as
+     * Klein 4B and unsloth's Qwen 2.1 FP8 as Klein 9B (`tools/dit_header.py`, 2026-10-27). Their own names win.
+     */
+    @Test fun flux3AndQwen21AreNotReadAsKlein() {
+        val flux3 = """{"content_mode_blocks.image.0.q_proj.weight":{},"txt_mode_blocks.0.q_proj.weight":{},""" +
+            """"single_blocks.0.linear1.weight":{},"txt_in.weight":{},"emb_in.image.weight":{}}"""
+        assertEquals(Family.FLUX3, CustomModels.ditFamilyOf(flux3))
+        assertEquals(CustomModels.DitVariant.FLUX3, CustomModels.checkDit(CustomModels.DitHead(flux3, true, setOf("Q8_0", "BF16")), null))
+        val qwen21 = """{"img_in.weight":{"dtype":"F8_E4M3","shape":[4096,64]},"txt_in.text_norm.weight":{},""" +
+            """"transformer_blocks.0.attn.norm_q.weight":{},"transformer_blocks.0.img_mlp.gate_up.weight":{},"modulation.1.weight":{}}"""
+        assertEquals(Family.QWEN21, CustomModels.ditFamilyOf(qwen21))
+        assertEquals(CustomModels.DitVariant.QWEN21, CustomModels.checkDit(CustomModels.DitHead(qwen21, false, emptySet()), null))
+        // ⚠ FLUX.2 itself is untouched.
+        val klein = """{"double_blocks.0.img_attn.qkv.weight":{},"single_blocks.0.linear1.weight":{},"img_in.weight":{},"txt_in.weight":{}}"""
+        assertEquals(Family.FLUX2, CustomModels.ditFamilyOf(klein))
+    }
+
+    /** ⭐ Fibo 2.0 (1.6.249): a Z-Image DiT with a perceiver, so Z-Image's two hits must not win. */
+    @Test fun fiboIsNotReadAsZImage() {
+        val fibo = """{"noise_refiner.0.attention.qkv.weight":{},"layers.0.attention.qkv.weight":{},"x_embedder.weight":{},""" +
+            """"perceiver.latent_queries":{},"perceiver.layers.0.cross_attention.to_kv.weight":{},"layers.6.cross_attn_gate":{}}"""
+        assertEquals(Family.FIBO2, CustomModels.ditFamilyOf(fibo))
+        assertEquals(CustomModels.DitVariant.FIBO2, CustomModels.checkDit(CustomModels.DitHead(fibo, true, setOf("Q4_0", "BF16")), null))
+        val zimage = """{"cap_embedder.0.weight":{},"noise_refiner.0.attention.qkv.weight":{},"context_refiner.0.attention.qkv.weight":{}}"""
+        assertEquals(Family.ZIMAGE, CustomModels.ditFamilyOf(zimage))
+    }
+
+    /** ⚠ The original Qwen-Image layout is refused at the header, not copied and failed at Run. */
+    @Test fun originalQwenImageIsRefused() {
+        val old = """{"img_in.weight":{},"txt_in.weight":{},"transformer_blocks.0.img_mod.1.weight":{},""" +
+            """"transformer_blocks.0.txt_mlp.net.0.proj.weight":{},"txt_norm.weight":{}}"""
+        val e = runCatching { CustomModels.checkDit(CustomModels.DitHead(old, false, emptySet()), null) }.exceptionOrNull()
+        assertTrue(e?.message.orEmpty().contains("Qwen Image 2.1"))
+    }
+}

@@ -1,0 +1,110 @@
+package com.abrah.nightmare.ui
+
+import com.abrah.nightmare.ui.StudioTextButton
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import com.abrah.nightmare.HarnessViewModel
+import com.abrah.nightmare.R
+import com.abrah.nightmare.canvas.Recipe
+
+/**
+ * ⭐⭐ **Send a picture into a flow** — the popup behind [SendToIcon], asked for
+ * 2026-09-17.
+ *
+ * Three sections, each shown only when it has something in it:
+ * - **This flow** — one row per image input of the canvas flow, by name, so the
+ *   user picks WHICH input when there is more than one (their call).
+ * - **Flows** — the built-in flows that take a picture.
+ * - **Saved** — the user's own flows that take one.
+ *
+ * ⚠ Opening another flow over unsaved edits still asks first: the view model
+ * routes it through the same guard as the Flows tab, so this dialog makes no
+ * promise of its own about unsaved work.
+ */
+@Composable
+fun SendToDialog(
+    choices: HarnessViewModel.SendChoices,
+    onCurrent: (String) -> Unit,
+    onRecipe: (Recipe) -> Unit,
+    onSaved: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.send_to_title)) },
+        text = {
+            Column(
+                Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                if (choices.current.isNotEmpty()) {
+                    Section(stringResource(R.string.send_to_this_flow))
+                    choices.current.forEach { id ->
+                        Choice("“$id”", stringResource(R.string.send_to_replace_picture)) { onCurrent(id) }
+                    }
+                }
+                if (choices.recipes.isNotEmpty()) {
+                    Section(stringResource(R.string.nav_flows))
+                    choices.recipes.forEach { r ->
+                        Choice(
+                            r.labelRes?.let { stringResource(it) } ?: r.label,
+                            stringResource(R.string.send_to_open_with_picture),
+                        ) { onRecipe(r) }
+                    }
+                }
+                if (choices.saved.isNotEmpty()) {
+                    Section(stringResource(R.string.flows_saved))
+                    choices.saved.forEach { n ->
+                        Choice(n, stringResource(R.string.send_to_open_with_picture)) { onSaved(n) }
+                    }
+                }
+                if (choices.current.isEmpty() && choices.recipes.isEmpty() && choices.saved.isEmpty()) {
+                    Text(stringResource(R.string.send_to_none), style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { StudioOutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+@Composable
+private fun Section(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+    )
+}
+
+/** ⚠ The whole row is the target — a finger aims at the words, not an edge. */
+@Composable
+private fun Choice(label: String, detail: String, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}

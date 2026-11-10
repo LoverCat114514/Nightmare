@@ -1,0 +1,875 @@
+package com.abrah.nightmare.canvas
+
+import com.abrah.nightmare.ui.StudioTextButton
+import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import com.abrah.nightmare.R
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.abrah.nightmare.Outcome
+import com.abrah.nightmare.ui.MeasureTextStyle
+
+/** ⭐ A knob armed for a sweep, as the run bar shows it. */
+data class ArmedSweep(
+    val nodeId: String,
+    val param: String,
+    val count: Int,
+    /** ⭐ The actual values, so the bar can show them rather than just a count. */
+    val values: List<String> = emptyList(),
+)
+
+/** One finished node, as the run log shows it. */
+data class RunLine(val id: String, val text: String, val bad: Boolean = false)
+
+/**
+ * ⭐ The canvas's seed, as the run bar shows it.
+ *
+ * ⚠ [value] null means "rolls a new one each Run", which is a state worth
+ * naming rather than an absence — the row says "seed: random" for it. The whole
+ * object is null only when the graph has no sampler, i.e. when there is no such
+ * thing as its seed.
+ *
+ * ⚠ [lastRolled] is what a LOCK would pin. Without it the lock has nothing to
+ * offer on a canvas that has not run yet, and the control must then be absent
+ * rather than doing nothing.
+ */
+data class SeedState(
+    val value: String?,
+    val lastRolled: String? = null,
+    /** ⭐ The sampler this seed belongs to — what the lock writes. */
+    val nodeId: String = "",
+    /**
+     * ⭐ Its name on the row, or null when the graph has ONE sampler. ⚠ The node
+     * id, not "seed 1 / seed 2": ids are what the canvas shows, and a chain can
+     * have three (the user's call, 2026-09-17).
+     */
+    val label: String? = null,
+    /**
+     * ⭐ Which seed: the picture's (`seed`), or its Fix faces / hands pass's
+     * ([com.abrah.nightmare.detail.Detailer.FIX_SEED], the user's call 2026-10-23: keep the picture, try another face).
+     */
+    val param: String = "seed",
+) {
+    val isFix: Boolean get() = param == com.abrah.nightmare.detail.Detailer.FIX_SEED
+}
+
+/**
+ * ⭐⭐ What the canvas shows WHILE it renders.
+ *
+ * ⚠⚠ It exists because a Run was previously silent for its whole duration. The
+ * only live signal was a progress bar a few dp wide drawn inside the node, and
+ * on SDXL a single `sample` is **24 seconds** — long enough that a person with
+ * no feedback concludes the button did nothing and presses it again. The node
+ * bar is easy to miss even when you know where to look, and it says nothing at
+ * all about the nodes that are not the sampler.
+ *
+ * ⚠ [startedAtMs] is `SystemClock.elapsedRealtime`, NOT wall clock: the
+ * elapsed time must not jump when the clock is corrected or a timezone changes.
+ * 0 means idle.
+ *
+ * ⚠ [totalMs] is set when the run finishes and [startedAtMs] returns to 0, so
+ * the panel can keep showing what the last run cost instead of blanking the
+ * moment it is over — the number a user most wants is the one they get after
+ * they stop watching.
+ */
+data class RunLogState(
+    val lines: List<RunLine> = emptyList(),
+    /** The node executing right now, or null when nothing is. */
+    val now: String? = null,
+    /**
+     * How far through [now] the backend says it is, as done-of-total.
+     *
+     * ⚠⚠ **NOT the user's step count, and it must not be shown as one.** The
+     * backend's denominator counts pipeline PHASES:
+     * `steps + (img2img ? 1 : 0) + 2` — the +2 being the CLIP encode and the
+     * VAE decode — and for img2img it then subtracts the steps `denoise` skips.
+     * So a 20-step txt2img reports `22`, and a 20-step img2img at denoise 0.65
+     * reports `16`. Both were seen on the phone and both read as a bug in the
+     * app, because a user compares the number against the one they typed.
+     *
+     * ⇒ Rendered as a PERCENTAGE. The fraction is exactly right whatever the
+     * backend counts, where any attempt to recover "step 14 of 20" means
+     * re-deriving `Pipeline.hpp`'s phase accounting in Kotlin — a guess that
+     * silently rots the next time the backend adds a stage.
+     */
+    val step: Pair<Int, Int>? = null,
+    /**
+     * ⭐ The phase [step] counts, when it is not the node's main work: "pose" while Motion transfer
+     * reads the driving video (a large share of its run). Shown with its own count, never a %.
+     */
+    val phase: String? = null,
+    val startedAtMs: Long = 0L,
+    val totalMs: Long? = null,
+    /**
+     * ⭐⭐ How many pictures this run filed into Results, or 0.
+     *
+     * ⚠⚠ A sweep keeps EVERY run, and the canvas only shows the last one — so
+     * without this the other seven are invisible and read as lost. The run log
+     * already says what happened; this says where it went, and offers to take
+     * you there. Asked for from the phone, 2026-09-11.
+     */
+    val keptCount: Int = 0,
+) {
+    val running: Boolean get() = startedAtMs > 0L
+    val idle: Boolean get() = !running && lines.isEmpty() && totalMs == null
+
+    /**
+     * ⭐⭐ [step] as people read it — a PERCENTAGE, for the reason [step] gives. The ONE label:
+     * the run panel and Chat's live line both call it (Chat printed `21/22` for a 20-step run,
+     * the user, 2026-10-10).
+     */
+    val stepLabel: String?
+        get() = step?.takeIf { it.second > 0 }?.let { (s, t) ->
+            // ⭐ A phase counts real things (frames), so it says how many: "pose 12/49".
+            phase?.let { "$it $s/$t" } ?: "${s * 100 / t}%"
+        }
+}
+
+/** `1.2s` / `24.3s` / `1m04s` — short enough to sit in a status line. */
+fun formatMs(ms: Long): String = when {
+    ms < 1000 -> "${ms}ms"
+    ms < 60_000 -> "%.1fs".format(ms / 1000.0)
+    else -> "%dm%02ds".format(ms / 60_000, (ms % 60_000) / 1000)
+}
+
+/**
+ * ⭐ The run's time: live while it runs, the total once it is over. The ONE clock: the log panel
+ * and the folded Run bar both call it, so the two can never show different times.
+ */
+@Composable
+internal fun rememberRunElapsed(state: RunLogState): Long {
+    var nowMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(state.startedAtMs) {
+        while (state.running) {
+            nowMs = android.os.SystemClock.elapsedRealtime()
+            kotlinx.coroutines.delay(100)
+        }
+    }
+    return when {
+        state.running -> (nowMs - state.startedAtMs).coerceAtLeast(0)
+        else -> state.totalMs ?: 0L
+    }
+}
+
+/**
+ * The log panel, sitting directly above the Run button.
+ *
+ * ⚠ Above the button rather than over the canvas: the canvas is the user's
+ * work and a panel floating on top of it hides the very nodes whose progress it
+ * is describing.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun RunLogPanel(
+    state: RunLogState,
+    /**
+     * ⚠ Dismiss the panel. It lingers after a run on purpose — the total is the
+     * number you want once you have stopped watching — but "on purpose" is not
+     * "forever", and it sits over the canvas's bottom edge.
+     */
+    onClose: () -> Unit = {},
+    /** ⭐ A [RunFrame] is showing the lines while the run goes: leave them out until it ends. */
+    linesInFrame: Boolean = false,
+    /** ⭐ Open the Results tab — the destination of the "kept" row. */
+    onResults: () -> Unit = {},
+    /**
+     * ⭐⭐ The seed pinned onto the sampler, or null when it rolls each Run.
+     *
+     * ⚠⚠ It is HERE rather than only on the picture because a locked seed
+     * changes what Run does, silently and indefinitely. A user who locked one
+     * yesterday and comes back to "why is it making the same thing" has nothing
+     * to look at otherwise — the number lives in an inspector field they have no
+     * reason to open.
+     */
+    /**
+     * ⭐⭐ The seed state of the canvas: a number when pinned, null when it
+     * rolls, and **absent only when there is no sampler at all**.
+     *
+     * ⚠⚠ Shown whether locked or not. A user cannot tell "this makes a new
+     * picture every Run" from "this makes the same one" by looking at the
+     * canvas, and that is the single most confusing thing about Run — so the
+     * state is stated always, and the toggle is the same control either way.
+     */
+    seeds: List<SeedState> = emptyList(),
+    /** ⭐ Lock or release ONE seed: a sampler's, or its fix pass's ([SeedState.param]). */
+    onToggleSeed: (SeedState) -> Unit = {},
+    /** ⭐ The armed seed sweeps, by node — each shows on its own sampler's row. */
+    seedSweeps: List<ArmedSweep> = emptyList(),
+    /** ⚠ A swept seed needs its own release — the lock toggle is hidden. */
+    onReleaseSeedSweep: (ArmedSweep) -> Unit = {},
+    /**
+     * ⭐⭐ The knobs armed for a sweep, as `node param values` triples.
+     *
+     * ⚠⚠ Here, beside the seed, for exactly the reason the seed row is here: an
+     * armed sweep changes what Run does, silently and indefinitely. A user who
+     * armed `cfg` yesterday and comes back to "why does Run take twenty
+     * minutes" has nothing to look at otherwise — the range lives in an
+     * inspector field they have no reason to open.
+     */
+    armed: List<ArmedSweep> = emptyList(),
+    onRelease: (ArmedSweep) -> Unit = {},
+    /** ⭐ Which run of how many, while a sweep is going. Null when it is not. */
+    batch: Pair<Int, Int>? = null,
+    onCancelBatch: () -> Unit = {},
+    /** ⭐ RAM, worded ("4.2 / 11.7"): a pill at the seed row's end (the sidebar mock, 2026-10-09). */
+    ram: String? = null,
+    modifier: Modifier = Modifier,
+) {
+    // ⚠ The seed row keeps this panel up with nothing else to report: it is a
+    // property of the canvas rather than of the last run, and the panel is the
+    // only thing above Run that persists between them.
+    if (state.idle && seeds.isEmpty() && armed.isEmpty() && batch == null) return
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    // ⚠⚠ A ticking clock, not a value pushed from the view model. The elapsed
+    // time has to advance while NOTHING is happening -- an SDXL sampler emits
+    // one progress event per ~1.2 s, so a timer driven by those events would
+    // sit frozen for over a second at a stretch and read as a hang, which is
+    // the exact impression this panel exists to prevent.
+    val elapsed = rememberRunElapsed(state)
+
+    // ⚠⚠ **TWO containers, not one.** The seed row is a property of the CANVAS
+    // — it is true between runs and survives closing the log — and the panel
+    // below it describes ONE run. Drawing them on a single ground said they
+    // were the same thing, so closing the run log left a lone seed row sitting
+    // in a box that still looked like a log. Asked for from the phone,
+    // 2026-09-10: detach the seed from the rest.
+    Column(
+        modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // ⭐⭐ ONE lock PER SAMPLER (the user's call, 2026-09-17). ⚠ It was the
+        // first sampler only, so in generate -> inpaint the inpaint's own seed had
+        // no lock anywhere above Run. ⚠ Wrapping chips, not a column: two fit one
+        // line, and a third moves down instead of pushing Run off the screen.
+        // ⚠⚠ The seed chip and the RAM pill are items of ONE wrapping row: side by side when they
+        // fit, RAM on its own line when not. Beside a fixed RAM pill the chip was squeezed: at 320dp
+        // its text wrapped letter by letter and the padlock got no width (2026-10-12).
+        SeedChipRow(seeds, onToggleSeed, seedSweeps, onReleaseSeedSweep, ram)
+        // ⚠⚠ **Only when there is a run to describe.** Closing the panel clears
+        // the state, but the seed row above is a property of the CANVAS rather
+        // than of a run, so the panel stays up — and this row then rendered
+        // "done  0ms" over a run that had been dismissed, describing nothing.
+        // Reported from the phone, 2026-09-10. `idle` is exactly "no lines, no
+        // total, not running", which is the condition under which there is
+        // nothing here worth a row.
+        // ⭐⭐ One chip per armed sweep, with a ✕ that releases it. ⚠ Its own
+        // container, like the seed: it is a property of the CANVAS and it
+        // survives closing the run log.
+        // ⚠⚠ …and a SEED sweep whose node has no seed row here: it ran with nothing on screen to
+        // release it (GitHub #34's screenshot: "batch 1 of 2" on a flow whose seed row showed no
+        // sweep). Every sweep Run will make is listed somewhere with its ✕.
+        val armed = armed + seedSweeps.filter { s -> seeds.none { it.nodeId == s.nodeId } }
+        if (armed.isNotEmpty()) {
+            // ⚠⚠⚠ **ONE ROW PER SWEEP, and the text is WEIGHTED.**
+            //
+            // It was one Row holding a joined string plus one ✕ per sweep, and
+            // the Text carried no `weight` — so the moment the label wrapped to
+            // a second line it took the full width and pushed every ✕ outside
+            // the row's bounds. The release button simply vanished. Reported
+            // from the phone, 2026-09-10.
+            //
+            // ⚠ Per-row is also the honest shape: each ✕ now sits beside the
+            // sweep it releases, where a row of identical ✕s after a merged
+            // sentence could not say which was which.
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(start = 10.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(1.dp),
+            ) {
+                for (a in armed) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (a.values.isEmpty()) {
+                                stringResource(R.string.log_batching_knob, a.count, a.param.knobWord(context))
+                            } else {
+                                stringResource(
+                                    R.string.log_batching_knob_values,
+                                    a.count, a.param.knobWord(context), a.values.joinToString(", "),
+                                )
+                            },
+                            style = MeasureTextStyle,
+                            color = MaterialTheme.colorScheme.primary,
+                            // ⚠ THE fix: the label may take every line it needs
+                            // and the button keeps its own space regardless.
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(
+                            onClick = { onRelease(a) },
+                            modifier = Modifier.size(28.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(
+                                    R.string.log_cd_release_knob_batch,
+                                    a.param.knobWord(context),
+                                ),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
+                }
+                // ⚠ The product, only when there is one to state.
+                if (armed.size > 1) {
+                    Text(
+                        stringResource(R.string.log_total_runs, armed.fold(1) { n, a -> n * a.count }),
+                        style = MeasureTextStyle,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
+
+        // ⭐⭐ The live sweep, in a container of its OWN — above the run and
+        // below the locked knobs.
+        //
+        // ⚠⚠ It used to sit above the whole panel, which put it above the seed
+        // and the armed chips. That reads as a heading for them rather than as
+        // a status for the run underneath. The order that means something is:
+        // what is ARMED (a property of the canvas), then what is HAPPENING (this
+        // sweep), then what the current render is doing. Asked for from the
+        // phone, 2026-09-10.
+        batch?.let { p ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(start = 10.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.batch_progress, p.first, p.second),
+                    style = MeasureTextStyle,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                StudioTextButton(onClick = onCancelBatch) {
+                    Text(stringResource(R.string.batch_stop), fontSize = 12.sp)
+                }
+            }
+        }
+        // ⭐ The RUN's own container: everything below describes one render —
+        // the status row, the PROGRESS BAR and the per-node lines together.
+        // ⚠ The bar belongs with the lines it is describing; drawn outside the
+        // container it read as a separate widget that happened to be nearby.
+        // ⭐ Left to the output page's [RunFrame] while a Default view run goes (2026-10-10:
+        // the bar here was redundant); back with the total and the lines once it ends.
+        // ⭐ After a Default view run the lines stay FOLDED (the user, 2026-10-10: they covered the
+        // picture just made) — the status row and the total, a chevron to open them.
+        var logOpen by remember(state.startedAtMs, state.totalMs) { mutableStateOf(false) }
+        if (!state.idle && !(linesInFrame && state.running)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                when {
+                    // ⚠ A percentage, not "step n/m" -- see [RunLogState.step].
+                    state.now != null && state.stepLabel != null -> "${state.now}  ${state.stepLabel}"
+                    state.now != null -> "${state.now}…"
+                    // ⚠⚠ **A run that has STARTED but has no node yet is not
+                    // "done".** `now` is null both before the first node begins
+                    // and after the last one ends, and this arm read the second
+                    // meaning into both -- so pressing Run showed "done"
+                    // immediately, for as long as it took to get going. That
+                    // gap is not small: it covers `ensureBackend()`, which
+                    // launches the backend and waits for /health, 4-5 s cold.
+                    // Reported from the phone 2026-09-11.
+                    // ⚠ `totalMs` is what separates them: it is written only
+                    // when the run finishes.
+                    state.running && state.totalMs == null -> stringResource(R.string.run_starting)
+                    // ⚠ Named as finished rather than left showing the last
+                    // node, or a completed run reads as one still in progress.
+                    else -> stringResource(R.string.log_done)
+                },
+                style = MeasureTextStyle,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    // ⭐ Live while running, and the TOTAL once it is not -- which
+                    // is the number worth keeping, and the one a user asks for
+                    // after the fact.
+                    formatMs(elapsed),
+                    style = MeasureTextStyle,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // ⭐⭐ COPY the whole log. ⚠ It copies every line the panel
+                // holds, not the handful on screen: the reason to copy a run
+                // log is to paste it into a bug report, and a copy that
+                // silently dropped what had scrolled away would make the
+                // report describe less than the reader saw. Asked for from the
+                // phone, 2026-09-10.
+                // ⚠⚠ Only once the run is OVER. Mid-render these two are
+                // noise: there is nothing complete to copy, and "hide" competes
+                // for the eye with the progress it would hide. Asked for from
+                // the phone, 2026-09-10.
+                if (linesInFrame && !state.running && state.lines.isNotEmpty()) {
+                    IconButton(onClick = { logOpen = !logOpen }, modifier = Modifier.size(24.dp)) {
+                        Icon(
+                            if (logOpen) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,
+                            contentDescription = stringResource(if (logOpen) R.string.cd_fold_log else R.string.cd_open_log),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+                if (!state.running && state.lines.isNotEmpty()) {
+                    val clipboard = LocalClipboardManager.current
+                    IconButton(
+                        onClick = {
+                            clipboard.setText(AnnotatedString(logText(state, elapsed)))
+                        },
+                        modifier = Modifier.size(24.dp),
+                    ) {
+                        Icon(
+                            com.abrah.nightmare.ui.CopyIcon,
+                            contentDescription = stringResource(R.string.cd_copy_log),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+                // ⭐ Share a report of ANY finished run (GitHub #48, 1.6.188): a result that looks wrong but did not
+                // error (Wan's red grid on an 8 Elite) had no way to send its log. The error notice's own report and
+                // dialog ([com.abrah.nightmare.ui.ErrorDetails]), titled as a run that did not fail.
+                val report = com.abrah.nightmare.ui.LocalErrorReport.current
+                if (!state.running && state.lines.isNotEmpty() && report != null) {
+                    var shown by remember { mutableStateOf<String?>(null) }
+                    val title = stringResource(R.string.run_report_title)
+                    IconButton(onClick = { shown = report(title) }, modifier = Modifier.size(24.dp)) {
+                        Icon(
+                            com.abrah.nightmare.ui.ShareIcon,
+                            contentDescription = stringResource(R.string.cd_share_run_report),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    shown?.let { com.abrah.nightmare.ui.ErrorDetails(it, onDismiss = { shown = null }) }
+                }
+                // ⚠⚠ NOT offered while running. Closing never cancelled — it
+                // was "stop showing me" — but a ✕ beside a live progress bar
+                // reads as "stop", and the one thing worse than a control that
+                // does nothing is one that looks like it aborts a 24 s render.
+                if (!state.running) {
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.size(24.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.cd_hide_log),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+        }
+
+        // ⭐ Full width and 6dp tall. The per-node bar it replaces was a few dp
+        // wide inside a node body at whatever the canvas zoom happened to be,
+        // which at 0.4x is a smear. ⚠ Indeterminate when a node is running but
+        // reporting no steps: `vae_decode` takes 2 s on SDXL and has nothing to
+        // count, and a bar pinned at 0% for two seconds looks like a stall.
+        if (state.running) {
+            val p = state.step
+            if (p != null && p.second > 0) {
+                LinearProgressIndicator(
+                    progress = { p.first.toFloat() / p.second },
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                )
+            } else {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                )
+            }
+        }
+
+        // ⚠ Newest LAST, so the panel reads downwards like a log and the line
+        // that just appeared is next to the status row it belongs under.
+        //
+        // ⚠⚠ **SCROLLABLE and WRAPPED, and both are corrections.** This showed
+        // the last four lines, each clipped to one line with an ellipsis — so a
+        // failure whose message was the whole point ("failed — node \"encode\":
+        // image img_… is no longer in the store") was cut at the width of a
+        // phone, and the four-line cap silently dropped the earlier nodes of any
+        // graph bigger than four. Asked for from the phone, 2026-09-10: *do not
+        // cut a line off, put it on the next one, and let me scroll.*
+        //
+        // ⇒ Bounded by HEIGHT rather than by line count. That is what keeps Run
+        // on screen mid-render — the reason the cap existed — while letting one
+        // long line take the two rows it needs instead of losing its tail.
+        // ⭐⭐ Where the pictures went — and a way to get there.
+        //
+        // ⚠⚠ A sweep keeps every run but the canvas shows only the LAST one,
+        // so without this the other seven are invisible and read as lost. Shown
+        // only once the run is over: mid-sweep the count is still climbing and
+        // a moving number invites a tap onto a half-finished set.
+        if (state.keptCount > 0 && !state.running) {
+            Surface(
+                onClick = onResults,
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        pluralStringResource(
+                            R.plurals.kept_in_results, state.keptCount, state.keptCount,
+                        ),
+                        style = MeasureTextStyle,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    // ⚠ A chevron rather than a button label: the whole row is
+                    // the target, which is what makes it easy to hit.
+                    Text(
+                        "›",
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+            }
+        }
+        val lines = if (linesInFrame && (state.running || !logOpen)) emptyList() else state.lines.takeLast(MAX_LINES)
+        if (lines.isNotEmpty()) {
+            val scroll = rememberScrollState()
+            // ⚠ Follows the tail, so a running graph shows the node it is on
+            // without the user chasing it — but only from the BOTTOM, so
+            // scrolling back to read an earlier failure is not yanked away by
+            // the next line landing.
+            LaunchedEffect(state.lines.size) {
+                if (scroll.value >= scroll.maxValue - AUTOSCROLL_SLACK) {
+                    scroll.animateScrollTo(scroll.maxValue)
+                }
+            }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = LINES_MAX_HEIGHT)
+                    .verticalScroll(scroll),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                for (l in lines) {
+                    Text(
+                        "${l.id}  ${l.text}",
+                        style = MeasureTextStyle,
+                        fontSize = 11.sp,
+                        // ⚠ No maxLines and no ellipsis: wrapping is the whole
+                        // point. A log that hides its own tail is worse than one
+                        // that costs a row.
+                        color = if (l.bad) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        }
+        }
+    }
+}
+
+/**
+ * The whole log as plain text, for the clipboard.
+ *
+ * ⚠ The TOTAL goes in too. "done 21.4s" is the first thing anyone asks about a
+ * run, and it lives in the status row rather than in a line — so a copy of the
+ * lines alone would leave it out of every report.
+ */
+private fun logText(state: RunLogState, elapsedMs: Long): String = buildString {
+    append(if (state.running) "running" else "done")
+    appendLine("  " + formatMs(elapsedMs))
+    state.lines.forEach { appendLine(it.id + "  " + it.text) }
+}
+
+/**
+ * ⚠ How tall the scrolling line area may get, above the run bar.
+ *
+ * ⚠⚠ A HEIGHT, not a line count. Lines wrap now, so "four lines" stopped being
+ * a bound on anything — one long failure message is two or three rows on a
+ * phone. 112dp is roughly six 11sp rows, which leaves the run bar and the
+ * navigation bar their space at the shortest orientation this app runs in.
+ */
+private val LINES_MAX_HEIGHT = 112.dp
+
+/**
+ * ⚠ How far off the bottom still counts as "following the tail", in pixels.
+ * Exactly-at-the-bottom is a test that fails on a fractional scroll position.
+ */
+private const val AUTOSCROLL_SLACK = 24
+
+/**
+ * ⚠ The tail kept in the panel. Raised from 4 now that the area scrolls and is
+ * bounded by height instead: a graph of eight nodes had its first four silently
+ * dropped, which is exactly where a failure starts. The whole history is still
+ * in the harness log.
+ */
+internal const val MAX_LINES = 40
+
+/** How a finished node reads in the log. */
+fun runLineOf(id: String, outcome: Outcome, ms: Long, detail: String): RunLine = RunLine(
+    id = id,
+    text = when (outcome) {
+        // ⚠⚠ The DETAIL is shown, not dropped. It used to be kept only for a
+        // failure, so a successful run said "ran 12ms" and a reused one said
+        // "cached" — and neither carried the one fact that mattered when a
+        // render came out wrong: the size the node actually produced.
+        //
+        // A whole session went into "switching model degrades the output" while
+        // the run bar was reporting, truthfully and uselessly, that everything
+        // ran. `frame ran 1.2s · 3024x4032` would have ended it in one glance.
+        Outcome.RAN -> "ran ${formatMs(ms)}" + brief(detail)
+        // ⚠ Especially here. "cached" alone hides WHAT was reused, and a
+        // wrongly-reused value is exactly the failure that looks like a bad
+        // model rather than a stale cache.
+        Outcome.CACHED -> "cached" + brief(detail)
+        Outcome.FAILED -> "failed: $detail"
+        Outcome.BLOCKED -> "blocked: $detail"
+    },
+    bad = outcome == Outcome.FAILED || outcome == Outcome.BLOCKED,
+)
+
+/**
+ * The useful half of a node's detail, for a one-line run log.
+ *
+ * ⚠ Handles and image ids are dropped: they are content addresses, forty
+ * characters wide, and say nothing a person can act on. What is kept is the
+ * SHAPE — `1024x1024`, `20st cfg 7.5 dpm`, `seed 12345` — which is what a
+ * reader is checking against what they expect.
+ */
+private fun brief(detail: String): String {
+    if (detail.isBlank()) return ""
+    val kept = detail.split(' ').filterNot {
+        it.startsWith("img_") || it.startsWith("lat_") || it.startsWith("cond_")
+    }.joinToString(" ").replace(Regex("\b(image|latent|cond)\b"), "").trim()
+    return if (kept.isEmpty()) "" else "  ·  $kept"
+}
+
+/** ⭐ RAM as a pill at the seed row's end — the seed pill's height, ground and type. */
+@Composable
+private fun RamPill(text: String) {
+    Row(
+        Modifier.height(28.dp).clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(com.abrah.nightmare.ui.ChipIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(text, style = MeasureTextStyle, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+    }
+}
+
+/**
+ * ⭐⭐ The seed chips (and the RAM pill) above Run: [RunLogPanel]'s first row, and the ONE row a folded run bar
+ * still shows (the user's call, 2026-10-23: the seed lock always in view, the log folds). One function, so the
+ * folded and open bars cannot draw the seed two ways.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+internal fun SeedChipRow(
+    seeds: List<SeedState>,
+    onToggleSeed: (SeedState) -> Unit,
+    seedSweeps: List<ArmedSweep>,
+    onReleaseSeedSweep: (ArmedSweep) -> Unit,
+    ram: String?,
+) {
+    if (seeds.isNotEmpty()) androidx.compose.foundation.layout.FlowRow(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) { val chip: @Composable (SeedState) -> Unit = { st ->
+    val seedSweep = seedSweeps.firstOrNull { it.nodeId == st.nodeId }?.count?.takeIf { !st.isFix }
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(start = 10.dp, end = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // ⚠⚠ ONE line, and a TIGHT one. The first version of this row wrapped
+        // a sentence of explanation and took three lines of a bar that sits
+        // over the canvas, so an always-present row has to cost one line at
+        // most. The state is the number and the glyph; the meaning is
+        // learned once.
+            Text(
+                // ⚠⚠ A batch sweep outranks both other states: "random" is
+                // wrong when four specific seeds are about to run, and a
+                // lock cannot coexist with a sweep of the same knob.
+                //
+                // ⚠⚠⚠ This line was "fixed" once and silently was not: the
+                // edit targeted a `stringResource` form this file never had,
+                // so the replace missed and the script still reported
+                // success. Reported from the phone twice. ⇒ An edit that
+                // cannot find its anchor must FAIL, not carry on.
+                when {
+                    seedSweep != null -> pluralStringResource(R.plurals.log_batching_seeds, seedSweep, seedSweep)
+                    st.isFix && st.value != null -> stringResource(R.string.log_fix_seed_locked, st.value)
+                    st.isFix -> stringResource(R.string.log_fix_seed_random)
+                    st.value != null -> stringResource(R.string.log_seed_locked, st.value)
+                    else -> stringResource(R.string.log_seed_random)
+                }.let { t -> st.label?.let { stringResource(R.string.log_labeled_status, it, t) } ?: t },
+                style = MeasureTextStyle,
+                color = if (st.value != null) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                // ⚠⚠ Weighted, not fill: measured first and unweighted, a locked seed's longer
+                // text wrapped and took the whole chip, and the padlock beside it got ZERO
+                // width, so a locked seed showed no lock at all (phone screenshot, 2026-10-12).
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            // ⚠ A real glyph, not an emoji: an emoji renders in the system
+            // font at whatever weight and colour that font decides, so it
+            // cannot be tinted with the row it belongs to and lands
+            // differently on every device.
+            // ⚠⚠ A ✕ while swept, the padlock otherwise. Two different
+            // actions must not share one glyph: releasing a sweep and
+            // locking a seed are opposites, and the row has space for one.
+            if (seedSweep != null) {
+                IconButton(onClick = {
+                    seedSweeps.firstOrNull { it.nodeId == st.nodeId }?.let(onReleaseSeedSweep)
+                }, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.log_cd_release_seed_sweep),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+            }
+            if (seedSweep == null) {
+            IconButton(
+                onClick = { onToggleSeed(st) },
+                // ⚠ Shrunk from the 48dp default. A touch target that size
+                // sets the height of the whole row, which is what made this
+                // line cost vertical space above AND below the text.
+                modifier = Modifier.size(28.dp),
+            ) {
+                Icon(
+                    if (st.value != null) Icons.Filled.Lock
+                    else com.abrah.nightmare.ui.LockOpenIcon,
+                    contentDescription = if (st.value != null) {
+                        stringResource(R.string.cd_unlock_seed)
+                    } else {
+                        stringResource(R.string.cd_lock_seed)
+                    },
+                    tint = if (st.value != null) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+            }
+        }
+    }
+    // ⭐ One sampler: its chip. Two or more: ONE summary chip and a list of the same chips
+    // (the user's pick, 2026-10-12), so the bar above Run never grows with the flow.
+    // ⭐ One sampler's picture and Fix seeds side by side; several samplers fold into the summary.
+    if (seeds.map { it.nodeId }.distinct().size == 1) seeds.forEach { chip(it) } else SeedsSummary(seeds, chip)
+    ram?.let { RamPill(it) } }
+}
+
+/**
+ * ⭐ Two or more samplers' seeds as ONE chip ("seeds: 1 locked · 1 random"); a tap lists every
+ * sampler's own chip, lock and sweep release included ([SeedState.label] names each).
+ */
+@Composable
+private fun SeedsSummary(seeds: List<SeedState>, chip: @Composable (SeedState) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val locked = seeds.count { it.value != null }
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .then(Modifier.clickable { open = true })
+            .heightIn(min = 28.dp)
+            .padding(start = 10.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(R.string.log_seeds_summary, locked, seeds.size - locked),
+            style = MeasureTextStyle,
+            color = if (locked > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Icon(
+            com.abrah.nightmare.ui.ChevronDownIcon, contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp),
+        )
+    }
+    if (open) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { open = false },
+        confirmButton = {
+            com.abrah.nightmare.ui.StudioButton(onClick = { open = false }) { Text(stringResource(R.string.ok)) }
+        },
+        title = { Text(stringResource(R.string.log_seeds_title)) },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { seeds.forEach { chip(it) } } },
+    )
+}

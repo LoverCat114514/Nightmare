@@ -1,0 +1,157 @@
+# LoRAs and embeddings
+
+Two kinds of small add-on file change what a model draws without replacing it.
+
+## LoRAs
+
+A **LoRA** is a small adapter (usually tens to hundreds of MB) that teaches a model a style, a
+character or a concept. In Nightmare, LoRAs work on **Anima** (the Anima DiT models; a LoRA
+makes each render about a third slower),
+**SD 1.5 Swap** (an SD 1.5 checkpoint converted in npuforge as *SD1.5 Swap*) and
+**SDXL Swap** (an SDXL checkpoint converted in npuforge 1.0.10 or newer as *SDXL Swap*, with
+LoRA ticked; 1.0.11 offers LoRA as SDXL Swap's only feature).
+
+!!! note "FLUX.2, Z-Image, Qwen Image and Krea 2"
+    These models take LoRAs too. A LoRA on them can make a render noticeably slower, and the LoRA
+    list says so on these models. A LoRA made for FLUX.2 Klein 9B does not work on Klein 4B, and the
+    other way round.
+
+### Download from CivitAI or Hugging Face
+
+On an **SD 1.5 Swap** or **SDXL Swap** generator node, open **LoRAs** and tap **Search
+online**. The **Get LoRAs** sheet opens on the most popular LoRAs for that node's family.
+
+<figure markdown>
+  ![Get LoRAs](../img/lora-browser.png){ .screen }
+</figure>
+
+- **SD 1.5 / SDXL** at the top picks the family. SDXL includes Illustrious, Pony and NoobAI
+  LoRAs, which all run on SDXL Swap.
+- **Type to search.** Results update as you type. You can also paste a CivitAI model link or a
+  Hugging Face repo link to open that LoRA directly.
+- **CivitAI / Hugging Face** picks the site, and **Popular ▾** sets the order (Popular, Top
+  rated, Newest).
+- Tap a LoRA to see its versions (on Hugging Face, its files). Each one shows its size,
+  base model and trigger words. **Download** saves it straight into your LoRAs. The bar
+  shows progress and **Cancel** stops it. The file is checked against the hash CivitAI
+  publishes, and the trigger words become the LoRA's note.
+
+**CivitAI needs your API key for most downloads.** It's free: civitai.com → Account settings →
+API Keys. Paste it in the box shown in the sheet, or in **Settings → Models → CivitAI**. The key
+stays on your phone and is sent only to CivitAI. **Show mature content** (off by default)
+searches civitai.red, which includes NSFW LoRAs.
+
+!!! note "CivitAI search is blocked in some countries"
+    In Australia, for example, CivitAI refuses searches, and the sheet tells you so. Pasting
+    a CivitAI model link still works, and downloads still work with your key. You can also use
+    Hugging Face or a VPN.
+
+The pills at the top choose the family: SD 1.5, SDXL, Anima, FLUX.2 Klein, Z-Image, Qwen 2.1 and
+Krea 2 (scroll them sideways). Opened from a node, the sheet starts on that node's family.
+
+### Import
+
+**Settings → Models → LoRAs → Import**, and pick the `.safetensors` file. It is listed with
+its size; the bin deletes it. The folder button in a node's LoRA list does the same.
+
+### Use
+
+1. Tap a FLUX.2, Z-Image, SD 1.5 Swap or SDXL Swap generator node.
+2. Under **LoRAs**, tick the ones you want. A checkbox per installed file.
+3. Set each one's **strength** with its slider (1.0 is the adapter's full effect), or tap the number beside it
+   to type one, such as 0.35 or 1.25. On the DiT models (FLUX.2, Z-Image, Qwen Image, Krea 2, Anima) and Wan the
+   slider runs from -2 to 2 and stops at 0 in the middle: below 0 pushes away from what the LoRA learned. On the
+   SD 1.5 and SDXL Swap models it runs from 0 to 2, because their NPU cannot apply a negative weight.
+4. Run.
+
+<figure markdown>
+  ![The LoRA picker on a generator node](../img/lora-picker.png){ .screen }
+</figure>
+
+You can stack as many as you like. A LoRA is applied when the render starts, so switching one
+on or off, or moving its slider, **reloads nothing**. It does cost render time, in proportion to
+its size: about 6% for a typical FLUX.2 adapter, around 40% for a large Z-Image one.
+
+If the LoRA's description names a trigger word, put that word in your prompt.
+
+### In the prompt: `<lora:name:0.8>`
+
+A prompt copied from CivitAI often names its LoRAs inline, as `<lora:name:0.8>`. Nightmare reads
+those tags: each is taken **out of the prompt** before it reaches the text encoder, and if the name
+matches a LoRA you have installed (with or without `.safetensors`), it is applied at that weight on
+top of the node's LoRA list. The tag wins if both name the same one. A tag for a LoRA you do not
+have, or any tag on a model that takes no LoRAs, is skipped and the run log says so. Tags do not
+count toward the prompt's token limit.
+
+Type `<lora:` in a prompt and your installed LoRAs appear as chips under the box, filtered as you
+type: the ones already ticked on the node it feeds come first, then the ones made for its model.
+Tap one and it is written as `<lora:name:1.0>` with `1.0` selected, so you can type the strength
+straight over it.
+
+### Sort, filter and favourites
+
+With two or more LoRAs, the list has a **sort** menu. **Name**, **Newest**, **Most used** (how
+often you tick it) or **Size**: and chips for each **base model** found among your files (SD 1.5,
+SDXL, FLUX, Z-Image, Qwen, Anima, Krea 2, Wan), the node's own first. The base is read from the
+file itself and shown under each name. If a LoRA is not recognised (or is filed under the wrong
+model), open its **⋮** and pick the right one under **Model**; **Auto** goes back to what the file
+says. Tap the **star** to make a LoRA a favourite: favourites come first. With eight or
+more, a search box filters by name. The LoRAs ticked on the node always stay at the top, in the
+order they are applied.
+
+### Folders
+
+With dozens of LoRAs, put them in folders: open a LoRA's **⋮** and under **Folder** pick one of
+that model's folders, or **New folder** and type a name (`Style`, `Anatomy`, `Effects`). Folders
+show first in the list, closed, each with how many LoRAs it holds; tap one to open it. **None**
+takes a LoRA out again, and a folder with nothing in it disappears. The files stay where they are
+on the phone. While you search, every match shows, folders or not.
+
+Wan's **Motion transfer** takes no LoRAs: it has no LoRA list, and `<lora:…>` tags in its prompt
+are skipped.
+
+### Notes
+
+The **⋮** beside each LoRA opens a note for it: its trigger words, the strength and settings it
+works best with, anything you would otherwise have to remember. Put the **trigger words on the
+first line**. A LoRA downloaded with **Search online** comes with its trigger words already
+filled in. In the note:
+
+- **Copy** copies the whole note.
+- **Add to prompt** adds the first line to the end of the prompt wired into that generator.
+- **Replace prompt** replaces that prompt's text with the first line.
+
+A dot beside the ⋮ marks a LoRA that has a note. Notes are kept next to the LoRA files, so they
+stay when the app is updated.
+
+### Delete
+
+**Delete** in a LoRA's ⋮ removes the file from the phone, after asking. If the LoRA was ticked
+on that node, it is unticked too. Any other node that uses it will refuse to run until you add
+it again or untick it. **Settings → Models → LoRAs** deletes LoRAs too.
+
+### On SD 1.5 Swap
+
+An SD 1.5 Swap model has room for ONE rank-64 adapter per layer, so the LoRAs you tick are
+**merged** into it on the phone the first time that mix is used, about 10 s for one large
+LoRA or 25 s for two, and kept for next time. With a single LoRA the strength slider is free;
+changing the strengths of several makes a new merge. A LoRA trained above rank 64 is reduced to
+its best rank-64 version. Only the part of a LoRA that changes the image model applies; the
+part trained into the text encoder does not (true of every NPU conversion).
+
+### On SDXL Swap
+
+The same, with **SDXL** LoRAs: an SDXL Swap model has 700 rank-64 slots, filled on the phone the
+first time a mix is used and kept for next time. LoRAs written with either layer naming
+(diffusers or SGM) are read. From npuforge 1.0.12 an SDXL Swap conversion can also keep
+ControlNet and IP-Adapter ([nodes](../reference/nodes.md#image-generator)), as the default
+Illustrious XL Swap does; npuforge's SDXL Swap
+conversion takes about an hour on the phone.
+
+## Embeddings
+
+An **embedding** (textual inversion) is a tiny file holding one trained concept. Often a
+style, or a "negative" such as a quality fix.
+
+**Settings → Prompts → Embeddings → Import**, pick the `.safetensors`, and then **name it in
+a prompt** (or the negative prompt) to use it.

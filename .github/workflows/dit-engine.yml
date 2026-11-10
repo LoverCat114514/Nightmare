@@ -1,0 +1,336 @@
+# Builds libdit_engine.so and its two Hexagon DSP skels.
+#
+# WHY THIS IS IN CI AND NOT ON A LAPTOP
+# The engine needs the Hexagon SDK (~2.3 GB of container image, several GB
+# unpacked) on top of the NDK, stable-diffusion.cpp and ggml. That is a lot of
+# disk for a build nobody repeats: the result is uploaded once as a release
+# asset and every install downloads it (`DitEngine.URL`). A runner has the room
+# and the developer's `C:` does not.
+#
+# WHAT IT DOES NOT DO
+# Nothing from upstream is vendored into this repository. The sources are cloned
+# at build time from their own public repos; only the BUILT engine is published,
+# which is what this app already ships and what `NOTICE` attributes. Any change
+# of ours travels as a patch file under `backend-patches/dit/`, the same rule the
+# C++ backend follows (`backend-patches/README.md`).
+#
+# FIRST RUN SHOULD BE A BASELINE. Run it with no patch and confirm the engine it
+# produces works on the phone before changing a line of it. A build that cannot
+# reproduce the shipping engine is not a build you can debug a patch with.
+name: dit-engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      hexagon_tag:
+        description: "Tag of ghcr.io/snapdragon-toolchain/arm64-android holding the Hexagon SDK"
+        default: "v0.7"
+      ndk_version:
+        description: "NDK the engine's build.sh documents"
+        default: "29.0.14206865"
+      local_dream_ref:
+        # ⚠ Every shipped engine is built on alpha.4: blank took local-dream's moved default branch and
+        # 003 no longer applied (run 39534075463).
+        description: "xororz/local-dream ref (the shipped engines' tag; blank = default branch)"
+        default: "v3.0.0-alpha.4"
+      sdcpp_ref:
+        description: "happyyzy/stable-diffusion.cpp ref (blank = local-dream's pinned submodule, which is what you want)"
+        default: ""
+      patch:
+        description: "Patch(es) to apply before building, space-separated, in order (blank = baseline build)"
+        # ⭐ This branch's default IS the recipe: the 73 patches the keep095 engine was
+        # built from (13 absorbed-by-alpha.4 ones excluded) + dit/096. Dispatching with
+        # everything blank reproduces the full chain; blank it manually for a baseline.
+        default: "backend-patches/dit/004-unet-stride2-conv.sdcpp.patch backend-patches/dit/005-controlnet-htp.sdcpp.patch backend-patches/dit/007-qwen21-graph-cut.sdcpp.patch backend-patches/dit/008-anima-fused-ops.sdcpp.patch backend-patches/dit/009-wan-fused-ops.sdcpp.patch backend-patches/dit/010-wan-te-unpadded.sdcpp.patch backend-patches/dit/012-hexagon-conv2d-batch.ggml.patch backend-patches/dit/013-wan22-t2v-one-timestep.sdcpp.patch backend-patches/dit/014-dump-video-latent.sdcpp.patch backend-patches/dit/016-wan22-i2v-split-modulation.sdcpp.patch backend-patches/dit/018-vae-temporal-tile-cut.sdcpp.patch backend-patches/dit/019-wan22-fun-control.sdcpp.patch backend-patches/dit/022-iris-3b.sdcpp.patch backend-patches/dit/024-taehv-chunked-encode.sdcpp.patch backend-patches/dit/025-zimage-htp-out-scale.sdcpp.patch backend-patches/dit/027-lokr-factored-forward.sdcpp.patch backend-patches/dit/028-moss-image.sdcpp.patch backend-patches/dit/029-ideogram4-fused-rope.sdcpp.patch backend-patches/dit/030-hexagon-hmx-selftest.ggml.patch backend-patches/dit/031-hexagon-concat-contig.ggml.patch backend-patches/dit/033-hexagon-v85.ggml.patch backend-patches/dit/035-moss-fused-rope.sdcpp.patch backend-patches/dit/036-hexagon-cpy-strided-hvx.ggml.patch backend-patches/dit/037-iris-fused-rope.sdcpp.patch backend-patches/dit/038-wan-patch-embed-matmul.sdcpp.patch backend-patches/dit/039-hexagon-fa-prefetch-early.ggml.patch backend-patches/dit/040-hexagon-fa-softmax-cubic-exp.ggml.patch backend-patches/dit/041-hexagon-fa-chunk-env.ggml.patch backend-patches/dit/042-flux3-klein.sdcpp.patch backend-patches/dit/043-flux3-fused-rope.sdcpp.patch backend-patches/dit/045-flux3-htp-matmul-scale.sdcpp.patch backend-patches/dit/046-wan-token-chunked-activations.sdcpp.patch backend-patches/dit/047-moss-image-edit-refs.sdcpp.patch backend-patches/dit/049-wan-high-noise-lora-prefix.sdcpp.patch backend-patches/dit/050-segment-weight-preload.sdcpp.patch backend-patches/dit/051-hexagon-buffer-cpy-tensor.ggml.patch backend-patches/dit/052-taehv-encode-small-chunks.sdcpp.patch backend-patches/dit/053-vae-tiles-never-seam.sdcpp.patch backend-patches/dit/054-wan-animate.sdcpp.patch backend-patches/dit/055-flux3-graph-cut.sdcpp.patch backend-patches/dit/056-fibo2-edit.sdcpp.patch backend-patches/dit/057-fibo2-htp.sdcpp.patch backend-patches/dit/060-graph-cut-use-counts.sdcpp.patch backend-patches/dit/061-hexagon-repack-threaded.ggml.patch backend-patches/dit/062-loader-pread-chunks.sdcpp.patch backend-patches/dit/063-hexagon-qknorm-rope-blocks.ggml.patch backend-patches/dit/064-cache-buffer-reuse.sdcpp.patch backend-patches/dit/065-hexagon-qknorm-rope-l2fetch.ggml.patch backend-patches/dit/066-hexagon-cpy-tensor-threaded.ggml.patch backend-patches/dit/067-opencl-mali-old-drivers.ggml.patch backend-patches/dit/068-wan-lora-expert-prefix.patch backend-patches/dit/069-hexagon-binary-wide-rows.ggml.patch backend-patches/dit/070-minimax-h3-audio-vae-on-te-backend.sdcpp.patch backend-patches/dit/071-minimax-h3-fused-partial-rope.sdcpp.patch backend-patches/dit/072-minimax-h3-curve-knots.sdcpp.patch backend-patches/dit/073-minimax-h3-htp-matmul-scale.sdcpp.patch backend-patches/dit/074-minimax-h3-vae-fused-rope.sdcpp.patch backend-patches/dit/075-minimax-h3-vae-flash-attn.sdcpp.patch backend-patches/dit/076-minimax-h3-clipproj.sdcpp.patch backend-patches/dit/079-minimax-h3-vae-encode-one-frame.sdcpp.patch backend-patches/dit/080-opencl-yield-to-screen.ggml.patch backend-patches/dit/081-opencl-qkv-preprocess-pr28446.ggml.patch backend-patches/dit/082-fa-check-test.ggml.patch backend-patches/dit/083-opencl-xmem-attn-fp32-scores.ggml.patch backend-patches/dit/084-opencl-xmem-attn-diag.ggml.patch backend-patches/dit/085-opencl-adreno-gemm-dst-view-offs.ggml.patch backend-patches/dit/087-esrgan-pixel-unshuffle.sdcpp.patch backend-patches/dit/088-hexagon-cpy-interleave2.ggml.patch backend-patches/dit/089-loader-poll-1ms.sdcpp.patch backend-patches/dit/091-hexagon-cpy-interleave2-4d.ggml.patch backend-patches/dit/093-moss-lora-fused-qkv.sdcpp.patch backend-patches/dit/094-lowres-spectrum-spike.sdcpp.patch backend-patches/dit/095-keep-runners-spike.sdcpp.patch backend-patches/dit/096-beta57-radiance-shift.sdcpp.patch"
+      cmake_args:
+        description: "Extra CMake arguments for dit/build.sh (blank = none)"
+        default: ""
+      extra_target:
+        description: "Also build this target and upload it beside the engine, e.g. sd-cli for an on-device spike (blank = none)"
+        default: ""
+      skels:
+        description: "Extra Hexagon skels to build beside v79/v81, space-separated, e.g. 'v73 v75' (blank = none). The skel depends only on ggml, never on a *.sdcpp.patch"
+        default: ""
+      opencl:
+        description: "Also build ggml's OpenCL backend with the Adreno kernels (DiT on the GPU, docs/GPU-ROUTES.md)"
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      # The image ships ~30 GB of things this build never touches, and the
+      # Hexagon SDK plus a full ggml/sd.cpp build is not small. Reclaiming first
+      # is cheaper than diagnosing a link step that died with ENOSPC.
+      - name: Reclaim disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost \
+                      /usr/local/lib/android/sdk/ndk /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/powershell /usr/share/swift || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          path: nightmare
+
+      # Shallow: this is a build input, not something we develop here.
+      - name: Clone local-dream (engine wrapper + build script)
+        run: |
+          git clone --depth 1 ${{ inputs.local_dream_ref && format('--branch {0}', inputs.local_dream_ref) || '' }} \
+            https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          echo "local-dream $(git rev-parse HEAD)"
+
+      # ⚠ ONLY the stable-diffusion.cpp submodule. local-dream also pins MNN,
+      # xtensor, tokenizers-cpp and more for its CPU/QNN core, none of which the
+      # engine links against — fetching them all is minutes and gigabytes spent
+      # on code this job never compiles.
+      #
+      # ⚠⚠ Its PINNED commit, not a branch: the engine is built against the
+      # revision upstream tested, and `dit/*.patch` is written against that tree.
+      # Overriding `sdcpp_ref` is how you move it deliberately.
+      - name: Fetch stable-diffusion.cpp at the pinned revision
+        run: |
+          cd local-dream
+          git submodule update --init --recursive --depth 1 -- app/src/main/cpp/3rdparty/stable-diffusion.cpp
+          cd app/src/main/cpp/3rdparty/stable-diffusion.cpp
+          if [ -n "${{ inputs.sdcpp_ref }}" ]; then
+            git fetch --depth 1 origin "${{ inputs.sdcpp_ref }}"
+            git checkout FETCH_HEAD
+            git submodule update --init --recursive --depth 1
+          fi
+          echo "SDCPP_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "GGML_SHA=$(git -C ggml rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Install NDK ${{ inputs.ndk_version }}
+        run: |
+          SDK="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDK" --licenses >/dev/null 2>&1 || true
+          # r29 has lived on the canary channel; try stable first so a released
+          # build is preferred, then widen rather than fail on channel alone.
+          "$SDK" "ndk;${{ inputs.ndk_version }}" || "$SDK" --channel=3 "ndk;${{ inputs.ndk_version }}"
+          NDK="$ANDROID_HOME/ndk/${{ inputs.ndk_version }}"
+          if [ ! -d "$NDK" ]; then
+            echo "::error::NDK ${{ inputs.ndk_version }} did not install"; ls "$ANDROID_HOME/ndk" || true; exit 1
+          fi
+          echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+
+      # The SDK is not redistributable as a tarball but IS inside the public
+      # toolchain image llama.cpp uses, which is the route upstream's build.sh
+      # documents. `docker create` never starts the container: this is a file
+      # copy out of an image layer, not a container build.
+      - name: Extract the Hexagon SDK
+        run: |
+          set -euo pipefail
+          docker create --name hexsdk ghcr.io/snapdragon-toolchain/arm64-android:${{ inputs.hexagon_tag }}
+          DEST="$RUNNER_TEMP/hexsdk"
+          mkdir -p "$DEST"
+          # NOT plain `docker cp DIR DEST`. That replays the image's own modes as
+          # it extracts, and this SDK has directories without an owner-write bit,
+          # so the copy creates 6.6.0.0 read-only and then fails on the very next
+          # entry with "mkdir .../6.6.0.0/build: permission denied" -- which it
+          # does whether the destination is root-owned or ours, because the
+          # destination was never the problem.
+          #
+          # Streaming the tar and unpacking it ourselves applies our umask
+          # instead, and a chmod afterwards makes sure the toolchain can write
+          # its own temporaries.
+          docker cp hexsdk:/opt/hexagon - | tar -x -C "$DEST" --no-same-permissions --no-same-owner
+          docker rm hexsdk
+          chmod -R u+rwX "$DEST"
+          # The SDK root is a versioned directory (6.6.0.0 in image tag v0.7);
+          # find it rather than hardcode a version that moves with the tag.
+          # (`dirname` rather than a `find -printf` format: the format string has
+          # to survive YAML, and a doubled backslash makes printf emit a literal
+          # escape instead of a newline.)
+          MARK=$(find "$DEST" -maxdepth 3 -name setup_sdk_env.source | sort -V | tail -1)
+          if [ -n "$MARK" ]; then
+            ROOT=$(dirname "$MARK")
+          else
+            ROOT=$(find "$DEST" -mindepth 2 -maxdepth 2 -type d -name '[0-9]*' | sort -V | tail -1)
+          fi
+          if [ -z "$ROOT" ]; then
+            echo "::error::no Hexagon SDK root under $DEST"; find "$DEST" -maxdepth 3 | head -40; exit 1
+          fi
+          echo "HEXAGON_SDK_ROOT=$ROOT" >> "$GITHUB_ENV"
+          echo "found SDK at $ROOT"
+          ls -ld "$ROOT" "$ROOT/build" 2>&1 | head -4
+          du -sh "$ROOT" || true
+
+      # Ours, if any.
+      #
+      # ⚠⚠⚠ `--directory`, and from the REPO ROOT. `git apply` resolves a
+      # patch's paths against the repository root, NOT the working directory, so
+      # `cd app/src/main/cpp && git apply` looks for `local-dream/include/...`,
+      # finds nothing, prints "Skipped patch" for every file -- and **exits 0**.
+      # Run 35600769616 rebuilt the baseline byte for byte and reported the
+      # patch step as a success.
+      #
+      # ⚠⚠ Hence the assertion. A patch step that can no-op silently is worse
+      # than one that fails, because the artifact it produces looks right and is
+      # not. `git diff --quiet` returns non-zero when the tree changed, so an
+      # unchanged tree is the error.
+      - name: Apply patch
+        if: inputs.patch != ''
+        run: |
+          set -euo pipefail
+          SDCPP=local-dream/app/src/main/cpp/3rdparty/stable-diffusion.cpp
+          # ⚠ In ORDER, and each one checked. 002 bumps the ABI that 001 set, so
+          # applying them out of order or skipping one fails loudly here rather
+          # than producing an engine whose version is a surprise.
+          #
+          # ⚠⚠⚠ A `*.sdcpp.patch` goes to the stable-diffusion.cpp SUBMODULE,
+          # which is its own git repository. It is applied from THAT root with
+          # paths relative to it -- `git apply` from local-dream with
+          # `--directory` resolves against the PARENT's index, which does not
+          # track anything inside a gitlink, so the patch would be skipped and
+          # the step would still exit 0. That exact silent no-op cost run
+          # 35600769616 a byte-identical rebuild reported as a success.
+          for rel in ${{ inputs.patch }}; do
+            echo "--- $rel"
+            case "$rel" in
+              # ggml is a submodule of THAT submodule: same trap, one level down.
+              *.ggml.patch)  repo="$SDCPP/ggml"; args="" ;;
+              *.sdcpp.patch) repo="$SDCPP"; args="" ;;
+              *)             repo=local-dream; args="--directory=app/src/main/cpp" ;;
+            esac
+            # ⚠⚠ Per PATCH, not once at the end. `git diff --quiet` on the whole
+            # tree cannot tell "003 did nothing" from "001 already changed
+            # something", so the assertion compares the diff either side of
+            # each apply.
+            # ⚠ `add -A -N` first: a file an earlier patch CREATED is untracked and
+            # invisible to `git diff`, so a patch that edits only it (dit/035 on
+            # 028's moss_image.hpp) read as "applied nothing". Intent-to-add puts
+            # its content in the diff without staging it.
+            git -C "$repo" add -A -N
+            before=$(git -C "$repo" diff | sha256sum)
+            git -C "$repo" apply -v $args "$GITHUB_WORKSPACE/nightmare/$rel"
+            after=$(git -C "$repo" diff | sha256sum)
+            if [ "$before" = "$after" ]; then
+              echo "::error::$rel applied nothing -- $repo is unchanged"
+              exit 1
+            fi
+          done
+          echo "files touched:"
+          git -C local-dream diff --stat
+          git -C "$SDCPP" diff --stat
+          echo "PATCH_APPLIED=${{ inputs.patch }}" >> "$GITHUB_ENV"
+
+      - name: Record the ABI version
+        run: |
+          cd local-dream/app/src/main/cpp
+          V=$(sed -n 's/^#define DIT_ENGINE_ABI_VERSION \([0-9]*\).*/\1/p' include/DitEngine.h)
+          echo "ABI_VERSION=$V" >> "$GITHUB_ENV"
+          echo "DIT_ENGINE_ABI_VERSION=$V"
+
+      # The Adreno GPU path (docs/GPU-ROUTES.md). The NDK has no OpenCL and ggml-opencl is
+      # `find_package(OpenCL REQUIRED)`, so the Khronos headers + ICD loader are built here to
+      # LINK against; on the phone `/vendor/lib64/libOpenCL.so` answers that soname.
+      - name: OpenCL headers and ICD loader for Android
+        if: inputs.opencl == 'true'
+        run: |
+          set -euo pipefail
+          CL="$RUNNER_TEMP/opencl"
+          git clone --depth 1 https://github.com/KhronosGroup/OpenCL-Headers "$RUNNER_TEMP/ocl-h"
+          git clone --depth 1 https://github.com/KhronosGroup/OpenCL-ICD-Loader "$RUNNER_TEMP/ocl-icd"
+          cmake -S "$RUNNER_TEMP/ocl-h" -B "$RUNNER_TEMP/ocl-h/b" -DCMAKE_INSTALL_PREFIX="$CL"
+          cmake --install "$RUNNER_TEMP/ocl-h/b"
+          cmake -S "$RUNNER_TEMP/ocl-icd" -B "$RUNNER_TEMP/ocl-icd/b" -G Ninja             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake"             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 -DCMAKE_BUILD_TYPE=Release             -DOPENCL_ICD_LOADER_HEADERS_DIR="$CL/include" -DBUILD_TESTING=OFF
+          cmake --build "$RUNNER_TEMP/ocl-icd/b"
+          mkdir -p "$CL/lib" && cp "$RUNNER_TEMP/ocl-icd/b/libOpenCL.so" "$CL/lib/"
+          echo "OPENCL_ARGS=-DGGML_OPENCL=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DOpenCL_INCLUDE_DIR=$CL/include -DOpenCL_LIBRARY=$CL/lib/libOpenCL.so" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          cd local-dream/app/src/main/cpp
+          bash dit/build.sh ${{ inputs.cmake_args }} ${OPENCL_ARGS:-}
+          # ⚠ An OpenCL build NEEDS libOpenCL.so: a phone without it cannot load the engine at all.
+          "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -d dit/build/android/lib/arm64-v8a/libdit_engine.so 2>/dev/null | grep NEEDED || true
+          if [ -n "${{ inputs.extra_target }}" ]; then
+            cmake --build dit/build/android --target "${{ inputs.extra_target }}" -j "$(nproc)"
+            BIN=$(find dit/build/android -type f -name "${{ inputs.extra_target }}" | head -1)
+            if [ -z "$BIN" ]; then echo "::error::${{ inputs.extra_target }} built but not found"; exit 1; fi
+            mkdir -p "$GITHUB_WORKSPACE/out"
+            cp "$BIN" "$GITHUB_WORKSPACE/out/"
+            echo "extra target: $BIN"
+          fi
+          # ggml's CMake declares an htp-<arch> target for v73/v75/v79/v81, but the engine
+          # is EXCLUDE_FROM_ALL and pulls in only v79/v81: build the others by name.
+          for V in ${{ inputs.skels }}; do
+            cmake --build dit/build/android --target "htp-$V" -j "$(nproc)"
+          done
+          df -h /
+
+      # The app downloads a zip and takes the single entry named
+      # libdit_engine.so (`DitEngine.install`), so the archive is exactly that
+      # file — no directory prefix, nothing else inside.
+      - name: Package
+        run: |
+          set -euo pipefail
+          # ⚠ `app/src/main`, NOT `app/src/main/cpp`. build.sh resolves its
+          # output dirs as `$(cd ../.. && pwd)` from `cpp/dit`, which lands on
+          # `main` -- so the libraries are beside the Kotlin source tree, not
+          # under the C++ one.
+          cd local-dream/app/src/main
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp jniLibs/arm64-v8a/libdit_engine.so "$GITHUB_WORKSPACE/out/"
+          cp assets/ditlibs/libggml-htp-v79.so assets/ditlibs/libggml-htp-v81.so "$GITHUB_WORKSPACE/out/"
+          # ⭐ v75 (8 Gen 3, alpha since 1.6.125): upstream builds it and then DELETES it from
+          # assets (APK size), so it is taken from the ggml build dir. `ModelCatalog.DIT_GGML_MIN_ARCH`.
+          # ⚠ Only when this build made one: upstream's arch list is v79 v81, so it usually does
+          # NOT, and the v75 skel in the APK is the PC build from the same ggml
+          # (`dit-engine-abi105-a4/assets/ditlibs/README-v75.txt`). Run 38089788580 died here.
+          # The `skels` input builds them on purpose (v73: 8 Gen 2 / 8s Gen 3 / 8s Gen 4).
+          # ⚠ Every skel the `skels` input asked for (v85 was built and left behind, run 39442574609).
+          for V in v73 v75 ${{ inputs.skels }}; do
+            S=cpp/dit/build/android/sdcpp/ggml/src/ggml-hexagon/libggml-htp-$V.so
+            if [ -f "$S" ]; then cp "$S" "$GITHUB_WORKSPACE/out/"; else echo "no $V skel in this build"; fi
+          done
+          cd "$GITHUB_WORKSPACE/out"
+          zip -j -X "dit-engine-abi${ABI_VERSION}.zip" libdit_engine.so
+
+      # Everything `DitEngine.kt` pins, printed together so updating it is
+      # copying four numbers rather than measuring four files by hand. ⚠ The
+      # skels are NOT in the zip: they ride in the APK under
+      # `app/src/main/assets/ditlibs/`, which is gitignored and staged locally.
+      - name: Constants for DitEngine.kt
+        run: |
+          cd "$GITHUB_WORKSPACE/out"
+          ZIP="dit-engine-abi${ABI_VERSION}.zip"
+          {
+            echo "## DiT engine build"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| local-dream | \`$(git -C "$GITHUB_WORKSPACE/local-dream" rev-parse HEAD)\` |"
+            echo "| stable-diffusion.cpp | \`$SDCPP_SHA\` |"
+            echo "| ggml | \`$GGML_SHA\` |"
+            echo "| patch | \`${PATCH_APPLIED:-none (baseline)}\` |"
+            echo "| ABI version | \`$ABI_VERSION\` |"
+            echo
+            echo '```kotlin'
+            echo "const val BYTES = $(stat -c%s "$ZIP")L        // the archive"
+            echo "private const val FILE_BYTES = $(stat -c%s libdit_engine.so)L  // the unpacked .so"
+            echo "private const val SHA256 = \"$(sha256sum "$ZIP" | cut -d' ' -f1)\""
+            echo '```'
+            echo
+            echo "skels for \`app/src/main/assets/ditlibs/\`:"
+            for S in libggml-htp-v*.so; do
+              echo "- $S $(stat -c%s "$S") bytes, sha256 \`$(sha256sum "$S" | cut -c1-16)…\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: dit-engine-abi${{ env.ABI_VERSION }}
+          path: out/
+          if-no-files-found: error

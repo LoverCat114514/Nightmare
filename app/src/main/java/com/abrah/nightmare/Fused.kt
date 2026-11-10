@@ -1,0 +1,2764 @@
+package com.abrah.nightmare
+
+/**
+ * ⭐⭐⭐ The reworked node set — `docs/ARCHITECTURE.md` §5.7.
+ *
+ * **The frozen binary is the unit.** There is no runtime compiler on the NPU, so
+ * nobody can recombine the inside of a pipeline — ⇒ the whole process is ONE
+ * node. Ten types that existed only because a latent was visible on a wire fuse
+ * into [RenderNode]; what is left is a set a person can hold in their head.
+ *
+ * ⚠⚠ This does NOT undo the decomposition. `/encode_text`, `/vae_encode`,
+ * `/latent_blend` and `/vae_decode` are what this file is MADE OF, and they stay
+ * reachable from a plugin and from the harness. The op surface and the node set
+ * simply stopped being the same list.
+ *
+ * ⚠ Everything here calls the SAME function the node it replaces called —
+ * [CropNode.render], [MaskCropNode.cut], [VaeDecodeNode.decode],
+ * [MaskRaster.rasterise], [InpaintPixels.composite]. §5.6 step 4: two surfaces
+ * that must agree call one function, and this file would otherwise be the
+ * second hand-rolled copy of five of them.
+ */
+
+/**
+ * ⭐⭐ The prompt, as TEXT — one node for every family.
+ *
+ * ⚠⚠ `sd.clip_encode` emitted a COND, which is encoded BY a checkpoint and
+ * belongs to it: one prompt node could never feed two samplers on two models,
+ * and that is exactly what chaining across checkpoints needs ([Value.Prompt]).
+ * It also meant two prompt nodes in the palette, since the video path had to
+ * have its own.
+ *
+ * ⚠ App-side, so it costs nothing and runs in a preview — the old one reached
+ * the backend just to hold some text.
+ */
+object PromptNode : NodeType {
+    override val name = "core.prompt"
+    override val version = "1"
+    override val inputs = emptyList<Port>()
+    override val outputs = listOf(Port("prompt", "PROMPT"))
+    override val category = "source"
+
+    /** ⚠ Twice the ordinary width: this node is two boxes of prose. */
+    override val defaultWidth = com.abrah.nightmare.canvas.Sizes.PROSE_NODE_WIDTH
+
+    /** ⚠ Both, in the order they are read; the negative is the one people check. */
+    override val prose = listOf("prompt", "negative")
+
+    /**
+     * ⚠⚠ The defaults are the CHECKPOINT's, not literals — an anime model and a
+     * photographic one want opposite negatives, and the catalogue has carried
+     * both since it was written ([ModelCatalog.ModelSpec.prompt]).
+     *
+     * ⚠⚠ An imported model still carries no text of its OWN — we know nothing
+     * about a checkpoint someone brought, and handing it a built-in's prompt
+     * would bias it toward a model it is not. ⭐ Since 2026-09-15 it falls back
+     * to the FAMILY's general-purpose pair instead of to a blank box
+     * ([ModelSpec.starterPrompt]): quality tags carry no style claim, so they
+     * bias nothing, and an import no longer opens on nothing at all.
+     */
+    override val widgets get() = listOf(
+        Widget(
+            "prompt", "string", SelectedModel.spec.starterPrompt,
+            hintRes = R.string.hint_what_draw,
+        ),
+        Widget(
+            "negative", "string", SelectedModel.spec.starterNegative,
+            hintRes = R.string.hint_negative,
+        ),
+    )
+
+    override fun contextKey(node: Node): ContextKey? = null
+
+    override suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value {
+        val p = effectiveParams(node)
+        return Value.Prompt(p["prompt"].orEmpty(), p["negative"].orEmpty())
+    }
+}
+
+/**
+ * ⭐⭐⭐ **The SD sampler — four types, one implementation.**
+ *
+ * `docs/ARCHITECTURE.md` §5.7. It absorbs `sd.vae_encode`, `sd.vae_decode`,
+ * `sd.latent_blend`, `image.mask`, `image.mask_crop` and `image.paste`, none of
+ * which passed the test that earns a node.
+ *
+ * ⚠⚠ **It forks on CAPABILITY and on FAMILY** — the user's call, 2026-09-15,
+ * against a recommendation to fork on capability alone:
+ *
+ * | | text/image | inpaint |
+ * |---|---|---|
+ * | **SD 1.5** | `sd15.sample` | `sd15.inpaint` |
+ * | **SDXL** | `sdxl.sample` | `sdxl.inpaint` |
+ *
+ * ⭐ The capability fork is what was actually asked for and it is plainly right:
+ * an image-to-image flow was being handed a mask editor it has no use for, and
+ * a node's ports cannot depend on a checkpoint. ⇒ The `sample` types have no
+ * mask port, no painting params and no mask editor **at all**, so the surface a
+ * user meets is the surface they need.
+ *
+ * ⚠⚠ The family fork was the user's choice over the alternative of one pair
+ * with a model dropdown. What it buys is a palette that states the family and a
+ * node that cannot be pointed at a checkpoint of the wrong kind. What it costs
+ * is written down here so it is not rediscovered: **a graph chaining SD 1.5 into
+ * SDXL needs two different node types for the same job**, and every rule keyed
+ * on a sampler's type name must ask a SET (`SAMPLER_TYPES`, `BatchParams`,
+ * `FRAMES`/`PAINTS`, `hiddenKnob`) rather than compare one string.
+ *
+ * ⇒ **One class, four registrations.** Four copies of this logic would be four
+ * places for the blend argument order to drift, and that mistake is invisible
+ * (`FusedSamplerTest`). The differences are exactly two constructor arguments.
+ *
+ * ⚠ **Latent-blend vs a 9-channel inpaint model is NOT a fifth type — and not a
+ * chip either.** Same ports, same editor; the MODEL the node names is the whole
+ * choice. An inpaint render always sends its picture and mask with `sample`, and
+ * the backend uses them only when its UNet takes 9 channels
+ * (`backend-patches/006`). The user's call, 2026-09-19, replacing the chip this
+ * note used to promise: a knob that only restates the model is not a knob.
+ *
+ * ⚠⚠ **It does not draw its own picture.** The user's call, 2026-09-15: a
+ * render appears on `core.output` and nowhere else, so a graph says where its
+ * result goes. The executor refuses a run whose render has nowhere to land.
+ */
+class SdSampler(
+    override val name: String,
+    /** ⚠ Which checkpoints this node may name, and the sizes it may render. */
+    val family: Family,
+    /** Whether this type carries a mask, its editor and the paste back. */
+    val inpaint: Boolean,
+) : NodeType {
+    /** ⚠ Reaches the backend, so never run for a preview. [NodeType.appSide]. */
+    override val appSide = false
+    override val version = "1"
+
+    /**
+     * ⚠ `prompt` is the only one that is NOT optional: unwired, there is
+     * nothing to render and [run] says so by name.
+     *
+     * ⚠⚠ `mask` is a PORT as well as a painting. Unwired, the mask painted on
+     * this node is used; wired, an upstream mask wins. That is the door a Tier 1
+     * segmenter (CLIPSeg, SAM 2.1) walks through later without re-adding a mask
+     * node — and it exists NOW because a node's shape cannot be widened once
+     * saved workflows depend on it (§7).
+     */
+    override val inputs = listOfNotNull(
+        Port("prompt", "PROMPT"),
+        Port("image", "IMAGE"),
+        // ⚠⚠ **No `mask` port** — removed 2026-09-17 at the user's call. The
+        // mask is painted or tapped in the node's own editor; a wired mask was a
+        // second way to supply it that nobody used and every inpaint node paid
+        // a port row for. `WorkflowIo.migrateType` drops an old saved wire.
+        // ⚠⚠⚠ **No `segmenter` port since 2026-09-22.** Tap to select is a
+        // CHECKBOX on this node ([TAP_SELECT]) and `mask.segment_model` is
+        // deleted, so a port for wiring one in is a socket for a plug that no
+        // longer exists. Reported the same day: *"the inpaint node still shows
+        // the wiring point for segmenter, remove it"*.
+        // ⚠ A saved flow's wire into it is dropped by `WorkflowIo`, which
+        // already drops wires to ports a node no longer has — the same thing
+        // that happened when `mask` was removed on 2026-09-17.
+        // ⭐⭐ FLUX.2 Klein's edit REFERENCE — a second picture the model reads
+        // but does not redraw. Unlike `image` it is never cropped to the
+        // canvas: the engine VAE-encodes each reference at its OWN aspect
+        // ratio and positions it with FLUX.2's reference-token RoPE scheme, so
+        // fitting it to the output would throw away the thing that makes it a
+        // reference.
+        //
+        // ⚠ Wiring it WITHOUT `image` is allowed and means "generate fresh,
+        // guided by this" — `native_edit` fires on references alone
+        // (`PipelineDit::generate`). The user's call, 2026-09-20.
+        //
+        // ⚠⚠ FLUX.2 ONLY, and the port is absent elsewhere rather than
+        // present-and-failing: the backend throws "native reference editing is
+        // only supported by FLUX.2 Klein" for Z-Image, and a port that always
+        // errors is worse than no port. Same reasoning that keeps Z-Image out
+        // of the inpaint picker.
+        // ⭐⭐ …and on SD 1.5 Swap, the IP-Adapter REFERENCE (2026-09-30): the same
+        // port name for the same idea — a picture the render reads but does not
+        // redraw — cut by the same REF region. ⚠ A Swap model converted before
+        // IP-Adapter refuses it with a message ([SwapInputs.resolve]).
+        // ⭐ SDXL Swap too since 1.6.101 (backend 024).
+        if (family.edit || family == Family.SD15_SWAP || family == Family.SDXL_SWAP) Port("reference", "IMAGE") else null,
+        // ⭐ Images 3 and 4 on a DiT edit (the user's call, 2026-10-21: up to 4 in all): sent after `reference`, whole,
+        // bounded by [REF_MAX]. ⚠ Shown one at a time in the graph ([inputsFor]): wiring one reveals the next.
+        *(if (family.edit && family.dit && !inpaint) EXTRA_REFS.map { Port(it, "IMAGE") }.toTypedArray() else emptyArray()),
+        // ⭐⭐ SD 1.5 Swap's ControlNet picture — OPTIONAL: unwired, the picture
+        // picked on the node is used ([CONTROL_IMAGE]). Swap only, for the same
+        // reason `reference` is FLUX.2 only: a port that always errors is worse
+        // than no port.
+        // ⭐ SDXL Swap too since 1.6.101 (backend 023).
+        if (family == Family.SD15_SWAP || family == Family.SDXL_SWAP) Port(CONTROL, "IMAGE") else null,
+    )
+    override val outputs = listOf(Port("image", "IMAGE"))
+
+    /** ⭐ Growing reference ports: [EXTRA_REFS] each appear once the reference before it is wired (or it is). */
+    override fun inputsFor(node: Node): List<Port> = inputs.filter { port ->
+        val i = EXTRA_REFS.indexOf(port.name)
+        i < 0 || node.inputs[port.name] != null || node.inputs[if (i == 0) "reference" else EXTRA_REFS[i - 1]] != null
+    }
+    /** ⚠ Inpaint is its OWN palette section (the user's call, 2026-09-16). */
+    override val category = if (inpaint) "inpaint" else "generate"
+
+    /**
+     * ⭐ One palette card per JOB, a chip per family — [NodeType.paletteGroup].
+     * ⚠ No "sample" anywhere a person reads it (the user's call, 2026-09-16),
+     * and no "Text / image to" either (2026-09-17): the tab already says
+     * Generate, and in a half-width card "Text / image to video" cut off to
+     * read exactly like this one — the video card looked missing.
+     */
+    override val paletteName = if (inpaint) "Inpaint" else "Image"
+    override val paletteGroup = if (inpaint) "sd.inpaint" else "sd.generate"
+    override val paletteVariant = family.label
+
+    /**
+     * ⭐ `SDXL Inpaint`, or `SD 1.5 Text to image` until a photo is wired in.
+     *
+     * ⭐⭐ **FLUX.2 says "Image edit", not "Image to image"** — the user's
+     * call, 2026-09-20. It is not the same job: Klein takes the base as a
+     * clean reference and runs its full distilled schedule, which is why its
+     * denoise is born at 1.0 ([defaultDenoise]) and why upstream labels the
+     * whole path "edit" rather than img2img.
+     *
+     * ⚠ The condition is upstream's own, to the letter: an edit is a base
+     * image **or** a reference. A FLUX.2 node with only a reference wired is
+     * editing too — "generate fresh, guided by this" (`docs/MODELS.md` §9).
+     */
+    override fun titleFor(node: Node): String = family.label + " " + jobFor(node)
+
+    /**
+     * ⭐⭐ The JOB alone, without the family — what [titleFor] appends.
+     *
+     * ⚠⚠ Split out because a node card cannot fit both: "SD 1.5 Image to
+     * image" ellipsised to `SD 1.5 Imag…` at the canvas's own width, cutting
+     * off the one part that distinguishes text-to-image from image edit from
+     * inpaint. ⇒ [com.abrah.nightmare.nodeNameOf] puts this on the big line
+     * and the family on the small one; [titleFor] stays whole for the run log
+     * and the report, where there is room.
+     */
+    fun jobFor(node: Node): String = when {
+        inpaint -> "Inpaint"
+        family.edit &&
+            (node.inputs["image"] != null || node.inputs["reference"] != null) -> EDIT_LABEL
+        node.inputs["image"] != null -> "Image to image"
+        else -> "Text to image"
+    }
+
+    override val defaultId = family.slug + if (inpaint) "_inpaint" else "_generate"
+
+    override val about = if (inpaint) {
+        "paint an area of a photo and re-imagine only that"
+    } else {
+        "a prompt, or a prompt and a photo, into a picture"
+    }
+
+    /** ⚠ Its picture is its OUTPUT, so a tap on it opens the viewer (§5.7). */
+    override val interactive = false
+
+    /** ⚠⚠ The render belongs to `core.output`. [NodeType.showsResult]. */
+    override val showsResult = false
+
+    companion object {
+        /**
+         * ⭐ The last few pictures under a fix ([run]), by base key. ⚠ A few, not one: two samplers in a flow each
+         * keep theirs. ⚠ An entry whose picture the store dropped is a miss, never a blank.
+         */
+        private val bases = object : LinkedHashMap<String, Value.Image>(8, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Value.Image>?) = size > 4
+        }
+
+        internal fun baseMemo(ctx: NodeCtx, key: String): Value.Image? = synchronized(bases) {
+            bases[key]?.takeIf { ctx.images.get(it.id) != null }
+        }
+
+        internal fun remember(key: String, img: Value.Image) = synchronized(bases) { bases[key] = img }
+
+        /**
+         * ⭐ ONE answer for what a fix pass renders with: [p0] at [part]'s strength (the node's Fix strength for null)
+         * and the fix's own seed ([com.abrah.nightmare.detail.Detailer.seedOf]). ⚠⚠ The per-part loop rebuilt it
+         * without the seed, so a random Fix seed redrew the same face every Run, and Results, which files a picture
+         * by its pixels, kept none of the "new" ones (the user, 1.6.222).
+         */
+        internal fun fixParams(
+            p0: Map<String, String>, base: Map<String, String>, part: com.abrah.nightmare.detail.PartDetector.Part?,
+        ): Map<String, String> {
+            val d = com.abrah.nightmare.detail.Detailer
+            val strength = if (part == null) base[d.DETAIL_DENOISE] ?: d.DEFAULT_DENOISE else d.denoiseOf(base, part).toString()
+            return p0 + ("denoise" to strength) + ("seed" to d.seedOf(base))
+        }
+
+        /** ⭐ The Hires fix switch ([hiresFix]); the id is the row's words ("Hires fix"). */
+        const val HIRES = "hires_fix"
+        /**
+         * ⭐ Enlarge ×2 ([enlarge]) — every sampler WITHOUT [HIRES] (the user's call, 2026-10-11): the
+         * render through the first installed upscaler, nothing redrawn, so whatever is wired next
+         * (an inpaint fixing faces) gets the big picture. ⚠ One of the two per node, never both.
+         */
+        const val ENLARGE = "enlarge"
+        const val START_FROM = "start_from"
+        const val FROM_NOISE = "noise"
+        const val FROM_IMAGE = "image"
+
+        /**
+         * ⚠⚠ The VAE encode's noise, FIXED. It is what makes one picture encode
+         * to one latent, so every render downstream of it is reproducible only
+         * while this does not move — see the widget list for why it is not one.
+         */
+        const val ENCODE_SEED = 42
+
+        /** ⭐ A1111's img2img colour correction ([ColorTools.matchColors]); the id is the row's words. */
+        const val MATCH_COLORS = "match_colours"
+
+        /** ⭐ A1111's variation seed and its strength ([variationOf], backend 037). */
+        const val SUBSEED = "subseed"
+        const val SUBSEED_STRENGTH = "subseed_strength"
+
+        /** ⚠ A DiT detail patch's edge at most: a face needs no megapixel, and each costs a full DiT run. */
+        const val DETAIL_DIT_EDGE = 768
+
+        /**
+         * ⚠ The stitched picture's longest edge. 4096 until 2026-10-13: a big photo
+         * outpainted (and then auto-upscaled) came out 5000 px and up and lagged the
+         * phone; the user set 2048.
+         */
+        const val STITCH_MAX_EDGE = 2048f
+
+        /**
+         * ⭐ The reference region's params. Named apart from `x`/`y`/`w`/`h`
+         * so a node can frame its base and crop its reference independently.
+         */
+        /**
+         * ⭐⭐ The LoRA adapters this node renders with: a comma-separated list
+         * of `file.safetensors@strength`, strength optional and 1.0 by default.
+         *
+         * ⚠⚠ A NAME, never a path. The file is resolved inside
+         * [BackendProcess.lorasDir], because that is the only directory the
+         * backend can open one from (`docs/ROADMAP.md` §2f) — a saved workflow
+         * carrying an absolute path would also break the moment it moved to
+         * another phone.
+         *
+         * ⚠ DiT only. A QNN pipeline has nowhere to put a LoRA, so the field is
+         * not offered on those families.
+         */
+        const val LORAS = "loras"
+
+        /**
+         * ⭐⭐ SD 1.5 Swap's ControlNet ([SwapInputs]): the type, its strength and
+         * the picture picked ON the node. ⚠ The [CONTROL] port, when wired, wins
+         * over the picked picture — the user's design, 2026-09-29.
+         */
+        const val CONTROL = "control"
+        const val CONTROLNET = "controlnet"
+        const val CONTROL_STRENGTH = "control_strength"
+        const val CONTROL_IMAGE = "control_image"
+
+        /**
+         * ⭐ The ControlNet picture's OWN crop, when it is not the node's photo
+         * (`canvas/SwapWiring.kt`) — the sibling of [REF_X]. Edited in the
+         * ControlNet tile over the framed photo; ⚠ never read when the control
+         * picture IS the photo, which follows the node's crop window instead.
+         */
+        const val CTL_X = "ctl_x"
+        const val CTL_Y = "ctl_y"
+        const val CTL_W = "ctl_w"
+        const val CTL_H = "ctl_h"
+
+        /** ⭐ Is the ControlNet picture the node's own photo — wired from the same node, or unset? */
+        fun controlIsPhoto(node: Node): Boolean {
+            val c = node.inputs[CONTROL]?.node ?: return node.params[CONTROL_IMAGE].isNullOrBlank()
+            return c == node.inputs["image"]?.node
+        }
+
+        /**
+         * ⭐⭐ What the ControlNet will SEE — canny's edges, the depth map, the
+         * skeleton — from the picture wired into `control` (else one picked on
+         * the node, else the photo). ONE function for the tile and the canvas
+         * thumbnail, so the two cannot show different things (the canvas showed
+         * the SOURCE until 2026-10-01). Null with ControlNet off or no picture.
+         */
+        fun controlHintFor(
+            context: android.content.Context?,
+            node: Node,
+            p: Map<String, String>,
+            wired: android.graphics.Bitmap?,
+            photo: android.graphics.Bitmap?,
+            picked: android.graphics.Bitmap? = null,
+        ): SwapInputs.Hint? {
+            val cn = p[CONTROLNET].orEmpty().ifBlank { SwapInputs.NONE }
+            if (cn == SwapInputs.NONE) return null
+            val raw = wired ?: picked ?: photo ?: return null
+            // ⚠⚠ At the RUN's size ([SwapInputs.sizeFor] the node's family): the default 512 showed
+            // SDXL Swap a sparser canny than the 1024 pass its ControlNet is actually given.
+            val size = ModelCatalog.byId(p["model"].orEmpty())?.family?.let(SwapInputs::sizeFor) ?: SwapInputs.SIZE
+            return SwapInputs.hint(context, raw, cn, controlFrame(node, p, photo != null), size, swapAspect(node, p))
+        }
+
+        /**
+         * ⭐⭐ The region of the control picture the hint is cut from — ONE reading, run and tile:
+         * the node's crop window when the picture IS the photo, else its own [CTL_X] region
+         * (black past the picture: "nothing here" to all three kinds). Null with no photo and
+         * the photo as the control picture — the whole picture, contained.
+         */
+        fun controlFrame(node: Node, p: Map<String, String>, hasPhoto: Boolean): SwapInputs.Frame? =
+            if (controlIsPhoto(node)) swapFrame(node.type, p).takeIf { hasPhoto }
+            else SwapInputs.Frame(
+                p[CTL_X]?.toFloatOrNull() ?: 0f, p[CTL_Y]?.toFloatOrNull() ?: 0f,
+                p[CTL_W]?.toFloatOrNull() ?: 1f, p[CTL_H]?.toFloatOrNull() ?: 1f,
+                CropNode.PAD_BLACK,
+            )
+
+        /**
+         * ⭐⭐ The IP-Adapter reference as the encoder will read it — the `reference` picture cut
+         * by [REF_X]'s region (black past the picture: it may be zoomed out √2, like an inpaint
+         * frame), then letterboxed SQUARE ([IpAdapter.square] centre-crops, and a region shaped
+         * like the render would lose its sides). ONE function for the run and the tile.
+         */
+        fun ipReference(src: android.graphics.Bitmap, node: Node, p: Map<String, String>): android.graphics.Bitmap {
+            // ⚠ The untouched region is the whole picture FITTED in the render's shape — what
+            // the crop window opens on ([com.abrah.nightmare.canvas.pictureRegion]).
+            val r = com.abrah.nightmare.canvas.pictureRegion(
+                com.abrah.nightmare.canvas.CropRect(
+                    p[REF_X]?.toFloatOrNull() ?: 0f, p[REF_Y]?.toFloatOrNull() ?: 0f,
+                    p[REF_W]?.toFloatOrNull() ?: 1f, p[REF_H]?.toFloatOrNull() ?: 1f,
+                ),
+                src.width, src.height, swapAspect(node, p),
+            )
+            val region = CropNode.render(src, r.x, r.y, r.w, r.h, 0, 0, CropNode.PAD_BLACK).first
+            val side = maxOf(region.width, region.height)
+            return if (region.width == region.height) region else padToCanvas(region, side, side)
+        }
+
+        /**
+         * ⭐⭐ The render's shape (width / height) — the ASPECT's rectangle on a fixed-canvas
+         * family, the render size otherwise ([SdSampler.framesTo]). The shape a ControlNet /
+         * IP-Adapter crop window takes, and the box the hint is placed in.
+         */
+        fun swapAspect(node: Node, p: Map<String, String>): Float {
+            val (w, h) = framedSize(node.copy(params = p))
+            return if (w > 0 && h > 0) w.toFloat() / h else 1f
+        }
+
+        /**
+         * ⭐⭐ The canvas [params] render at: a fixed-canvas family's ([ModelSpec.fixedCanvas]) own square, whatever
+         * the node holds; the node's width and height otherwise. ⚠ GitHub #60: an SDXL Swap node holding 1536x2048
+         * launched the backend at that size, the backend rendered its frozen 1024², and the 3:4 crop asked for
+         * 1152x1536 out of it. The backend forces the canvas for these families, so the node's size is never news.
+         */
+        fun canvasOf(params: Map<String, String>): Res? =
+            ModelCatalog.byId(params["model"].orEmpty())?.takeIf { it.fixedCanvas }?.native
+
+        /** [SdSampler.framesTo], for a caller holding no type. */
+        fun framedSize(node: Node): Pair<Int, Int> {
+            val canvas = canvasOf(node.params)
+            val w = canvas?.width ?: node.params["width"]?.toIntOrNull() ?: 0
+            val h = canvas?.height ?: node.params["height"]?.toIntOrNull() ?: 0
+            val t = nodeAspect(node)?.let { ModelCatalog.aspectTarget(it, Res(w, h)) }
+            return if (t != null) t.width to t.height else w to h
+        }
+
+        /** ⭐⭐ SD 1.5 Swap's IP-Adapter: the adapter, its strength, the picture picked on the node. */
+        const val IP_ADAPTER = "ip_adapter"
+        const val IP_SCALE = "ip_scale"
+        const val IP_IMAGE = "ip_image"
+
+        /** ⭐ The node's crop window as [SwapInputs] takes it — the ONE reading, for the run and the tile. */
+        fun swapFrame(type: String, p: Map<String, String>) = SwapInputs.Frame(
+            p["x"]?.toFloatOrNull() ?: 0f, p["y"]?.toFloatOrNull() ?: 0f,
+            p["w"]?.toFloatOrNull() ?: 1f, p["h"]?.toFloatOrNull() ?: 1f,
+            padFill(type, p),
+        )
+
+        /**
+         * ⭐⭐ Tap to select, on an inpaint node — what `mask.segment_model`
+         * used to be a whole node for.
+         *
+         * ⚠ `tap_select`, so [knobLabel] reads "Tap select"; the inspector
+         * draws the row with the model's name and its download beside it.
+         */
+        const val TAP_SELECT = "tap_select"
+
+        /**
+         * ⭐⭐ Pick by name, on an inpaint node — the parser's chips beside
+         * the Tap tool (`docs/SEGMENTER.md` §8).
+         *
+         * ⚠ Its own switch rather than sharing [TAP_SELECT]: they are two
+         * models, two downloads and two tools, and one tick that revealed both
+         * would offer a tool whose model is not on the phone.
+         */
+        const val PICK_SELECT = "pick_select"
+
+        /**
+         * ⭐⭐ The auto mask chips on THIS node, comma-separated — `clothes`
+         * until someone picks otherwise. ⚠ On the node, so it is saved with the
+         * FLOW (the user's call, 2026-09-23: *"remembered for that flow"*), and
+         * it outlives the mask: a new photo drops `ops`, and
+         * [MaskNode.opsOf] rebuilds the picks from this.
+         */
+        const val PICK_TARGETS = "pick_targets"
+
+        /**
+         * ⭐⭐ Auto crop: a new photo is fitted WHOLE and padded as needed
+         * (`wholePhotoFraming`, the same framing the crop window opens on), and
+         * the crop window is not opened. The user's call, 2026-09-23. ⚠ Off in a
+         * new flow. ⚠ Drawn in the CROP tab, not the knob list.
+         */
+        const val AUTO_CROP = "auto_crop"
+
+        /**
+         * ⭐⭐ *Allow padding* on a FLUX.2 image edit: the frame may zoom out
+         * past the photo ([PadRule.PAD]) and the bars are filled with the Pad
+         * choice — green for an outpaint LoRA. The user's call, 2026-09-27.
+         * ⚠ Off in a new flow; drawn in the CROP window beside Pad.
+         */
+        const val ALLOW_PAD = "allow_pad"
+
+        /**
+         * ⭐⭐ Whether a node of [type] with params [p] runs under [PadRule.ZOOM]:
+         * every image-to-image sampler except a FLUX.2 edit with *Allow
+         * padding* (that one KEEPS its bars, [PadRule.PAD]). The same answer
+         * [padRuleOf] gives, from the params alone, so the run can ask it.
+         */
+        fun zoomsOut(type: String, p: Map<String, String>): Boolean {
+            val t = ALL.firstOrNull { it.name == type } ?: return false
+            return !t.inpaint && !(t.family.edit && p[ALLOW_PAD].equals("true", ignoreCase = true))
+        }
+
+        /**
+         * ⭐⭐ The fill the MODEL sees in the bars — the ONE reading for the run,
+         * the DiT run and the Swap hint. On [PadRule.ZOOM] it is always the
+         * blurred mirror (the user picked "mirrored edges", 2026-10-05; a hard
+         * mirror was replaced by this one for its seam — [CropNode.PAD_BLUR]),
+         * elsewhere the node's own Pad choice.
+         */
+        fun padFill(type: String, p: Map<String, String>): String =
+            if (zoomsOut(type, p)) CropNode.PAD_BLUR else p[CropNode.PAD] ?: CropNode.PAD_BLACK
+
+        /** Whether [node] is a FLUX.2 edit that may pad — [padRuleOf] asks. */
+        fun allowsPad(node: Node): Boolean {
+            val t = ALL.firstOrNull { it.name == node.type } ?: return false
+            return t.family.edit && !t.inpaint &&
+                node.params[ALLOW_PAD].equals("true", ignoreCase = true)
+        }
+
+        /**
+         * ⭐ The fills a sampler offers. ⚠ Green only where the bars are
+         * generated over — inpaint and FLUX.2 edit; elsewhere they are an
+         * honest "this photo is too small", which black says.
+         */
+        fun padOptions(family: Family, inpaint: Boolean): List<String> =
+            if (inpaint || family.edit) listOf(CropNode.PAD_BLACK, CropNode.PAD_BLUR, CropNode.PAD_GREEN)
+            else listOf(CropNode.PAD_BLACK, CropNode.PAD_BLUR)
+
+        const val REF_X = "ref_x"
+        const val REF_Y = "ref_y"
+        const val REF_W = "ref_w"
+        const val REF_H = "ref_h"
+
+        /**
+         * ⭐⭐⭐ **A reference is VAE-encoded at the OUTPUT CANVAS's size, never
+         * at its own** — so nothing this app does to a reference's pixels costs
+         * or saves a single byte.
+         *
+         * Measured on device 2026-09-20, the same two references through the
+         * same graph, with only the canvas changed:
+         *
+         * | reference sent | canvas 512x512 | canvas 1024x1024 |
+         * |---|---|---|
+         * | 512x512 | 384.00 MB | 1536.00 MB |
+         * | 341x512 | 380.25 MB | 1521.00 MB |
+         * | flux compute buffer | 491.50 MB | 1599.50 MB |
+         * | outcome | ✅ ok, 53.9 s | ❌ reaped by lmkd |
+         *
+         * Exactly 4x, which is the canvas AREA ratio; the 1% between the two
+         * rows is their differing aspect, not their pixel count. The engine
+         * announces it — `diffusion_engine.cpp: Using 'flux2' preset for
+         * reference images` — and resizes every reference before encoding it.
+         *
+         * ⚠⚠⚠ **This is why [REF_MAX] is not a memory control**, and why
+         * 1.5.513 (bound the reference to 512 px) and 1.5.516 (bound the base
+         * too) were both reverted: shrinking a reference does not make it
+         * cheaper, it only throws detail away before the engine scales it back
+         * up. 1.5.513 was written down as "right on its own terms,
+         * insufficient" — it was never right on its own terms either.
+         *
+         * ⭐ **Rule changed 2026-09-20, later the same day, at the user's ask.**
+         * This block first said "there is no reference-size knob" and deleted
+         * [REF_MAX] outright. That went one step too far: the knob is useless
+         * for MEMORY and that is what the measurement above proves, but it is
+         * not useless — it changes **what the model reads**, and a reference
+         * sent at 512 under a 1024 canvas is upscaled context rather than
+         * sharp context. Whether that helps or hurts a composition is a
+         * question about pictures, which no measurement here answers and the
+         * person holding the phone has to try. ⇒ [REF_MAX] is back, defaulting
+         * to sending the reference untouched, and its hint says plainly that
+         * it costs nothing and buys nothing but detail.
+         *
+         * ⇒ The only lever on what a reference COSTS is the output resolution,
+         * which lives in the Crop tab and is stated in the Reference tab's
+         * warning (`docs/UI.md` §8.12). `docs/MODELS.md` §9 has the rest.
+         */
+        const val REF_ENCODED_AT_CANVAS = true
+
+        /**
+         * ⭐⭐ The largest canvas a reference run fitted below v79, MEASURED (GitHub #35, a tester's
+         * SM8650, 2026-10-15): Klein 9B ran under 960x1024 and failed at it (2344 of 2304 MB for
+         * one block); Qwen 2.1 ran at 1024x1088 and failed at 1024x1152 (2629 of 2627 MB). Only
+         * measured models are listed: an unlisted one is never warned about on a guess.
+         */
+        val REF_FIT_BELOW_V79: Map<String, Long> = mapOf(
+            "flux2_klein_9b" to 896L * 1024,
+            "qwen_image_2_1_turbo" to 1024L * 1088,
+        )
+
+        /**
+         * ⚠ Pure: the canvas to suggest when a reference run of [modelId] at [w]x[h] is over what an
+         * [arch] chip fitted ([REF_FIT_BELOW_V79]), or null when it fits or nothing is measured. The
+         * same shape, both edges stepped DOWN on the DiT grid until the area fits.
+         */
+        fun refFitSuggestion(modelId: String, arch: Int, w: Int, h: Int): Res? {
+            if (arch !in 1..78) return null
+            val fit = REF_FIT_BELOW_V79[modelId] ?: return null
+            if (w.toLong() * h <= fit) return null
+            fun down(v: Double) = (ModelCatalog.DIT_MIN + ((v.toInt() - ModelCatalog.DIT_MIN) / ModelCatalog.DIT_STEP) * ModelCatalog.DIT_STEP)
+                .coerceAtLeast(ModelCatalog.DIT_MIN)
+            val scale = Math.sqrt(fit.toDouble() / (w.toLong() * h))
+            var sw = down(w * scale)
+            var sh = down(h * scale)
+            // ⚠ Floor to the grid can still leave one edge a step too big on an odd shape.
+            while (sw.toLong() * sh > fit && (sw > ModelCatalog.DIT_MIN || sh > ModelCatalog.DIT_MIN)) {
+                if (sw >= sh) sw -= ModelCatalog.DIT_STEP else sh -= ModelCatalog.DIT_STEP
+            }
+            return Res(sw, sh)
+        }
+
+        /**
+         * ⭐⭐ **The size a reference is SENT at — independent of the canvas.**
+         *
+         * ⚠⚠ Its own param, and that is the point: asked for 2026-09-20 after
+         * the Reference tab briefly drew the OUTPUT resolution (1.5.518), which
+         * meant changing it in one tab moved the other — *"dont share same
+         * resolution dropdown. have base image res. and reference img res so i
+         * can test, for example, 1024 base img and 512 reference"*.
+         *
+         * ⚠⚠⚠ **It does NOT change memory** — [REF_ENCODED_AT_CANVAS]. It is
+         * here so a composition can be tried with a coarser reference, not as
+         * a way out of an OOM, and its hint has to keep saying so or it will be
+         * reached for during the next crash the way it was during the last one.
+         */
+        const val REF_MAX = "ref_max"
+
+        /**
+         * ⭐⭐ A FLUX.2 Klein run that READS a picture (edit, image to image, inpaint, a reference) above 512x512
+         * streams its DiT under a 4 GiB budget (`DIT_MAX_VRAM` with `all=disk`, [ContextKey.memoryBudget]) below
+         * the 16 GB class. Every picture adds a full canvas of tokens AND a VAE encode, so the 3.9 GB DiT plus
+         * ~1.5 GB of compute is more than a 12 GB phone keeps free. Measured on the S25 2026-10-23, 576x1024 with
+         * a reference: unbudgeted, reaped by lmkd 7 s into the edit with 6.3 GB free (the user's crash at 5.3 GB
+         * free, the same); 2.75 GiB, 138 s; 4 GiB, 127 s, and it completed from 2.1 GB free. 512x512 with a
+         * reference renders unbudgeted in 20 s, so it keeps full speed, as does text to image.
+         * ⚠ Not an engine regression: the DiT (3,882 MB) and the compute (1,460 MB) match `docs/DIT.md` §9.
+         */
+        // ⚠ Not below v79: a chip there already runs EVERY DiT at its own 2.75 (`BackendProcess.lowArchDitBudget`, the
+        // ~3.1 GB map), and a key budget would override it with this larger one.
+        internal fun kleinEditBudget(family: Family, pictures: Int, w: Int, h: Int, ramBytes: Long, arch: Int): String? =
+            "4".takeIf {
+                family == Family.FLUX2 && pictures > 0 && w.toLong() * h > KLEIN_RESIDENT_EDIT_PX &&
+                    ramBytes in 1 until Prefs.LOWRAM_BELOW_BYTES && arch !in 1..78
+            }
+
+        /** ⚠ The largest Klein edit measured to fit resident on a 12 GB phone ([kleinEditBudget]). */
+        const val KLEIN_RESIDENT_EDIT_PX = 512L * 512L
+
+        /** ⭐ A DiT edit's references after `reference` (image 2): images 3 and 4 ([MAX_REFERENCES] in all). */
+        val EXTRA_REFS = listOf("reference_3", "reference_4")
+        const val MAX_REFERENCES = 4
+
+        /**
+         * ⚠ Longest edge, aspect always preserved. [REF_ORIGINAL] is the
+         * default: untouched pixels cost nothing extra, so anything else is a
+         * deliberate experiment.
+         */
+        const val REF_ORIGINAL = "Original"
+        val REF_SIZES = listOf(REF_ORIGINAL, "1536", "1024", "768", "512", "384")
+
+        /** ⭐ The four registrations. One class; two arguments of difference. */
+        val SD15 = SdSampler("sd15.sample", Family.SD15, inpaint = false)
+        /** ⭐ SD 1.5 Swap — LoRA + ControlNet per render. */
+        val SD15_SWAP = SdSampler("sd15swap.sample", Family.SD15_SWAP, inpaint = false)
+        /**
+         * ⭐⭐ SD 1.5 Swap INPAINT — route (a), the user's call 2026-09-29: masked
+         * img2img with the latent blend every 4-channel SD 1.5 inpaint already
+         * uses, so LoRA and ControlNet keep working inside the mask. A 9-channel
+         * Swap Inpaint TEMPLATE (route b) is the later, better-for-big-fills step.
+         */
+        val SD15_SWAP_INPAINT = SdSampler("sd15swap.inpaint", Family.SD15_SWAP, inpaint = true)
+        val SDXL = SdSampler("sdxl.sample", Family.SDXL, inpaint = false)
+        /** ⭐ SDXL Swap — LoRA, ControlNet and IP-Adapter per render ([Family.SDXL_SWAP], backends 018, 023, 024). */
+        val SDXL_SWAP = SdSampler("sdxlswap.sample", Family.SDXL_SWAP, inpaint = false)
+        /** ⭐ SDXL Swap inpaint — SDXL's own route: masked img2img with the latent blend, LoRA kept. */
+        val SDXL_SWAP_INPAINT = SdSampler("sdxlswap.inpaint", Family.SDXL_SWAP, inpaint = true)
+
+        /**
+         * ⭐⭐ A Swap node of EITHER family — the ones with ControlNet / IP-Adapter pictures.
+         * ⚠ The ONE answer: four places asked "SD 1.5 Swap?" by type name and SDXL Swap
+         * would have missed each (wiring, canvas hint, hint refresh) — 2026-10-07.
+         */
+        fun isSwapType(type: String): Boolean = type == SD15_SWAP.name || type == SD15_SWAP_INPAINT.name ||
+            type == SDXL_SWAP.name || type == SDXL_SWAP_INPAINT.name
+
+        /**
+         * ⭐ What a port is CALLED on screen. On a Swap node `reference` is IP-Adapter's picture,
+         * so it says so (the user, 2026-10-07: *"call it ipadapter … rather than reference, it
+         * gets confusing"*). ⚠ The WIRE keeps the name `reference` — saved flows, the executor
+         * and FLUX.2's own reference all read it ([docs/UI.md] §8.13b).
+         */
+        fun portLabel(type: String?, port: String): String =
+            if (port == "reference" && type != null && isSwapType(type)) "ipadapter" else port
+        val SD15_INPAINT = SdSampler("sd15.inpaint", Family.SD15, inpaint = true)
+        val SDXL_INPAINT = SdSampler("sdxl.inpaint", Family.SDXL, inpaint = true)
+        val ANIMA = SdSampler("anima.sample", Family.ANIMA, inpaint = false)
+        val ANIMA_INPAINT = SdSampler("anima.inpaint", Family.ANIMA, inpaint = true)
+        /**
+         * ⭐⭐ The DiT families.
+         */
+        val FLUX2 = SdSampler("flux2.sample", Family.FLUX2, inpaint = false)
+        val ZIMAGE = SdSampler("zimage.sample", Family.ZIMAGE, inpaint = false)
+        /** ⭐ Qwen Image 2.1 (upstream 440899f) — a native edit model like FLUX.2. */
+        val QWEN21 = SdSampler("qwen21.sample", Family.QWEN21, inpaint = false)
+        /** ⭐ Krea 2 Turbo — text to image, like Z-Image. */
+        val KREA2 = SdSampler("krea2.sample", Family.KREA2, inpaint = false)
+        /** ⭐ Anima on the DiT engine (`docs/ANIMA-GGML.md`) — text to image, like Krea 2. */
+        val ANIMA_DIT = SdSampler("animadit.sample", Family.ANIMA_DIT, inpaint = false)
+        /**
+         * ⭐ Iris 3B Turbo (`docs/IRIS.md`) — text to image, like Krea 2. ⚠ No `iris.inpaint`: an
+         * inpaint renders a cut of any size, and Iris is only right at its trained sizes
+         * ([ModelSpec.fixedSizes]); it stays out until a masked render is measured.
+         */
+        val IRIS = SdSampler("iris.sample", Family.IRIS, inpaint = false)
+        /** ⭐ MOSS-Image (`docs/MOSS.md`) — text to image only, its 8-step LoRA always on ([ModelSpec.ownLora]). */
+        val MOSS = SdSampler("moss.sample", Family.MOSS, inpaint = false)
+        /** ⭐ Ideogram 4 (`docs/ROADMAP.md`) — text to image only, its TurboTime LoRA always on ([ModelSpec.ownLora]). */
+        val IDEOGRAM = SdSampler("ideogram.sample", Family.IDEOGRAM, inpaint = false)
+        /** ⭐ FLUX.3 Image Klein (`docs/DIT.md`) — text to image only, as Ideogram, until its edit is measured. */
+        val FLUX3 = SdSampler("flux3.sample", Family.FLUX3, inpaint = false)
+        /** ⭐ Fibo 2.0 Edit Turbo (GH #69, `dit/056`): an editor, its picture the reference ([Family.edit]); no inpaint. */
+        val FIBO2 = SdSampler("fibo2.sample", Family.FIBO2, inpaint = false)
+        /**
+         * ⭐⭐ **DiT inpaint = masked img2img of the cut + the feathered paste
+         * back** — Z-Image, Qwen Image 2.1 and Krea 2 (the user's call,
+         * 2026-10-05; asked for on Z-Image). ONE `/generate` with the cut and
+         * its mask ([runDitMasked]); the engine's `mask_image` is gated only for
+         * Klein's reference, so on these it is a plain masked img2img, and
+         * [finishInpaint] composites it along the mask either way — a model
+         * whose engine ignored the mask would still only change the painted
+         * area. ⚠ There is no per-step latent blend on this path (the DiT
+         * backend refuses `/latent_blend`), so a fill at denoise 1.0 can
+         * mismatch its surroundings; 0.5–0.8 is the useful range.
+         * `docs/MODELS.md` §9.
+         */
+        val ZIMAGE_INPAINT = SdSampler("zimage.inpaint", Family.ZIMAGE, inpaint = true)
+        val QWEN21_INPAINT = SdSampler("qwen21.inpaint", Family.QWEN21, inpaint = true)
+        val KREA2_INPAINT = SdSampler("krea2.inpaint", Family.KREA2, inpaint = true)
+        val ANIMA_DIT_INPAINT = SdSampler("animadit.inpaint", Family.ANIMA_DIT, inpaint = true)
+        /**
+         * ⚠⚠ Klein's MASKED redraw ([runDitMasked] with `mask`) regenerates almost nothing inside the mask:
+         * measured 2026-09-20 against the mask the SD path uses, SD 1.5 at 0.65 changed 6303 px, Klein 821 at
+         * 0.65 and 1.0 alike, all inside the mask's box. With a mask the backend makes the base Klein's
+         * reference AND init (`edit_from_base`), and the reference holds the area. ⇒ [FLUX2_INPAINT] edits the
+         * cut instead ([runDitEditCut]).
+         */
+        /**
+         * ⭐⭐ FLUX.2 Klein inpaint = **crop, edit, paste back** (the user's call, 2026-10-23: a mask on Edit nodes).
+         * The masked redraw stays out: with a mask the backend makes the base Klein's reference AND its init, and
+         * the reference pulls the masked area back (measured 2026-09-20 above, 821 px changed against SD 1.5's
+         * 6303). So the cut goes as a plain EDIT (no mask, strength 1, the base reference-only, as the Edit flow
+         * runs it) and [finishInpaint] keeps every pixel outside the mask ([runDitEditCut]). Reached from Image
+         * edit by Swap flow, or the Inpaint flow's picker.
+         */
+        val FLUX2_INPAINT = SdSampler("flux2.inpaint", Family.FLUX2, inpaint = true)
+
+        val ALL = listOf(
+            SD15, SD15_SWAP, SDXL, SDXL_SWAP, ANIMA, FLUX2, ZIMAGE, QWEN21, KREA2, ANIMA_DIT, IRIS, MOSS, IDEOGRAM, FLUX3, FIBO2,
+            SD15_INPAINT, SD15_SWAP_INPAINT, SDXL_INPAINT, SDXL_SWAP_INPAINT, ANIMA_INPAINT,
+            ZIMAGE_INPAINT, QWEN21_INPAINT, KREA2_INPAINT, ANIMA_DIT_INPAINT, FLUX2_INPAINT,
+        )
+
+        /**
+         * ⭐⭐ The type a graph should use for [family] and [inpaint] — the one
+         * place that maps the pair to a name.
+         *
+         * ⚠ A recipe, the migration and the palette all need this answer, and
+         * three string literals spelling "sdxl.inpaint" would be three places to
+         * get it wrong once.
+         */
+        /**
+         * ⭐⭐⭐ **Can a checkpoint of this family be inpainted with?**
+         *
+         * ⚠⚠ THE one answer, because there are now two surfaces asking and
+         * they must never disagree: the checkpoint picker on an inpaint node
+         * (`canvas/NodeInspector.kt`) and the Use dialog on the Models screen
+         * (`ui/ModelsScreen.kt`). The picker had it inline and the dialog did
+         * not ask at all, so pressing Use on Z-Image offered "Inpaint" and
+         * built a flow that cannot run — reported 2026-09-20.
+         *
+         * ⚠ It is a fact about the REGISTRY, not about the engine: a family
+         * can inpaint exactly when an inpaint type is registered for it. That
+         * is why FLUX.2 answered false until [FLUX2_INPAINT] (crop, edit, paste
+         * back) was registered on 2026-10-23, which lit it up everywhere at once.
+         */
+        /**
+         * ⭐⭐⭐ **The denoise a node of this family is born with.**
+         *
+         * ⚠⚠ FLUX.2 is **1.0** and the rest are 0.65, asked for 2026-09-20.
+         * For Klein, denoise is not a strength dial at all — it is the mode
+         * selector (`docs/MODELS.md` §9): at 1.0 the base is a clean REFERENCE
+         * and the full distilled schedule runs, which is what upstream calls
+         * "edit" and labels its button with. 0.65 was inherited from the SD
+         * samplers, where it means something else entirely.
+         *
+         * ⚠⚠⚠ **And with a reference wired it is the setting that does
+         * nothing.** Below 1.0 the base is BOTH the init latent and reference
+         * #1, so the picture is told to stay where it is while the noised init
+         * has little room to move, and the result comes back as the input.
+         * Reported from the phone twice.
+         *
+         * ⚠ Z-Image is a DiT and is NOT included: it is not an edit model,
+         * `native_edit` never fires for it, and its denoise is an ordinary
+         * img2img strength where 0.65 is the right default.
+         *
+         * ⚠⚠ It is a DEFAULT, not a lock. Klein img2img at 0.65 with no
+         * reference works and looks good — measured 2026-09-20, the same photo
+         * and prompt through both, and both returned a convincing picture. A
+         * lock would delete a working mode to prevent a footgun that exists
+         * only in one combination; the combination warns instead
+         * (`canvas/NodeInspector.kt`).
+         */
+        /**
+         * ⭐⭐ What FLUX.2 calls the job a photo turns into. One constant,
+         * because the node title, the recipe and the node's own id all say it
+         * and three spellings would drift.
+         */
+        const val EDIT_LABEL = "Image edit"
+
+        fun defaultDenoise(family: Family): String =
+            if (family.edit) "1.0" else "0.65"
+
+        /** ⭐ What every inpaint node is born with — see the `denoise` widget. */
+        const val INPAINT_DENOISE = "0.65"
+
+        fun canInpaint(family: Family): Boolean =
+            ALL.any { it.family == family && it.inpaint }
+
+        fun typeFor(family: Family, inpaint: Boolean): String =
+            (ALL.firstOrNull { it.family == family && it.inpaint == inpaint }
+                // ⚠ A family with no inpaint type (the DiT ones) asked for one:
+                // an SD 1.5 inpaint, not that family's text-to-image — which
+                // would silently drop the mask the caller asked for.
+                ?: if (inpaint) SD15_INPAINT else SD15).name
+    }
+
+    /**
+     * ⚠ The checkpoint a NEW node of this type is born with: the selected one
+     * when it belongs to this family, and this family's first catalogue entry
+     * otherwise. A node that defaulted to a model of the wrong family would
+     * refuse to run the moment it was dragged out.
+     */
+    private fun defaultModel(): String =
+        if (SelectedModel.spec.family == family) SelectedModel.id
+        else ModelCatalog.all.firstOrNull { it.family == family }?.id ?: SelectedModel.id
+
+    private fun defaultSpec(): ModelSpec = ModelCatalog.byId(defaultModel()) ?: SelectedModel.spec
+
+    private fun defaultRes(): Res =
+        if (SelectedModel.spec.family == family) SelectedModel.res
+        else ModelCatalog.all.firstOrNull { it.family == family }?.native ?: SelectedModel.res
+
+    /**
+     * ⭐ On an INPAINT node, denoise, only-masked and stitch come FIRST — they
+     * are what the inpaint is, and the user asked for them above Steps
+     * (2026-09-17). ⚠ Order only; every widget is the same declaration.
+     */
+    override val widgets get() = when {
+        family.dit -> ditWidgets()
+        family == Family.SD15_SWAP -> baseWidgets() + lorasWidget() + controlWidgets() + ipWidgets()
+        // ⭐ LoRA + ControlNet + IP-Adapter (backends 023, 024).
+        family == Family.SDXL_SWAP -> baseWidgets() + lorasWidget() + controlWidgets() + ipWidgets()
+        else -> baseWidgets()
+    }.let { it + detailWidgets() }.let { ws ->
+        if (!inpaint) ws else {
+            val front = listOf("denoise", MaskCropNode.ONLY_MASKED, PasteNode.STITCH)
+            front.mapNotNull { n -> ws.firstOrNull { it.name == n } } + ws.filterNot { it.name in front }
+        }
+    }
+
+    private fun baseWidgets() = listOfNotNull(
+        // ⭐⭐⭐ **Tap to select, on the INPAINT samplers** — the checkbox that
+        // replaced `mask.segment_model` (2026-09-22, the user's call).
+        //
+        // ⚠⚠⚠ It was declared in `ditWidgets()` for one round, which is the
+        // only list the inpaint samplers do NOT use: they are SD 1.5, SDXL and
+        // Anima. So the checkbox appeared on FLUX.2 and Z-Image — which cannot
+        // inpaint at all — and on none of the nodes that can. `PaletteTest`
+        // caught it; nothing a person could see would have, because the mask
+        // editor only draws the row when the widget exists.
+        // ⚠ Drawn in the MASK EDITOR rather than the knob list — the tapping
+        // happens there, so the switch for it is there ([NodeInspector]).
+        if (inpaint) Widget(
+            TAP_SELECT, "bool", MaskDefaults.of(TAP_SELECT),
+            hintRes = R.string.hint_tap_select,
+        ) else null,
+        // ⚠ Same list and same reason as [TAP_SELECT] above — inpaint only,
+        // and NOT `ditWidgets()`, which is the one list no inpaint sampler uses.
+        if (inpaint) Widget(
+            PICK_SELECT, "bool", MaskDefaults.of(PICK_SELECT),
+            hintRes = R.string.hint_pick_select,
+        ) else null,
+        // ⭐⭐ Enable Add Objects — the user's design, 2026-09-23 ([AddObjects]).
+        // ⚠ Inpaint only: the objects are blended in through a mask.
+        if (inpaint) Widget(
+            AddObjects.ENABLE, "bool", MaskDefaults.of(AddObjects.ENABLE),
+            hintRes = R.string.objects_enable_hint,
+        ) else null,
+        // ⚠ EVERY sampler, not only inpaint: image-to-image has a crop window
+        // too, and both were asked for. `ditWidgets()` is built from this list,
+        // so FLUX.2 and Z-Image get it as well.
+        Widget(
+            AUTO_CROP, "bool", "false",
+            // ⚠ Two sentences, because the two node kinds do two different
+            // things: inpaint may pad, image-to-image never does and so crops
+            // (the user saw the padding missing on i2i, 2026-09-23).
+            hintRes = if (inpaint) R.string.hint_auto_crop_inpaint else R.string.hint_auto_crop_image,
+        ),
+        // ⚠⚠ Defaults from the MODEL, not from a literal. A distilled checkpoint
+        // publishes something like 10 steps at cfg 1.5, and this app's 20/7.5
+        // renders it burnt rather than failing — measured on device 2026-09-10.
+        // ⚠⚠ …from THIS FAMILY's model, not the global selection. A new Anima
+        // node dragged out while SD 1.5 is selected took SD's 20 steps / cfg 7.5
+        // and `dpm`, and a turbo checkpoint does not fail on those, it burns.
+        Widget("steps", "int", defaultSpec().steps.toString(), 1.0, STEPS_MAX.toDouble()),
+        Widget("cfg", "float", defaultSpec().cfg.toString(), 1.0, 20.0, fine = true),
+        // ⭐ 0 rolls a new seed on every Run, so Run means "give me another one"
+        // rather than returning the cached picture unchanged.
+        Widget(
+            "seed", "int", "0",
+            hintRes = R.string.hint_seed_picture,
+        ),
+        // ⭐ A1111's variation seed (backend 037; a tester's wish, 2026-10-19): a picture you like, nudged. ⚠ Not on a
+        // DiT model (`ditWidgets()` is built from this list): its engine takes no second seed yet.
+        if (!family.dit) Widget(SUBSEED, "int", "0", hintRes = R.string.hint_subseed) else null,
+        if (!family.dit) Widget(SUBSEED_STRENGTH, "float", "0.0", 0.0, 1.0, hintRes = R.string.hint_subseed_strength) else null,
+        // ⚠ Read only when a picture is wired AND `start_from` is `image`.
+        // ⚠ An INPAINT node starts at 0.65 on every family: FLUX.2 / Qwen's 1.0
+        // is their EDIT mode, and on a masked img2img it would repaint the whole
+        // cut with nothing tying it to its surroundings. ⭐ Except Klein's inpaint, which IS an edit of the cut
+        // ([FLUX2_INPAINT]): 1.0 there, like its Image edit, and lower for the user to try (the user, 2026-10-23).
+        Widget("denoise", "float", if (inpaint && family != Family.FLUX2) INPAINT_DENOISE else defaultDenoise(family), 0.0, 1.0),
+        Widget(
+            "scheduler", "string", defaultSpec().scheduler,
+            options = ModelCatalog.schedulersFor(family),
+            hintRes = R.string.hint_sampler,
+        ),
+        // ⭐⭐ Hires fix — SD 1.5 / SDXL text- and image-to-image ([hiresFix]). OFF: it costs
+        // an upscale and a tiled redraw on every Run.
+        if (hasHires) Widget(HIRES, "bool", "false", hintRes = R.string.hint_hires_fix)
+        else Widget(ENLARGE, "bool", "false", hintRes = R.string.hint_enlarge),
+        // ⚠⚠ **No `start from` knob.** The user's call, 2026-09-15: *"start from
+        // is decided by whether an image is connected, simple as that."* It
+        // shipped as a switch so a flow could flip without rewiring — which is
+        // right for the VIDEO node, where the alternative to a photo is four
+        // seconds of SSD1B generating a first frame, and wrong here, where the
+        // alternative is nothing at all. A knob whose value the wire already
+        // states is a second place for the same fact to live.
+        // ⚠⚠ **No `mask on` switch either** — removed 2026-09-16 at the user's
+        // ask (*"whats even the point of it?"*). It predates the capability fork:
+        // while one node served both jobs it turned inpaint into a full render.
+        // Now an inpaint node with its mask off IS the `sample` node, so the
+        // switch was a second way to reach a type that already exists.
+        // ⭐⭐ The framing, normalised 0..1 of the source — and under
+        // `image.crop`'s OWN param names, so [cropRectOf], [CropRect.asParams]
+        // and [CropEditor] work on this node with no second spelling to keep in
+        // step. ⚠ Normalised so a saved flow re-pointed at a photo of a
+        // different size still means the same framing.
+        Widget("x", "float", "0.0", 0.0, 1.0, hintRes = R.string.hint_drag_frame),
+        Widget("y", "float", "0.0", 0.0, 1.0),
+        Widget("w", "float", "1.0", 0.0, 1.0),
+        Widget("h", "float", "1.0", 0.0, 1.0),
+        // ⭐⭐ The REFERENCE's own region, and a different job to the four
+        // above. Those FRAME the picture into the output canvas; these choose
+        // WHICH PART of a reference to send, and the region goes over the wire
+        // at its own aspect ratio — never fitted to the canvas, because that
+        // is the whole point of a reference (`docs/MODELS.md` §9).
+        //
+        // ⚠ Separate names, not a second use of x/y/w/h: one node can carry a
+        // framed base AND a cropped reference at once, and sharing the params
+        // would make moving one move the other.
+        //
+        // ⚠⚠ Hidden from the knob list like x/y/w/h are ([hiddenKnob]) — they
+        // are dragged on the picture, and four more loose sliders under the
+        // size control is the duplicate the 2026-09-18 report named.
+        Widget(REF_X, "float", "0.0", 0.0, 1.0, hintRes = R.string.hint_drag_reference),
+        Widget(REF_Y, "float", "0.0", 0.0, 1.0),
+        Widget(REF_W, "float", "1.0", 0.0, 1.0),
+        Widget(REF_H, "float", "1.0", 0.0, 1.0),
+        // ⭐⭐ The reference's OWN size, drawn in the Reference editor where the
+        // base's Shape + Resolution sit in the Crop one — and a separate param
+        // from `width`/`height` so the two tabs cannot move each other, which
+        // is the whole reason it exists ([REF_MAX]).
+        // ⚠⚠ The hint must never promise memory: a reference is encoded at the
+        // CANVAS ([REF_ENCODED_AT_CANVAS]), so this buys detail and nothing else.
+        Widget(
+            REF_MAX, "string", REF_ORIGINAL,
+            options = REF_SIZES,
+            hintRes = R.string.hint_reference_edge,
+        ),
+        // ⚠ Drawn as the tick/pencil in the Crop title row, never as a checkbox
+        // in the knob list ([hiddenKnob]).
+        Widget(CropNode.LOCKED, "bool", "false"),
+        // ⭐ The padding choice `image.crop` has — black bars or the picture's
+        // own edges blurred — for when the frame runs off the photo. ⚠ It was
+        // left off as "rare"; the user asked for it back in the inpaint Crop tab
+        // (2026-09-17). ⚠ The FRAME only: the mask is always padded black,
+        // because black is "not masked".
+        // ⭐⭐ **BLUR by default on an inpaint node, black elsewhere** — the
+        // user's call, 2026-09-20.
+        //
+        // ⚠⚠ On an inpaint node the frame running off the photo is
+        // OUTPAINTING ([PadRule.OUTPAINT]), and what fills it is what the
+        // model continues from: blurred edges carry the picture's own colour
+        // and light into the new area, where a black bar asks it to invent a
+        // scene that begins at a hard black edge. ⚠ Elsewhere the bars mean
+        // "this photo is too small" and black says that honestly.
+        Widget(
+            CropNode.PAD, "string",
+            if (inpaint) CropNode.PAD_BLUR else CropNode.PAD_BLACK,
+            options = padOptions(family, inpaint),
+            hintRes = R.string.hint_pad,
+        ),
+        // ⭐ An edit model only: may the frame run off the photo at all ([ALLOW_PAD]).
+        *(if (family.edit && !inpaint) arrayOf(
+            Widget(
+                ALLOW_PAD, "bool", "false",
+                hintRes = R.string.hint_allow_pad,
+            ),
+        ) else emptyArray()),
+        // ⭐ The painting itself — `image.mask`'s params, moved. ⚠ A real param
+        // rather than editor state, because it is what a saved workflow stores.
+        // ⚠⚠ Declared ONLY on an inpaint type: an undeclared param is still
+        // hashed into the cache key, so leaving these on a `sample` node would
+        // put a mask nobody can edit into the key of every render it makes.
+        *(if (!inpaint) emptyArray() else arrayOf(
+            Widget(MaskNode.OPS, "string", "", hintRes = R.string.hint_paint_redo),
+            Widget(
+                "grow", "float", MaskNode.GROW_DEFAULT.toString(),
+                MaskNode.GROW_MIN.toDouble(), MaskNode.GROW_MAX.toDouble(),
+                hintRes = R.string.hint_mask_grow,
+            ),
+            Widget("feather", "float", "0.0", 0.0, 0.2, hintRes = R.string.hint_mask_feather),
+            // ⭐⭐ DreamUI's two inpaint toggles, unchanged in meaning.
+            Widget(
+                MaskCropNode.ONLY_MASKED, "bool", "true",
+                hintRes = R.string.hint_only_masked_short,
+            ),
+            Widget(
+                PasteNode.STITCH, "bool", "false",
+                hintRes = R.string.hint_stitch_short,
+            ),
+        )),
+        // ⚠⚠ **No `encode seed`.** A VAE latent is mean + std * noise, so this
+        // number is what makes the same picture encode to the same latent —
+        // which means it must never move, and a knob that must never move is a
+        // knob that can only do harm. Fixed at [ENCODE_SEED]; the hint used to
+        // say "leave it fixed", which is the app asking the user to enforce its
+        // own invariant.
+        // ⚠ model / width / height are the CONTEXT KEY (§4): changing one costs
+        // a backend relaunch. They are the only three knobs here that are not
+        // free.
+        Widget("model", "string", defaultModel(), locked = CONTEXT_KEY_LOCK, contextKey = true),
+        *aspectWidget(defaultSpec()),
+        Widget("width", "int", defaultRes().width.toString(), contextKey = true),
+        Widget("height", "int", defaultRes().height.toString(), contextKey = true),
+    )
+
+    /**
+     * ⭐⭐ A DiT family's knobs: the same names as every sampler's, minus what
+     * its engine does not have — no scheduler (it hardcodes euler), no aspect
+     * chip, no mask — and a SIZE that is a request field, not a launch one.
+     * ⚠ Not [Widget.contextKey]: moving them never relaunches the backend
+     * ([backendContextKey] keys a DiT model on its native size).
+     * ⚠⚠ They ARE sliders, but not in the knob list: the inspector's size
+     * panel draws them in the slot every other family's size control occupies
+     * (`NodeInspector`'s `ditPanel`) and `hiddenKnob` keeps them from being
+     * drawn a second time at the bottom of the sheet. So these declarations
+     * carry the DEFAULT, the legal range and the grid — which is what the
+     * panel, a saved workflow and `applyDefaults` all read.
+     */
+    private fun ditWidgets(): List<Widget> = baseWidgets()
+        .filterNot { it.name in setOf("scheduler", "aspect", "width", "height", "cfg") } + listOf(
+        // ⭐⭐ The engine's samplers by name (GitHub #19, 2026-10-14: "not all of them are tuned
+        // for Euler"). Euler stays the default: every turbo DiT here was distilled for it.
+        Widget(
+            "scheduler", "string", ModelCatalog.DIT_DEFAULT_SAMPLER,
+            options = ModelCatalog.schedulersFor(family),
+            hintRes = R.string.hint_sampler,
+        ),
+        // ⭐ The one knob whose meaning DIFFERS here, so the one that gets a
+        // hint the SD nodes have no need of. A guidance-distilled checkpoint
+        // opens at 1.0, and at exactly 1.0 the engine skips the unconditional
+        // pass — which is what makes the negative prompt beside it inert until
+        // this moves. Nothing else in the sheet could tell a person that.
+        Widget(
+            "cfg", "float", defaultSpec().cfg.toString(), 1.0, 20.0, fine = true,
+            hintRes = R.string.hint_cfg_distilled,
+        ),
+        // ⭐ The hint goes on WIDTH alone, not on both: it describes the pair,
+        // and saying it twice under two adjacent sliders is noise.
+        Widget(
+            "width", "int", ModelCatalog.DIT_RES.width.toString(),
+            ModelCatalog.DIT_MIN.toDouble(), ModelCatalog.DIT_MAX.toDouble(), step = ModelCatalog.DIT_STEP,
+            hintRes = R.string.hint_dit_size,
+            hintArgs = listOf(ModelCatalog.DIT_STEP),
+        ),
+        Widget(
+            "height", "int", ModelCatalog.DIT_RES.height.toString(),
+            ModelCatalog.DIT_MIN.toDouble(), ModelCatalog.DIT_MAX.toDouble(), step = ModelCatalog.DIT_STEP,
+        ),
+        // ⚠⚠ **A `string` the inspector does NOT draw as a text field.** A
+        // `NodeType.widgets` getter is a plain property with no Context, so it
+        // cannot list what is installed — which is why this shipped as free
+        // text in 1.5.557. The CONTROL is where the Context is: the inspector
+        // gives [LORAS] its own branch and opens
+        // [com.abrah.nightmare.canvas.LoraPicker]. The format is
+        // [com.abrah.nightmare.LoraSpec]'s, and a workflow file still carries
+        // exactly this string.
+        // ⭐⭐⭐ **Tap to select, as a CHECKBOX** — the user's call,
+        // 2026-09-22: *"i want to remove the segmenter node, it should go as
+        // 'enable tap to select' checkbox"*.
+        //
+        // ⚠⚠ The `segmenter` PORT stays and a wire into it still works: flows
+        // saved with a `mask.segment_model` node keep opening and keep their Tap
+        // tool. The node is retired from the palette, not deleted
+        // ([SelectObjectNode.hidden]) — a graph that stops loading because a
+        // type went away is the one failure a retirement must not cause.
+        lorasWidget(),
+    )
+
+    /**
+     * ⭐ The LoRA list — on the DiT families and on SD 1.5 Swap, the two kinds
+     * of model that take an adapter per render. One declaration so the two
+     * cannot drift; the inspector draws it as [com.abrah.nightmare.canvas.LoraPicker].
+     */
+    private fun lorasWidget() =
+        Widget(
+            LORAS, "string", "",
+            hintRes = R.string.hint_loras,
+            // ⚠⚠⚠ **This was LOCKED on Z-Image for one release, and the lock
+            // was wrong.** 1.6.0 greyed it out on the reading that a Z-Image
+            // adapter binds zero tensors. The evidence for that was the ABSENCE
+            // of the engine's `loading N/M tensors` line — and on 2026-09-22
+            // the same capture turned out to be missing `loading 452/453
+            // tensors from dit.safetensors` too, which certainly happened.
+            // logcat had pruned the block. ⇒ An absent log line is not a
+            // measurement; `CLAUDE.md`'s "suspect the CHECK first" applies to
+            // the log as much as to a script.
+            //
+            // ⭐⭐ What replaced it is a control the log cannot fake — the
+            // adapter's own STRENGTH, `docs/ROADMAP.md` §2g. Same seed, same
+            // neutral prompt, `mystic.safetensors` on `intorealism_zitV90`:
+            // mean |Δ| against the LoRA-less render is 11.5 at x0.25 and 30.5
+            // at x1.00, and the LoRA-less render is byte-identical across two
+            // runs. `scale_value *= multiplier` lives inside the branch that
+            // only runs once `lora_up`/`lora_down` were FOUND, so an adapter
+            // that bound nothing could not answer its own multiplier.
+        )
+
+    /**
+     * ⭐⭐ A Swap model's ControlNet knobs. ⚠ Drawn as ONE row in the inspector
+     * (type, strength, picture and the hint it makes), never as loose knobs.
+     */
+    private fun controlWidgets() = listOf(
+        Widget(
+            CONTROLNET, "string", SwapInputs.NONE, options = SwapInputs.TYPES,
+            hintRes = R.string.hint_controlnet,
+        ),
+        Widget(CONTROL_STRENGTH, "float", "1.0", 0.0, 2.0),
+        Widget(CONTROL_IMAGE, "string", ""),
+        Widget(CTL_X, "float", "0"), Widget(CTL_Y, "float", "0"),
+        Widget(CTL_W, "float", "1"), Widget(CTL_H, "float", "1"),
+    )
+
+    private fun ipWidgets() = listOf(
+        // ⭐⭐ IP-Adapter ([IpAdapter]): which adapter reads the reference, how
+        // strongly, and a reference picked ON the node. ⚠ The `reference` wire
+        // wins over the picked picture, as `control` does over [CONTROL_IMAGE].
+        // Drawn as the IP-Adapter tile, never as loose knobs.
+        Widget(
+            IP_ADAPTER, "string", IpAdapter.PLUS, options = IpAdapter.CHOICES,
+            hintRes = R.string.hint_ip_adapter,
+        ),
+        Widget(IP_SCALE, "float", SwapInputs.IP_SCALE_DEFAULT.toString(), 0.0, 1.5),
+        Widget(IP_IMAGE, "string", ""),
+    )
+
+    override fun contextKey(node: Node): ContextKey {
+        val key = backendContextKey(node)
+        val p = effectiveParams(node)
+        val pictures = (listOf("image", "reference") + EXTRA_REFS).count { node.inputs[it] != null }
+        val budget = kleinEditBudget(
+            family, pictures,
+            p["width"]?.toIntOrNull() ?: 0, p["height"]?.toIntOrNull() ?: 0,
+            DeviceProbe.caps().ramBytes,
+            DeviceProbe.caps().let { if (it.known) it.arch else 0 },
+        )
+        return if (budget == null) key else key.copy(memoryBudget = budget)
+    }
+
+    /** ⚠ The size a fixed-canvas family renders, not a stray one the node holds ([canvasOf], GitHub #60). */
+    override fun effectiveParams(node: Node): Map<String, String> {
+        val p = super.effectiveParams(node)
+        val canvas = canvasOf(p) ?: return p
+        return p + mapOf("width" to canvas.width.toString(), "height" to canvas.height.toString())
+    }
+
+    /**
+     * ⚠⚠ **Null — this node demands NO size of anything.** It fits whatever it
+     * is handed (§5.7), which is what retires `sizeRefusal` for the image path:
+     * a wire that used to be refused at the drop now renders the obvious thing.
+     */
+    override fun requiredInputSize(node: Node, port: String): Pair<Int, Int>? = null
+
+    /**
+     * ⚠ The render size, and only when no paste is coming. With a mask painted
+     * the output is the FRAME at its own resolution — the patch goes back where
+     * it was cut from — and that size is not knowable from the params alone.
+     */
+    override fun outputSize(node: Node): Pair<Int, Int>? {
+        val p = effectiveParams(node)
+        if (inpaint && (MaskNode.opsOf(node.type, p).orEmpty().isNotBlank() || paddingOf(p) != null)) return null
+        return (p["width"]?.toIntOrNull() ?: 0) to (p["height"]?.toIntOrNull() ?: 0)
+    }
+
+    /**
+     * ⭐⭐ The size the framing is cut to: the ASPECT's rectangle on a
+     * fixed-canvas family, the render size otherwise.
+     *
+     * ⚠⚠ Reported 2026-09-17: switching an inpaint node to SDXL left the crop
+     * and mask square while the output came back 16:9 — the editors framed the
+     * 1024² canvas and the backend kept only its middle band. The editors read
+     * this through `framingOutSize`, and [run] cuts to the same size, so what is
+     * framed is what is rendered.
+     */
+    override fun framesTo(node: Node): Pair<Int, Int> = framedSize(node)
+
+    /** ⭐ The photo's extent inside an OUTPAINT frame, or null — [CropGeometry.photoInFrame]. */
+    private fun paddingOf(p: Map<String, String>): Frame? =
+        if (!inpaint) null else CropGeometry.photoInFrame(
+            p["x"]?.toFloatOrNull() ?: 0f, p["y"]?.toFloatOrNull() ?: 0f,
+            p["w"]?.toFloatOrNull() ?: 1f, p["h"]?.toFloatOrNull() ?: 1f,
+        )
+
+    /** ⭐ Where [HIRES] is offered: SD 1.5 / SDXL text- and image-to-image. Everywhere else, [ENLARGE]. */
+    private val hasHires: Boolean get() = !inpaint && UltraFix.tileFor(family) != null
+
+    // ⭐ ONE exit for every family's render, so [ENLARGE] and the detail pass cannot be missed by the
+    // next return added. ⚠ Detail LAST: it redraws faces on the final, biggest picture.
+    override suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value {
+        // ⭐⭐ The picture under the fix, remembered without the fix's own params ([com.abrah.nightmare.detail.Detailer.PARAMS]): Fix faces
+        // switched on, or a new Fix strength or Fix seed, redraws the faces on the picture already made (Saved #7072,
+        // "it reruns the full diffusion sampling"). ⚠ Safe because Run rolls seed 0 into a real seed first
+        // (`HarnessOps.runRolled`): an unlocked seed is a new key, so a new picture.
+        val baseKey = if (offersDetail) cacheKey(name, version, node.params - com.abrah.nightmare.detail.Detailer.PARAMS, inputs) else null
+        baseKey?.let { k -> baseMemo(ctx, k) }?.let { kept ->
+            ctx.say(ctx.text(R.string.run_detail_reused, "the picture is the one from the last run: only the fix runs"))
+            return detail(ctx, node, inputs, kept)
+        }
+        val v = render(ctx, node, inputs)
+        if (v !is Value.Image) return v
+        val big = enlarge(ctx, node, v)
+        if (baseKey != null) remember(baseKey, big)
+        return detail(ctx, node, inputs, big)
+    }
+
+    /**
+     * ⭐ Where Fix faces / Fix hands are offered ([com.abrah.nightmare.detail.Detailer]): every family with
+     * a masked render. ⚠ Not inpaint (it IS the hand-made version), not Swap (its redraw needs the run's
+     * ControlNet pack), not Iris (no VAE to mask through) or Wan (a video).
+     */
+    private val offersDetail: Boolean
+        get() = !inpaint && family !in setOf(Family.IRIS, Family.WAN, Family.IDEOGRAM, Family.FLUX3, Family.FIBO2)
+
+    /** ⭐ True when [node] will run the detail pass: what the Run's up-front tool check asks. */
+    internal fun detailWanted(node: Node): Boolean = offersDetail && effectiveParams(node).let { p ->
+        p[com.abrah.nightmare.detail.Detailer.FIX_FACES].equals("true", ignoreCase = true) ||
+            p[com.abrah.nightmare.detail.Detailer.FIX_HANDS].equals("true", ignoreCase = true)
+    }
+
+    /** ⭐ True when [node] will enlarge with an upscaler (Hires fix, or Enlarge): the Run's up-front tool check. */
+    internal fun upscalerWanted(node: Node): Boolean = effectiveParams(node).let { p ->
+        if (hasHires) p[HIRES].equals("true", ignoreCase = true) else p[ENLARGE].equals("true", ignoreCase = true)
+    }
+
+    /** ⭐ Match colours ([MATCH_COLORS]) is on: what a picture going in hands its colours to ([ColorTools.matchColors]). */
+    private fun matching(p: Map<String, String>) = p[MATCH_COLORS].equals("true", ignoreCase = true)
+
+    /** ⭐ [made] in [like]'s colours when Match colours is on; [made] otherwise or with nothing to match. */
+    private fun matched(ctx: NodeCtx, p: Map<String, String>, made: Value.Image, like: android.graphics.Bitmap?): Value.Image {
+        if (!matching(p) || like == null) return made
+        val b = ctx.images.get(made.id) ?: return made
+        val out = ColorTools.matchBitmap(b, like)
+        return Value.Image(ctx.images.put(out), out.width, out.height)
+    }
+
+    private fun detailWidgets(): List<Widget> = listOfNotNull(
+        // ⭐ On every sampler but Wan and Iris: it acts on image to image, inpaint and Fix faces / hands.
+        Widget(MATCH_COLORS, "bool", "false", hintRes = R.string.hint_match_colours)
+            .takeIf { family != Family.WAN && family != Family.IRIS && family != Family.MOSS && family != Family.IDEOGRAM && family != Family.FLUX3 && family != Family.FIBO2 },
+    ) + if (!offersDetail) emptyList() else listOf(
+        Widget(com.abrah.nightmare.detail.Detailer.FIX_FACES, "bool", "false", hintRes = R.string.hint_fix_faces),
+        Widget(com.abrah.nightmare.detail.Detailer.FIX_HANDS, "bool", "false", hintRes = R.string.hint_fix_hands),
+        Widget(
+            com.abrah.nightmare.detail.Detailer.DETAIL_DENOISE, "float",
+            com.abrah.nightmare.detail.Detailer.DEFAULT_DENOISE, 0.0, 1.0, hintRes = R.string.hint_detail_denoise,
+        ),
+        Widget(com.abrah.nightmare.detail.Detailer.FIX_SEED, "int", "0", hintRes = R.string.hint_fix_seed),
+    )
+
+    /**
+     * ⭐⭐ Fix faces / Fix hands ([com.abrah.nightmare.detail.Detailer]): each found part redrawn by THIS node's
+     * masked render (the inpaint path's: SD's encode, sample, blend and decode; a DiT's [runDitMasked]).
+     * ⚠ Every way it does not happen keeps the picture and WARNS, as [hiresFix] does.
+     */
+    private suspend fun detail(ctx: NodeCtx, node: Node, inputs: Map<String, Value>, img: Value.Image): Value.Image {
+        if (!offersDetail) return img
+        val d = com.abrah.nightmare.detail.Detailer
+        val base = effectiveParams(node)
+        val parts = listOfNotNull(
+            com.abrah.nightmare.detail.PartDetector.Part.FACE.takeIf { base[d.FIX_FACES].equals("true", ignoreCase = true) },
+            com.abrah.nightmare.detail.PartDetector.Part.HAND.takeIf { base[d.FIX_HANDS].equals("true", ignoreCase = true) },
+        )
+        if (parts.isEmpty()) return img
+        val appCtx = ctx.android ?: return img
+        if (!com.abrah.nightmare.detail.PartDetector.isInstalled(appCtx)) {
+            ctx.warn(ctx.text(R.string.run_detail_no_detector, "Fix faces and hands skipped: the face and hand detector is not installed. Download it in Models, Tools"))
+            return img
+        }
+        val wired = inputs["prompt"] as? Value.Prompt ?: return img
+        val pos = PromptLoras.extract(wired.positive)
+        val neg = PromptLoras.extract(wired.negative)
+        val prompt = Value.Prompt(pos.text, neg.text)
+        val p0 = withPromptLoras(ctx, node, base, pos.tags)
+        // ⭐ Each part at its own strength ([com.abrah.nightmare.detail.Detailer.denoiseOf]), set per part below.
+        var p = fixParams(p0, base, null)
+        var bmp = ctx.images.get(img.id) ?: return img
+        val spec = ModelCatalog.byId(p["model"].orEmpty()) ?: defaultSpec()
+        // ⭐ The patch: a DiT renders any size, so a square at about a megapixel's edge; an SD graph only
+        // its own, so its native square, loaded first as [hiresFix] does.
+        val (pw, ph) = if (family.dit) {
+            val e = ModelCatalog.ditSnap(minOf(spec.native.width, spec.native.height, DETAIL_DIT_EDGE))
+            e to e
+        } else {
+            val square = ContextKey(ModelCatalog.backendTypeOf(spec.id), spec.id, spec.native.width, spec.native.height)
+            if (backendContextKey(node) != square && ctx.switchKey?.invoke(square) != true) {
+                ctx.warn(ctx.text(R.string.run_detail_no_square, "Fix faces and hands skipped: could not load the model at %1\$dx%2\$d for it", spec.native.width, spec.native.height))
+                return img
+            }
+            spec.native.width to spec.native.height
+        }
+        // ⭐ A Swap model redraws a face with its LoRA pack (a character LoRA is what keeps the face theirs, the
+        // user's call 2026-10-19), and with no ControlNet hint or reference: both describe the WHOLE picture, and a
+        // crop of a face is not it. ⚠ [swapInputs] with both switched off, so the pack is built the one way.
+        val template = if (family == Family.SD15_SWAP || family == Family.SDXL_SWAP) {
+            swapInputs(ctx, node, p0 + mapOf(CONTROLNET to SwapInputs.NONE, IP_ADAPTER to IpAdapter.NONE), emptyMap())
+        } else null
+        var cond: String? = null
+        val render: suspend (ByteArray, ByteArray) -> android.graphics.Bitmap = { imagePng, maskPng ->
+            if (family.dit) runDitMasked(ctx, node, p, prompt, imagePng, maskPng, pw, ph)
+            else {
+                val c = cond ?: when (val r = ctx.host.encodeText(prompt.positive, prompt.negative)) {
+                    is Ops.Result.Ok -> r.value.handle
+                    is Ops.Result.Err -> throw OpFailure("encode_text", r.code, r.body)
+                }.also { cond = it }
+                val start = encode(ctx, imagePng, ENCODE_SEED, pw, ph)
+                val drawn = sample(ctx, p, c, start, pw, ph, null, imagePng, maskPng, template = template)
+                val blended = when (val r = ctx.host.latentBlend(start, drawn, maskPng)) {
+                    is Ops.Result.Ok -> r.value.handle
+                    is Ops.Result.Err -> throw OpFailure("latent_blend", r.code, r.body)
+                }
+                val patch = VaeDecodeNode.decode(ctx, blended, pw, ph, null)
+                ctx.images.get(patch.id)
+                    ?: throw IllegalStateException("node \"${node.id}\": the detail patch vanished from the store")
+            }
+        }
+        for (part in parts) {
+            val set = d.settings(base, part)
+            p = fixParams(p0, base, part)
+            val found = com.abrah.nightmare.detail.PartDetector.detect(appCtx, bmp, part, set.conf).orEmpty()
+            val boxes = d.chosen(found, bmp.width, bmp.height)
+            ctx.say(
+                if (part == com.abrah.nightmare.detail.PartDetector.Part.FACE) ctx.text(R.string.run_detail_faces, "fixing faces: %1\$d found", boxes.size)
+                else ctx.text(R.string.run_detail_hands, "fixing hands: %1\$d found", boxes.size)
+            )
+            // ⚠ A redraw that fails keeps the picture and warns, as the rule above says (it threw through and lost
+            // the run until 2026-10-23, when MOSS got the fix untested on a real picture).
+            if (boxes.isNotEmpty()) bmp = try {
+                d.fix(bmp, boxes, pw, ph, matching(p), render, set) { n ->
+                    ctx.say(ctx.text(R.string.run_detail_skipped, "%1\$d already at full size, left as it is", n))
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ctx.warn(ctx.text(R.string.run_detail_failed, "Fix faces and hands could not redraw: %1\$s. The picture is kept as it was", e.message ?: e.javaClass.simpleName))
+                bmp
+            }
+        }
+        return Value.Image(ctx.images.put(bmp), bmp.width, bmp.height)
+    }
+
+    private suspend fun render(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value {
+        val wired = inputs["prompt"] as? Value.Prompt
+            ?: throw IllegalArgumentException(
+                "node \"${node.id}\": nothing is wired into \"prompt\". " +
+                    "drag a Prompt node out of the palette and connect it"
+            )
+        // ⭐ `<lora:name:w>` tags leave the text here and join the LoRA list ([PromptLoras]).
+        val pos = PromptLoras.extract(wired.positive)
+        val neg = PromptLoras.extract(wired.negative)
+        val prompt = if (pos.tags.isEmpty() && neg.tags.isEmpty()) wired else Value.Prompt(pos.text, neg.text)
+        // ⚠ A tag in the NEGATIVE is stripped like any other but never applied (a LoRA has no
+        // negative side), and a pasted CivitAI negative carries them: said, not silently dropped.
+        if (neg.tags.isNotEmpty()) {
+            ctx.warn(ctx.text(R.string.run_lora_tags_negative, "LoRA tags in the negative prompt were left out. Put them in the prompt to use them"))
+        }
+        val p = withPromptLoras(ctx, node, effectiveParams(node), pos.tags)
+        fun str(k: String) = p[k].orEmpty()
+        fun num(k: String) = p[k]?.toDoubleOrNull() ?: 0.0
+        fun int(k: String) = p[k]?.toIntOrNull() ?: 0
+        fun flag(k: String) = p[k].equals("true", ignoreCase = true)
+        // ⚠ A DiT INPAINT snaps here, before the cut is framed and padded to this canvas: [runDit]
+        // snaps its own size, but [runDitMasked] got the raw one, so a hand-edited or agent-written
+        // 1000x750 reached the engine at a size the grid never offers ([ModelCatalog.ditSnap]).
+        val w = int("width").let { if (family.dit && inpaint) ModelCatalog.ditSnap(it) else it }
+        val h = int("height").let { if (family.dit && inpaint) ModelCatalog.ditSnap(it) else it }
+        // ⭐⭐ A DiT model renders whole, so it leaves here — EXCEPT an inpaint
+        // one, which first needs the mask this function builds below. That
+        // path rejoins at [runDitMasked] and returns before any op endpoint is
+        // touched. `docs/MODELS.md` §9.
+        if (family.dit && !inpaint) {
+            return runDit(
+                ctx, node, p, prompt,
+                inputs["image"] as? Value.Image,
+                inputs["reference"] as? Value.Image,
+                w, h,
+                extraRefs = EXTRA_REFS.mapNotNull { inputs[it] as? Value.Image },
+            )
+        }
+        val aspect = nodeAspect(node)
+            ?.takeIf { ModelCatalog.aspectTarget(it, Res(w, h)) != null }
+        // ⭐⭐ SD 1.5 Swap: the LoRA pack and the ControlNet hint, once per run and
+        // before any backend call — a missing picture should stop the run here.
+        val template = when (family) {
+            // ⭐ ONE path for both Swap families (SDXL's ControlNet: backend 023).
+            Family.SD15_SWAP, Family.SDXL_SWAP -> swapInputs(ctx, node, p, inputs)
+            else -> null
+        }
+        // ⚠⚠⚠ The hint and the K/V are made; let the CPU picture models go BEFORE the
+        // backend loads the UNet and a ControlNet — IP-Adapter's 1.6 GB held through an
+        // SDXL Swap render got the foreground app killed ([PictureModels]).
+        if (template != null) PictureModels.releaseAll()
+
+        // ⚠ First, because it is the cheapest thing that can fail: a backend
+        // that is not up says so here rather than after a 200 ms VAE encode.
+        //
+        // ⚠⚠ Computed ON DEMAND since DiT inpaint joined this function: the DiT
+        // backend answers `/encode_text` with "DiT engine owns text encoding",
+        // so a Klein inpaint that paid this cost up front would fail before it
+        // reached the masking it is here for. Cached, so the three callers
+        // below still encode exactly once between them.
+        var condCache: String? = null
+        suspend fun cond(): String = condCache ?: run {
+            ctx.say(ctx.text(R.string.run_reading_prompt, "reading the prompt"))
+            when (val r = ctx.host.encodeText(prompt.positive, prompt.negative)) {
+                is Ops.Result.Ok -> r.value.handle
+                is Ops.Result.Err -> throw OpFailure("encode_text", r.code, r.body)
+            }.also { condCache = it }
+        }
+
+        // ⭐ The switch, not the wire, decides. A photo wired with `start_from`
+        // at `noise` is ignored ON PURPOSE and the canvas draws it dimmed.
+        // ⚠ The WIRE decides, and nothing else: an image is connected or it is
+        // not (2026-09-15).
+        val photo = inputs["image"] as? Value.Image
+
+        if (photo == null) {
+            ctx.say(ctx.text(R.string.run_rendering, "rendering"))
+            val latent = sample(ctx, p, cond(), null, w, h, aspect, template = template)
+            return hiresFix(ctx, node, p, prompt, VaeDecodeNode.decode(ctx, latent, w, h, aspect))
+        }
+
+        val src = ctx.images.get(photo.id)
+            ?: throw IllegalStateException(
+                "node \"${node.id}\": image ${photo.id} is no longer in the store"
+            )
+
+        // ⭐⭐ Is there a mask? Painted (or tapped) here — there is no mask wire.
+        val stored = MaskState.decode(MaskNode.opsOf(node.type, p)).copy(
+            growFrac = num("grow").toFloat(),
+            featherFrac = num("feather").toFloat(),
+        )
+
+        // ⭐⭐⭐ **An inpaint ALWAYS needs a mask — no exceptions, no silent
+        // fallback.** Rule changed 2026-09-19, at the user's ask, twice in one
+        // day: a first attempt made an empty mask mean "everything" and ran
+        // unattended; that was reverted because the person still wanted to be
+        // STOPPED and shown the editor. This is the second correction —
+        // *"lets not do the full masking thing for inpaint. instead if user
+        // doesnt mask just show error saying nothing masked, this should be
+        // always true for inpaint nodes"* — dropping the OLD rule too, which
+        // only refused when the picture came from a chain
+        // (`ctx.ancestorTypes.any { isSampler(it) }`) and silently ran a
+        // PHOTO-sourced inpaint with nothing painted as a plain re-render.
+        // ⚠ Padding is still the one exception: an outpaint frame hanging off
+        // the photo IS the mask, and needs no painting.
+        val padded = paddingOf(p) != null
+        // ⭐ An object's ring is ordinary mask on the image layer
+        // ([MaskOp.ObjectRing]) — but only while its object is there.
+        val placedObjects = if (inpaint) AddObjects.of(p) else emptyList()
+        if (inpaint && AddObjects.withoutDeadRings(stored, placedObjects).isEmpty && !padded) {
+            throw NeedsInput(ctx.text(R.string.run_nothing_masked, "nothing masked. Paint an area, then Run again"))
+        }
+        // ⚠⚠ Still gated to a CHAINED picture, unlike the check above: a plain
+        // photo's mask is cleared the moment the photo changes
+        // ([Graph.withNewPicture]), so this state is only reachable when the
+        // picture is a GENERATED one that re-rendered under a painted mask.
+        if (inpaint && ctx.ancestorTypes.any { isSampler(it) }) {
+            val on = p[MaskNode.PAINTED_ON].orEmpty()
+            if (!stored.isEmpty && on.isNotBlank() && on != photo.id) {
+                throw NeedsInput(
+                    ctx.text(
+                        R.string.run_painted_picture_changed,
+                        "the picture you painted on has changed. Repaint it, or undo the change upstream",
+                    )
+                )
+            }
+        }
+        // ⭐⭐ Tapped regions become geometry here, against the SAME photo the
+        // taps were made on. ⚠⚠ Refused by name when they cannot be — the
+        // missing-model case, read the way a missing checkpoint reads
+        // (`docs/SEGMENTER.md` §3, the user's call 2026-09-16). Rendering
+        // without the mask would repaint the wrong area confidently.
+        val painted = if (!MaskTaps.hasTaps(stored) && !MaskTaps.hasPicks(stored)) stored else {
+            val android = ctx.android
+            if (MaskTaps.hasTaps(stored) &&
+                (android == null || !com.abrah.nightmare.segment.Segmenter.isInstalled(android))
+            ) {
+                throw IllegalStateException(
+                    ctx.text(
+                        R.string.run_download_tap_segmenter,
+                        "node \"%1\$s\": this mask was tapped. Download %2\$s in Models, Tools",
+                        node.id, com.abrah.nightmare.segment.Segmenter.LABEL,
+                    )
+                )
+            }
+            // ⚠ The PARSER is a different download, so it is a different
+            // refusal — naming the segmenter here would send someone to fetch
+            // 87 MB that does not help.
+            if (MaskTaps.hasPicks(stored) &&
+                (android == null || !com.abrah.nightmare.segment.Parser.isInstalled(android))
+            ) {
+                throw IllegalStateException(
+                    ctx.text(
+                        R.string.run_download_auto_segmenter,
+                        "node \"%1\$s\": this mask was picked by name. Download %2\$s in Models, Tools",
+                        node.id, com.abrah.nightmare.segment.Parser.LABEL,
+                    )
+                )
+            }
+            ctx.say(
+                if (MaskTaps.hasTaps(stored)) ctx.text(R.string.run_finding_tapped_objects, "finding the objects you tapped")
+                else ctx.text(R.string.run_finding_picked_objects, "finding what you picked")
+            )
+            MaskTaps.resolve(
+                stored,
+                pick = { t ->
+                    android?.let { com.abrah.nightmare.segment.Parser.pick(it, src, t) }
+                },
+            ) { x, y ->
+                com.abrah.nightmare.segment.Segmenter.segment(android!!, src, x, y)?.candidates
+            }
+        }
+        // ⚠⚠⚠ **Picked or tapped, and NOTHING came back** — every region
+        // resolved to empty. Without this the sampler ran UNMASKED: an empty
+        // mask reads as "no mask" below, so a Clothes pick on a photo with no
+        // clothes silently became a plain re-render. ⚠ Now that picks are
+        // applied to every new photo (Enable auto mask) that would happen
+        // without the person ever opening the editor, so it is said by name.
+        if (inpaint && !padded && painted.ops.none { it !is MaskOp.Invert } &&
+            (MaskTaps.hasPicks(stored) || MaskTaps.hasTaps(stored))
+        ) {
+            val names = stored.ops.filterIsInstance<MaskOp.Pick>()
+                .mapNotNull { com.abrah.nightmare.segment.Parser.target(it.target) }
+                .map { target ->
+                    ctx.android?.getString(target.labelRes)?.lowercase() ?: target.label.lowercase()
+                }
+            throw NeedsInput(
+                if (names.isEmpty()) ctx.text(
+                    R.string.run_nothing_found_tapped,
+                    "nothing found where you tapped. Paint an area, then Run again",
+                ) else ctx.text(
+                    R.string.run_named_objects_not_found,
+                    "no %1\$s found in this picture. Paint an area, or pick something else in the mask editor",
+                    names.joinToString(ctx.text(R.string.word_or, " or ")),
+                )
+            )
+        }
+        // ⭐⭐⭐ **Add Objects**: the objects pasted onto the photo, and each
+        // ring op on the image layer drawn round where its object sits
+        // ([AddObjects.resolveRings]). Everything
+        // below — framing, the mask raster, the stitch — uses [photoIn], so the
+        // middle of each object survives the paste-back pixel-exact.
+        val objectRender = if (placedObjects.isEmpty()) null else {
+            val android = ctx.android
+                ?: throw IllegalStateException("node \"${node.id}\": placing objects needs a platform context")
+            ctx.say(ctx.text(R.string.run_placing_objects, "placing the objects"))
+            AddObjects.render(
+                src, placedObjects,
+                load = { uri -> AddObjects.load(android, uri) },
+                resolve = { source, mask -> AddObjects.resolveOn(android, source, mask) },
+            ).also { r ->
+                if (r.missing.isNotEmpty()) throw NeedsInput(
+                    ctx.text(
+                        R.string.run_object_source_missing,
+                        "an object\'s source photo can no longer be read. Add it again in the mask editor",
+                    )
+                )
+            }
+        }
+        val photoIn = objectRender?.photo ?: src
+        val paintedAll = objectRender?.let { r ->
+            AddObjects.resolveRings(painted, placedObjects, r.cuts, src.width, src.height)
+        } ?: painted
+        // ⭐⭐ OUTPAINT: a frame hanging off the photo is masked there whether or
+        // not anything was painted — DreamUI's `isEmpty` counts the padding too.
+        val padding = paddingOf(p)
+        // ⚠ `inpaint` first: a `sample` type has no painting params, so there is
+        // nothing here to be true.
+        val masking = inpaint && (!paintedAll.isEmpty || padding != null)
+        // ⭐⭐ The cut is the ASPECT's rectangle; the encode is the whole canvas
+        // with that rectangle centred in it ([framesTo], [padToCanvas]).
+        val (tw, th) = framesTo(node)
+
+        // ⚠⚠ The framed photo. With a mask it keeps its OWN pixels, because the
+        // patch is pasted back into it at the end and a frame already reduced to
+        // 512² would paste a 512² picture back over a photo. Without one the
+        // frame IS the render, so it goes straight to the model's size.
+        val fx = num("x").toFloat()
+        val fy = num("y").toFloat()
+        val fw = num("w").toFloat()
+        val fh = num("h").toFloat()
+        val (frame, frameRect) = CropNode.render(
+            photoIn, fx, fy, fw, fh,
+            if (masking) 0 else tw, if (masking) 0 else th,
+            padFill(node.type, p),
+        )
+
+        if (!masking) {
+            ctx.say(ctx.text(R.string.run_reimagining_picture, "re-imagining the picture"))
+            val base = encode(ctx, ImageStore.encodePng(padToCanvas(frame, w, h)), ENCODE_SEED, w, h)
+            val latent = sample(ctx, p, cond(), base, w, h, aspect, template = template)
+            return hiresFix(ctx, node, p, prompt, keepPhotoOnly(ctx, node, p, matched(ctx, p, VaeDecodeNode.decode(ctx, latent, w, h, aspect), frame)))
+        }
+
+        // ⭐⭐⭐ **The mask is painted in the PHOTO's coordinates, not the
+        // frame's**, and then put through the SAME framing the picture was.
+        //
+        // ⚠⚠ Rasterising it at the frame's size instead would tie a painting to
+        // whatever the frame happened to be when it was made: re-frame the shot
+        // afterwards and every stroke slides across the subject, silently. The
+        // user paints on a picture, so the picture is the coordinate space.
+        //
+        // ⚠ Capped for the reason `image.mask` capped: a photo may be 4096 px
+        // and a mask is read in normalised terms anyway, so a smaller raster
+        // loses nothing but memory.
+        val cap = (MaskNode.NO_DEMAND_MAX_EDGE.toFloat() / maxOf(photoIn.width, photoIn.height))
+            .coerceAtMost(1f)
+        val maskSrc = MaskRaster.rasterise(
+                paintedAll,
+                (photoIn.width * cap).toInt().coerceAtLeast(1),
+                (photoIn.height * cap).toInt().coerceAtLeast(1),
+            )
+        // ⚠⚠ PAD_BLACK, never the blurred fill: black is "not masked". A
+        // mirrored edge here would invent painting outside the photo.
+        val maskBmp = CropNode.render(
+            maskSrc, fx, fy, fw, fh, frame.width, frame.height, CropNode.PAD_BLACK,
+        ).first
+        // ⭐⭐ …and the padding forced white on top, so no eraser reaches it.
+        padding?.let { MaskRaster.forcePadding(maskBmp, it) }
+
+        // ⭐⭐ "Only masked" — the render window is a crop around the painting,
+        // so the detail lands where the finger was.
+        val cut = MaskCropNode.cut(frame, maskBmp, tw, th, flag(MaskCropNode.ONLY_MASKED))
+        ctx.say(
+            if (paintedAll.isEmpty) ctx.text(R.string.run_filling_padding, "filling the padding")
+            else ctx.text(R.string.run_repainting_marked_area, "repainting the area you marked")
+        )
+        val imagePng = ImageStore.encodePng(padToCanvas(cut.image, w, h))
+        // ⚠ On the CANVAS, black outside the aspect rectangle: that is the
+        // part the decode cuts away, so it keeps the base.
+        val maskPng = ImageStore.encodePng(padToCanvas(cut.mask, w, h))
+        // ⭐⭐⭐ **What the backend is actually given, in pixels and on disk.**
+        //
+        // ⚠⚠⚠ An inpaint came back with the bottom band unpainted, and the
+        // reports narrowed it in a way no theory of mine survived: it happens
+        // with "Only masked" OFF and with Stitch OFF, and stitch-off returns
+        // the FRAME with no paste-back at all — so the composite is not
+        // putting the original over it, the model never painted there.
+        // ⇒ Which leaves the mask, and every stage between the finger and
+        // the request resizes, crops or PADS it. Padding is black and black
+        // is "not masked", so a single mismatched rectangle anywhere in that
+        // chain produces exactly this band.
+        //
+        // ⚠⚠ This line is the instrument, not a guess — CLAUDE.md's rule
+        // after three wrong diagnoses in a row: when the code and the phone
+        // disagree, put the numbers on the device. It names every size in
+        // the chain, and writes the two PNGs so the mask can be LOOKED at
+        // rather than reasoned about.
+        // ⚠ Meant to stay: nothing else in the log states these sizes, and one
+        // line costs nothing on a path that is about to spend seconds on the NPU.
+        // ⚠⚠ It wrote the mask and image to `inpaint-debug/` while the bug was
+        // open; that went the moment the bug closed (the user's call, 2026-09-21).
+        // A dump is for a HUNT — leaving it on writes two files on every inpaint
+        // anyone ever does, to answer a question nobody is asking any more.
+        ctx.say(
+            "[mask] photo=${photoIn.width}x${photoIn.height} frame=${frame.width}x${frame.height} " +
+                "cut=${cut.mask.width}x${cut.mask.height} canvas=${w}x$h " +
+                "onlyMasked=${flag(MaskCropNode.ONLY_MASKED)}"
+        )
+        // ⚠⚠ A HUNT, and it goes when the hunt ends: black artefacts reported
+        // 2026-09-23 on renders with placed objects, at denoise 0.65 AND 1.0.
+        // Written only when objects are placed, to the app's external files
+        // (`adb pull /sdcard/Android/data/com.abrah.nightmare/files/objects-debug`),
+        // so the pixels can be LOOKED at rather than reasoned about.
+        if (objectRender != null) runCatching {
+            val dir = ctx.android?.getExternalFilesDir("objects-debug") ?: return@runCatching
+            java.io.File(dir, "1-photo-with-objects.png").writeBytes(ImageStore.encodePng(photoIn))
+            java.io.File(dir, "2-image-to-model.png").writeBytes(imagePng)
+            java.io.File(dir, "3-mask-to-model.png").writeBytes(maskPng)
+            ctx.say("[objects] debug PNGs in ${dir.absolutePath}")
+        }
+        // ⭐⭐⭐ **Klein's masked redraw — TRUE inpainting, and neither blend is
+        // reachable from here.** The engine takes the mask itself (ABI 3's
+        // `mask_image`: white is regenerated, black keeps the init image) with
+        // the base ALSO bound as a clean reference latent, so it understands
+        // both the hole and the picture around it.
+        //
+        // ⚠⚠ `PipelineDit` names `mask_latent_blend` zero times and DiT refuses
+        // every decomposed op, so the per-step blend and the `/latent_blend`
+        // below are not choices we are declining — they do not exist on this
+        // path. What DOES stay is the pixel composite at the end of this
+        // function: a VAE round trip is not pixel-exact, so without it the
+        // unpainted area drifts in colour and the patch stops joining up
+        // (the seam bug of 2026-09-15).
+        //
+        // ⭐ Z-Image, Qwen 2.1 and Krea 2 come here too (2026-10-05): with no
+        // Klein reference it is a masked img2img of the cut, and the composite
+        // below confines it to the mask ([SdSampler.ZIMAGE_INPAINT]).
+        // `docs/MODELS.md` §9.
+        if (family.dit) {
+            // ⭐ Klein edits the cut whole and the paste keeps the rest ([FLUX2_INPAINT]); the others redraw in the mask.
+            val patchBmp = if (family == Family.FLUX2) runDitEditCut(ctx, node, p, prompt, imagePng, inputs, w, h)
+            else runDitMasked(ctx, node, p, prompt, imagePng, maskPng, w, h)
+            return finishInpaint(ctx, node, p, photoIn, frame, frameRect, cut, patchBmp)
+        }
+
+        // ⚠⚠ The mask is resolved (a tap or a pick ran the segmenter or the parser): let them go
+        // before the UNet loads, as the Swap and DiT paths already do. Plain SD 1.5 / SDXL inpaint
+        // held them through its render for their idle window ([PictureModels], a rule kept in N-1).
+        if (template == null) PictureModels.releaseAll()
+        val base = encode(ctx, imagePng, ENCODE_SEED, w, h)
+        // ⭐⭐ The picture and mask go to `sample` as well. A 9-channel inpaint
+        // checkpoint conditions on them and SEES the hole it fills; every other
+        // model's backend drops them (`Ops.sample`), so nothing here branches
+        // on which kind of checkpoint is loaded — the model the node names is
+        // the whole choice (the user's call, 2026-09-19). The blend below then
+        // runs either way: over a 9-channel render it only re-asserts the
+        // unmasked area, which that model already kept.
+        val repainted = sample(ctx, p, cond(), base, w, h, aspect, imagePng, maskPng, template = template)
+
+        // ⚠⚠ `base` then `repainted`: the mask's WHITE area is where the new
+        // pixels show through. The other way round replaces everything EXCEPT
+        // what was painted — a plausible picture and a silent mistake.
+        val blended = when (
+            val r = ctx.host.latentBlend(base, repainted, maskPng)
+        ) {
+            is Ops.Result.Ok -> r.value.handle
+            is Ops.Result.Err -> throw OpFailure("latent_blend", r.code, r.body)
+        }
+        val patch = VaeDecodeNode.decode(ctx, blended, w, h, aspect)
+        val patchBmp = ctx.images.get(patch.id)
+            ?: throw IllegalStateException("node \"${node.id}\": the render vanished from the store")
+        return finishInpaint(ctx, node, p, photoIn, frame, frameRect, cut, patchBmp)
+    }
+
+    /**
+     * ⭐⭐ The patch goes back where it was cut from, blended along the mask
+     * rather than pasted as a rectangle — the seam is the whole reason the
+     * inpaint output "did not join up with the original" (2026-09-15).
+     *
+     * ⚠⚠ **ONE function, two callers**: the SD path above and Klein's masked
+     * redraw. They must agree, and two hand-rolled composites would stop
+     * agreeing — the rule `CLAUDE.md` states and `clipNodes` broke. It is the
+     * only stage of the three that a DiT render still needs, because a VAE
+     * round trip is not pixel-exact and the unpainted area would otherwise
+     * drift.
+     */
+    private fun finishInpaint(
+        ctx: NodeCtx,
+        node: Node,
+        p: Map<String, String>,
+        src: android.graphics.Bitmap,
+        frame: android.graphics.Bitmap,
+        frameRect: Frame,
+        cut: MaskCropNode.Cut,
+        patchBmp: android.graphics.Bitmap,
+    ): Value {
+        val dst = android.graphics.RectF(
+            cut.rect[0].toFloat(), cut.rect[1].toFloat(),
+            (cut.rect[0] + cut.rect[2]).toFloat(), (cut.rect[1] + cut.rect[3]).toFloat(),
+        )
+        // ⭐ Match colours: the patch in the cut's colours before it is blended in, so no tinted seam.
+        val patchBmp = if (matching(p)) ColorTools.matchBitmap(patchBmp, cut.image) else patchBmp
+        val out = if (!p[PasteNode.STITCH].equals("true", ignoreCase = true)) {
+            InpaintPixels.composite(frame, patchBmp, dst, cut.mask)
+        } else {
+            stitch(src, frame, frameRect, patchBmp, dst, cut.mask)
+        }
+        return Value.Image(ctx.images.put(out), out.width, out.height)
+    }
+
+    /**
+     * ⭐⭐ **"Stitch to original"** — the patch pasted back into the whole PHOTO,
+     * not into the frame.
+     *
+     * ⚠⚠ Lost when ten nodes were fused (§5.7): `image.paste` read the toggle,
+     * and the sampler kept the widget but always pasted into the frame, so the
+     * switch did nothing (reported 2026-09-17).
+     *
+     * ⚠ The canvas is the UNION of photo and frame, so an OUTPAINT frame
+     * extends the photo rather than having its new edges clipped away. The frame
+     * is drawn first (its padding fill under the region about to be repainted),
+     * the photo on top at its own quality, then the patch — [dst] carried from
+     * frame pixels into photo pixels through [frameRect].
+     * ⚠ Capped at [STITCH_MAX_EDGE], scaling everything alike.
+     */
+    private fun stitch(
+        photo: android.graphics.Bitmap,
+        frame: android.graphics.Bitmap,
+        frameRect: Frame,
+        patch: android.graphics.Bitmap,
+        dst: android.graphics.RectF,
+        mask: android.graphics.Bitmap,
+    ): android.graphics.Bitmap {
+        val ux0 = minOf(0f, frameRect.left)
+        val uy0 = minOf(0f, frameRect.top)
+        val ux1 = maxOf(photo.width.toFloat(), frameRect.right)
+        val uy1 = maxOf(photo.height.toFloat(), frameRect.bottom)
+        val k = minOf(1f, STITCH_MAX_EDGE / maxOf(ux1 - ux0, uy1 - uy0))
+        val base = android.graphics.Bitmap.createBitmap(
+            ((ux1 - ux0) * k).toInt().coerceAtLeast(1),
+            ((uy1 - uy0) * k).toInt().coerceAtLeast(1),
+            android.graphics.Bitmap.Config.ARGB_8888,
+        )
+        val canvas = android.graphics.Canvas(base)
+        val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+        fun place(l: Float, t: Float, r: Float, b: Float) =
+            android.graphics.RectF((l - ux0) * k, (t - uy0) * k, (r - ux0) * k, (b - uy0) * k)
+        canvas.drawBitmap(frame, null, place(frameRect.left, frameRect.top, frameRect.right, frameRect.bottom), paint)
+        canvas.drawBitmap(photo, null, place(0f, 0f, photo.width.toFloat(), photo.height.toFloat()), paint)
+        // Frame pixels -> photo pixels.
+        val sx = frameRect.width() / frame.width
+        val sy = frameRect.height() / frame.height
+        val into = place(
+            frameRect.left + dst.left * sx, frameRect.top + dst.top * sy,
+            frameRect.left + dst.right * sx, frameRect.top + dst.bottom * sy,
+        )
+        return InpaintPixels.composite(base, patch, into, mask)
+    }
+
+    /**
+     * ⭐⭐ A DiT render: ONE `/generate`, the text and (for image to image) the
+     * framed picture in, the picture out. Their engine owns the text encoder,
+     * the loop and the VAE, so there is no conditioning or latent to hand
+     * between ops ([Family.dit]).
+     *
+     * ⚠ The size snaps to the engine's grid here too: a saved flow or a typed
+     * param off the 256-px grid would otherwise reach the engine as a size it
+     * was never verified at.
+     */
+    /**
+     * ⭐⭐⭐ Klein's masked redraw. Returns the repainted CANVAS, which the
+     * caller composites back exactly as it does an SD one — same
+     * [finishInpaint], same seam.
+     *
+     * ⚠⚠ No `/encode_text`, no `/sample`, no `/vae_decode`, no
+     * `/latent_blend`: the DiT backend answers all four with "DiT engine owns
+     * text encoding", so this is one `/generate` carrying the picture and the
+     * mask. That is not a shortcut — it is the only path the engine offers,
+     * and it is the better one (`docs/MODELS.md` §9).
+     *
+     * ⚠ The image and mask are already the CANVAS-padded cut the SD path
+     * built, so the engine sees exactly the frame the user painted on.
+     */
+    /**
+     * ⭐ Klein's half of [FLUX2_INPAINT]: the cut as a plain edit, NO mask and (by default) strength 1, so the base is reference 1
+     * only and the full distilled schedule runs (what the Edit flow sends), with the node's wired `reference` after it.
+     * [finishInpaint] then pastes it back along the mask.
+     */
+    private suspend fun runDitEditCut(
+        ctx: NodeCtx,
+        node: Node,
+        p: Map<String, String>,
+        prompt: Value.Prompt,
+        imagePng: ByteArray,
+        inputs: Map<String, Value>,
+        w: Int,
+        h: Int,
+    ): android.graphics.Bitmap {
+        ctx.say(ctx.text(R.string.run_editing_marked_area, "editing the area you marked"))
+        PictureModels.releaseAll()
+        val refs = listOfNotNull(inputs["reference"] as? Value.Image).map { r ->
+            val bmp = ctx.images.get(r.id)
+                ?: throw IllegalStateException("node \"${node.id}\": reference image ${r.id} is no longer in the store")
+            ImageStore.encodePng(boundReference(bmp, p[REF_MAX]))
+        }
+        val r = ctx.host.generate(
+            prompt = prompt.positive,
+            negative = prompt.negative,
+            steps = p["steps"]?.toIntOrNull() ?: 4,
+            cfg = p["cfg"]?.toDoubleOrNull() ?: 1.0,
+            seed = p["seed"]?.toIntOrNull() ?: 0,
+            width = w,
+            height = h,
+            imagePng = imagePng,
+            // ⭐ The node's Denoise, 1.0 by default (the full edit); below it Klein starts from the cut as well
+            // (`edit_from_base`) and tends to keep it, as on Image edit (the user's call: let people try).
+            denoise = p["denoise"]?.toDoubleOrNull() ?: 1.0,
+            referencePngs = refs,
+            loras = lorasFor(ctx, p[LORAS]),
+            onProgress = ctx.onProgress,
+            scheduler = p["scheduler"]?.takeIf { it in ModelCatalog.schedulersFor(family) },
+        )
+        val out = when (r) {
+            is Ops.Result.Ok -> r.value
+            is Ops.Result.Err -> throw OpFailure("generate", r.code, r.body)
+        }
+        return android.graphics.BitmapFactory.decodeByteArray(out.png, 0, out.png.size)
+            ?: throw IllegalStateException("node \"${node.id}\": the engine's picture would not decode")
+    }
+
+    private suspend fun runDitMasked(
+        ctx: NodeCtx,
+        node: Node,
+        p: Map<String, String>,
+        prompt: Value.Prompt,
+        imagePng: ByteArray,
+        maskPng: ByteArray,
+        w: Int,
+        h: Int,
+    ): android.graphics.Bitmap {
+        ctx.say(ctx.text(R.string.run_repainting_marked_area, "repainting the area you marked"))
+        // ⚠⚠ The mask is made: let the CPU picture models go before the DiT renders, as a Swap
+        // render does ([PictureModels]). A Z-Image inpaint with pick-select held the parser through
+        // an 8.8 GB render on an 11.7 GB phone, and crashed (a tester, 2026-10-13).
+        PictureModels.releaseAll()
+        val r = ctx.host.generate(
+            prompt = prompt.positive,
+            negative = prompt.negative,
+            steps = p["steps"]?.toIntOrNull() ?: 4,
+            cfg = p["cfg"]?.toDoubleOrNull() ?: 1.0,
+            seed = p["seed"]?.toIntOrNull() ?: 0,
+            width = w,
+            height = h,
+            imagePng = imagePng,
+            maskPng = maskPng,
+            denoise = p["denoise"]?.toDoubleOrNull() ?: INPAINT_DENOISE.toDouble(),
+            // ⚠ The same LoRAs [runDit] sends: the node shows the picker, so a
+            // masked render that dropped them would ignore what it displays.
+            loras = lorasFor(ctx, p[LORAS]),
+            onProgress = ctx.onProgress,
+            // ⭐ The node's sampler (GitHub #19) and, since engine ABI 108, its schedule (`euler_karras`, backend 038);
+            // an SD id from an old flow is Euler at the backend.
+            scheduler = p["scheduler"]?.takeIf { it in ModelCatalog.schedulersFor(family) },
+        )
+        val out = when (r) {
+            is Ops.Result.Ok -> r.value
+            is Ops.Result.Err -> throw OpFailure("generate", r.code, r.body)
+        }
+        return android.graphics.BitmapFactory.decodeByteArray(out.png, 0, out.png.size)
+            ?: throw IllegalStateException("node \"${node.id}\": the engine's picture would not decode")
+    }
+
+    /**
+     * ⭐⭐ Turn the [LORAS] param into what `Ops.generate` sends: absolute
+     * paths inside [BackendProcess.lorasDir], each with a strength.
+     *
+     * ⚠⚠ **A missing file is refused here, not at Run.** The engine's answer
+     * to a path it cannot open is `cannot register LoRA source`, which it logs
+     * and then renders WITHOUT the adapter — a picture that looks like a
+     * success and is not the one that was asked for. Naming the file is the
+     * only way that failure becomes visible.
+     *
+     * ⚠ Blank, or every entry blank, is no LoRAs and costs nothing.
+     */
+    private fun lorasFor(ctx: NodeCtx, spec: String?): List<Pair<String, Double>> {
+        val text = spec?.trim().orEmpty()
+        if (text.isEmpty()) return emptyList()
+        // ⚠ A host with no Android context cannot resolve a LoRA at all; say so
+        // rather than rendering silently without one.
+        val android = ctx.android
+            ?: throw IllegalStateException("LoRAs need an Android context on this host")
+        return parseLoras(BackendProcess.lorasDir(android), text).onEach { (path, _) ->
+            // ⭐ Integer tensors abort the DiT engine ([LoraClean]); made float once, here.
+            if (runCatching { LoraClean.ensure(java.io.File(path)) }.getOrDefault(false)) {
+                ctx.say("  ${java.io.File(path).name}: integer tensors made float for the engine")
+            }
+        }
+    }
+
+    /**
+     * ⭐ The prompt's `<lora:…>` tags ([PromptLoras]) merged into [LORAS] — on a node whose
+     * model takes LoRAs (the picker is drawn and unlocked; a Swap conversion that kept LoRA).
+     * A tag naming no installed file, or any tag on a model without LoRAs, is skipped and
+     * the run says so — the text is already stripped either way.
+     */
+    private fun withPromptLoras(
+        ctx: NodeCtx,
+        node: Node,
+        p: Map<String, String>,
+        tags: List<PromptLoras.Tag>,
+    ): Map<String, String> {
+        if (tags.isEmpty()) return p
+        val picker = widgets.firstOrNull { it.name == LORAS }
+        val spec = ModelCatalog.byId(p["model"].orEmpty())
+        val takes = picker != null && picker.locked == null &&
+            (spec == null || spec.family.dit || ModelFeatures.LORA in spec.featureSet)
+        if (!takes) {
+            ctx.warn(ctx.text(R.string.run_lora_tags_unused, "LoRA tags in the prompt were left out. This model takes no LoRAs"))
+            return p
+        }
+        // ⚠ `.safetensors` only, as the picker lists them: `<lora:lora_notes>` resolved to the notes JSON.
+        val installed = ctx.android?.let { BackendProcess.lorasDir(it).list()?.toList() }.orEmpty()
+            .filter { it.endsWith(".safetensors", ignoreCase = true) }
+        // ⚠ Clamped to the slider's range: `<lora:x:5>` sent 5.0 past the 2.0 the picker allows,
+        // and a negative weight where the template quantizes it to 0 ([LoraSpec.MIN_NEGATIVE]).
+        val range = LoraSpec.range(negative = family.dit)
+        val add = tags.mapNotNull { t ->
+            PromptLoras.resolve(t.name, installed)?.let { LoraSpec.Entry(it, t.strength.coerceIn(range)) }
+                ?: run {
+                    ctx.warn(ctx.text(R.string.run_lora_tag_missing, "LoRA \"%1\$s\" from the prompt is not installed. Skipped", t.name))
+                    null
+                }
+        }
+        if (add.isEmpty()) return p
+        ctx.say("  LoRAs from the prompt: " + LoraSpec.summary(add))
+        return p + (LORAS to PromptLoras.merge(p[LORAS], add))
+    }
+
+    /**
+     * ⭐ The [LORAS] string, resolved against [dir]. Separated from
+     * [lorasFor] so it can be tested without an Android context.
+     */
+    internal fun parseLoras(dir: java.io.File, spec: String?): List<Pair<String, Double>> {
+        // ⚠⚠ The SPLIT is [LoraSpec]'s, not this function's. The picker sheet
+        // reads and writes the same string, and two tokenisers agree only until
+        // one of them learns something. What stays here is the half the UI must
+        // NOT do: turning a name into a file, which can fail.
+        return LoraSpec.parse(spec).map { e ->
+            // ⚠ [LoraSpec.parse] has already reduced the name to a bare
+            // filename, so a `../` in a saved workflow cannot name a file
+            // outside `dir` — it becomes a name that is simply not installed,
+            // and is refused two lines down like any other.
+            val file = java.io.File(dir, e.name)
+            if (!file.isFile) {
+                throw IllegalStateException(
+                    "LoRA \"${e.name}\" is not in ${dir.name}. Import it first",
+                )
+            }
+            file.absolutePath to e.strength
+        }
+    }
+
+    /**
+     * ⭐⭐ SD 1.5 Swap's per-request inputs ([SwapInputs.resolve]). The control
+     * picture: the wired [CONTROL] port's, else the one picked on the node, else
+     * the node's own photo. With a photo wired the node's crop window frames it
+     * ([SwapInputs.Frame]) so the hint lines up with the base — the user's call,
+     * 2026-09-29. With ControlNet at `none` none of this is read.
+     */
+    private suspend fun swapInputs(
+        ctx: NodeCtx,
+        node: Node,
+        p: Map<String, String>,
+        inputs: Map<String, Value>,
+    ): Ops.TemplateInputs {
+        // ⭐⭐ A feature the conversion dropped is IGNORED, whatever the node says — its
+        // control is dimmed ([ModelFeatures.missingReason]), and a dimmed control must
+        // never change a render (a flow saved on another model may still name one).
+        val has = ModelCatalog.byId(p["model"].orEmpty())?.featureSet ?: ModelFeatures.defaultFor(family)
+        val type = p[CONTROLNET].orEmpty().ifBlank { SwapInputs.NONE }
+            .takeIf { ModelFeatures.CONTROLNET in has } ?: SwapInputs.NONE
+        // ⚠ IP-Adapter switched off reads no reference, wired or picked.
+        val ipOff = p[IP_ADAPTER] == IpAdapter.NONE || ModelFeatures.IP_ADAPTER !in has
+        val refWired = (inputs["reference"] as? Value.Image)?.takeUnless { ipOff }
+        val refPicked = p[IP_IMAGE]?.takeIf { it.isNotBlank() && !ipOff }
+        val loraSpec = p[LORAS].takeIf { ModelFeatures.LORA in has }
+        // ⚠ Nothing to pack, no hint and no reference: the base model, and no platform needed.
+        if (type == SwapInputs.NONE && LoraSpec.parse(loraSpec).isEmpty() && refWired == null && refPicked == null) {
+            return Ops.TemplateInputs()
+        }
+        val android = ctx.android
+            ?: throw IllegalStateException("a Swap model needs an Android context on this host")
+        val spec = ModelCatalog.byId(p["model"].orEmpty())
+            ?: throw IllegalStateException("node \"${node.id}\": model \"${p["model"]}\" is not installed")
+        val loras = lorasFor(ctx, loraSpec)
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val photo = (inputs["image"] as? Value.Image)?.let { ctx.images.get(it.id) }
+            // ⭐ The photo follows the node's crop window; any OTHER control picture
+            // its own region ([CTL_X]) — both placed in the render's aspect box ([controlFrame]).
+            val control = if (type == SwapInputs.NONE) null else {
+                (inputs[CONTROL] as? Value.Image)?.let { ctx.images.get(it.id) }
+                    ?: p[CONTROL_IMAGE]?.takeIf { it.isNotBlank() }?.let {
+                        AddObjects.load(android, it)
+                            ?: throw NeedsInput(ctx.text(
+                                R.string.run_controlnet_picture_missing,
+                                "the ControlNet picture can no longer be read. Pick it again",
+                            ))
+                    }
+                    ?: photo
+            }
+            // ⭐ The IP-Adapter reference: the `reference` wire cut by the node's
+            // REF region, letterboxed square ([ipReference]), else the picture
+            // picked on the node (which CLIP centre-crops square).
+            val reference = refWired?.let { r ->
+                val bmp = ctx.images.get(r.id)
+                    ?: throw IllegalStateException("node \"${node.id}\": image ${r.id} is no longer in the store")
+                ipReference(bmp, node, p)
+            } ?: refPicked?.let {
+                AddObjects.load(android, it)
+                    ?: throw NeedsInput(ctx.text(
+                        R.string.run_ip_adapter_picture_missing,
+                        "the IP-Adapter picture can no longer be read. Pick it again",
+                    ))
+            }
+            SwapInputs.resolve(
+                android, spec, loras, type,
+                p[CONTROL_STRENGTH]?.toDoubleOrNull() ?: 1.0, control,
+                frame = controlFrame(node, p, photo != null),
+                aspect = swapAspect(node, p),
+                say = ctx.say,
+                reference = reference,
+                // ⭐ The family's head for the node's choice ([IpAdapter.adapterFor]).
+                ipAdapter = IpAdapter.adapterFor(family, p[IP_ADAPTER].orEmpty().ifBlank { IpAdapter.PLUS }),
+                ipScale = p[IP_SCALE]?.toDoubleOrNull() ?: SwapInputs.IP_SCALE_DEFAULT,
+            )
+        }
+    }
+
+    private suspend fun runDit(
+        ctx: NodeCtx,
+        node: Node,
+        p: Map<String, String>,
+        prompt: Value.Prompt,
+        photo: Value.Image?,
+        reference: Value.Image?,
+        w0: Int,
+        h0: Int,
+        /** ⭐ Images 3 and 4 ([EXTRA_REFS]), in order. */
+        extraRefs: List<Value.Image> = emptyList(),
+    ): Value {
+        // ⚠ [ModelCatalog.ditSnap], not a local copy: the size control offers
+        // only grid values and this must agree with it ([ModelCatalog.DIT_STEP]).
+        // ⭐ A [ModelSpec.fixedSizes] model (Iris) takes its listed size nearest the request instead:
+        // the grid would turn 752 into 768, a size it was never trained at.
+        val fixed = ModelCatalog.byId(p["model"].orEmpty())?.takeIf { it.fixedSizes }
+        val kept = fixed?.let { ModelCatalog.keptSize(it, w0, h0) }
+        val w = kept?.width ?: ModelCatalog.ditSnap(w0)
+        val h = kept?.height ?: ModelCatalog.ditSnap(h0)
+        // ⚠ Kept for Match colours: the result is matched to the FRAMED picture it was made from,
+        // as the SD path does. Matching the whole photo pulled a framed dark corner of a bright
+        // photo toward the photo's brightness.
+        var framed: android.graphics.Bitmap? = null
+        val png = photo?.let {
+            val src = ctx.images.get(it.id)
+                ?: throw IllegalStateException("node \"${node.id}\": image ${it.id} is no longer in the store")
+            val (frame, _) = CropNode.render(
+                src,
+                p["x"]?.toFloatOrNull() ?: 0f, p["y"]?.toFloatOrNull() ?: 0f,
+                p["w"]?.toFloatOrNull() ?: 1f, p["h"]?.toFloatOrNull() ?: 1f,
+                w, h, padFill(node.type, p),
+            )
+            framed = frame
+            ImageStore.encodePng(frame)
+        }
+        // ⭐⭐ The reference goes over the wire at its OWN size — no
+        // [CropNode.render], deliberately. `image` above is fitted to the
+        // canvas because it becomes the init latent; a reference is VAE-encoded
+        // separately and positioned by FLUX.2's reference-token RoPE, so
+        // cropping it to the output would discard its framing for nothing.
+        val referencePng = reference?.let {
+            val bmp = ctx.images.get(it.id)
+                ?: throw IllegalStateException(
+                    "node \"${node.id}\": reference image ${it.id} is no longer in the store"
+                )
+            // ⚠⚠ Target size **0, 0** — the region at its OWN pixels, the same
+            // way an inpaint keeps the photo's own resolution. Passing `w, h`
+            // here would fit the reference to the output canvas, which is
+            // exactly what a reference must not be.
+            val (region, _) = CropNode.render(
+                bmp,
+                p[REF_X]?.toFloatOrNull() ?: 0f, p[REF_Y]?.toFloatOrNull() ?: 0f,
+                p[REF_W]?.toFloatOrNull() ?: 1f, p[REF_H]?.toFloatOrNull() ?: 1f,
+                0, 0, CropNode.PAD_BLACK,
+            )
+            // ⭐ …then bounded, if the node asks for it. Default [REF_ORIGINAL]
+            // sends the region exactly as it is.
+            ImageStore.encodePng(boundReference(region, p[REF_MAX]))
+        }
+        // ⭐⭐⭐ Says what actually goes over the wire, in PIXELS.
+        //
+        // ⚠⚠⚠ This line exists because two reasoned fixes were shipped against
+        // a cost that does not work the way the code believed. 1.5.513 bounded
+        // the user's reference to 512 px and 1.5.516 did the same to the base;
+        // both were reverted on 2026-09-20 when the engine logged a **1536 MB
+        // encode for a 512x512 reference** and 384 MB for the same picture
+        // under a 512x512 canvas. Nothing in the backend's own log states the
+        // size a reference was sent AT, so there was no way to see it.
+        // Same rule as `NmPreview` (CLAUDE.md): when three readings of the code
+        // disagree with the phone, instrument the phone.
+        //
+        // ⚠ Meant to STAY — [REF_ENCODED_AT_CANVAS] is the kind of claim that
+        // needs a line of evidence next to it every run.
+        fun dims(b: ByteArray?): String {
+            if (b == null) return "none"
+            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(b, 0, b.size, o)
+            return "${o.outWidth}x${o.outHeight}"
+        }
+        // ⚠⚠ **Only when a picture actually goes over the wire.** A
+        // text-to-image run sends neither, so the line could only ever read
+        // `image=none reference=none` — noise in the run log, and worse than
+        // noise on Z-Image, where `reference` names a port that family does
+        // not have (see [inputs] above) and the reader is invited to wonder
+        // what happened to it.
+        if (png != null || referencePng != null) {
+            ctx.say(
+                "[ref] canvas=${w}x$h image=${dims(png)} reference=${dims(referencePng)} " +
+                    "(a reference is encoded at the CANVAS, not at its own size)"
+            )
+        }
+        // ⭐⭐ WARNED, not refused (the user's rule for Wan, 2026-10-15): a reference run over what
+        // this chip measured to fit fails after its text encode ([REF_FIT_BELOW_V79], GitHub #35).
+        if (referencePng != null) {
+            val caps = DeviceProbe.caps()
+            val modelId = p["model"].orEmpty()
+            refFitSuggestion(modelId, if (caps.known) caps.arch else 0, w, h)?.let { fits ->
+                ctx.warn(ctx.text(R.string.run_ref_fit_warning,
+                    "%1\$s with a reference: %2\$s is probably too big for this phone and may fail. %3\$s fits. Trying anyway",
+                    ModelCatalog.byId(modelId)?.label ?: modelId, "${w}x$h", "${fits.width}x${fits.height}"))
+            }
+        }
+        ctx.say(
+            when {
+                referencePng != null && png == null -> ctx.text(R.string.run_rendering_from_reference, "rendering from your reference")
+                referencePng != null -> ctx.text(R.string.run_reimagining_with_reference, "re-imagining the picture with your reference")
+                png == null -> ctx.text(R.string.run_rendering, "rendering")
+                else -> ctx.text(R.string.run_reimagining_picture, "re-imagining the picture")
+            }
+        )
+        // ⚠ The same release as [runDitMasked]: a DiT checkpoint needs the RAM more than a warm model.
+        PictureModels.releaseAll()
+        val r = ctx.host.generate(
+            prompt = prompt.positive,
+            negative = prompt.negative,
+            steps = p["steps"]?.toIntOrNull() ?: 4,
+            cfg = p["cfg"]?.toDoubleOrNull() ?: 1.0,
+            seed = p["seed"]?.toIntOrNull() ?: 0,
+            width = w,
+            height = h,
+            imagePng = png,
+            denoise = p["denoise"]?.toDoubleOrNull() ?: defaultDenoise(family).toDouble(),
+            referencePngs = listOfNotNull(referencePng) + extraRefs.map { r ->
+                val bmp = ctx.images.get(r.id)
+                    ?: throw IllegalStateException("node \"${node.id}\": reference image ${r.id} is no longer in the store")
+                ImageStore.encodePng(boundReference(bmp, p[REF_MAX]))
+            },
+            loras = lorasFor(ctx, p[LORAS]),
+            onProgress = ctx.onProgress,
+            // ⭐ The node's sampler (GitHub #19) and, since engine ABI 108, its schedule (`euler_karras`, backend 038);
+            // an SD id from an old flow is Euler at the backend.
+            scheduler = p["scheduler"]?.takeIf { it in ModelCatalog.schedulersFor(family) },
+        )
+        val out = when (r) {
+            is Ops.Result.Ok -> r.value
+            is Ops.Result.Err -> throw OpFailure("generate", r.code, r.body)
+        }
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(out.png, 0, out.png.size)
+            ?: throw IllegalStateException("node \"${node.id}\": the engine's picture would not decode")
+        val made = matched(ctx, p, Value.Image(ctx.images.put(bmp), bmp.width, bmp.height), framed)
+        return if (png == null) made else keepPhotoOnly(ctx, node, p, made)
+    }
+
+    /**
+     * ⭐⭐ [PadRule.ZOOM]'s other half: an image-to-image render zoomed out past
+     * the photo comes back as the PHOTO's region only — the bars were context
+     * for the model, not output (the user's call, 2026-10-05). A frame inside
+     * the photo, or a node that keeps its bars ([PadRule.PAD]), is unchanged.
+     *
+     * ⚠ Cut at the rendered picture's own pixels from [CropGeometry.photoInFrame]
+     * — the same fractions the editor's checkerboard is drawn from.
+     */
+    /**
+     * ⭐⭐⭐ **Hires fix** ([HIRES], the user's call 2026-10-10): the render ×2 with the first installed
+     * upscaler, then Local Dream's UltraFix over it — the detail redrawn tile by tile at the larger
+     * size, with this node's prompt and the Steps / Denoise steps last set in the UltraFix dialog
+     * ([UltraFix.load]). `/upscale` loads its weights per request and `/generate` with `ultrafix`
+     * runs this model's own graph per tile — ⚠⚠ which must be the SQUARE native graph, the key
+     * Results' UltraFix launches ([HarnessViewModel.ultrafixResult]). A render at a resolution
+     * patch (512x768) holds a 64x96 graph, and a 64x64 tile through it read and wrote past its
+     * buffers: SIGSEGV on the first UNet call (2026-10-11). So it switches to the native key
+     * first, through the executor ([NodeCtx.switchKey]), and the next keyed node switches back.
+     * ⚠ Every way it does NOT happen keeps the render and WARNS — a picture is never lost to it.
+     */
+    private suspend fun hiresFix(ctx: NodeCtx, node: Node, p: Map<String, String>, prompt: Value.Prompt, img: Value.Image): Value.Image {
+        if (!p[HIRES].equals("true", ignoreCase = true)) return img
+        val tile = UltraFix.tileFor(family) ?: return img
+        // ⚠ Not `android`: a local of that name shadows the package (`upscaleTo` has the same note).
+        val appCtx = ctx.android
+        val upscaler = UpscalerCatalog.installedIds.firstOrNull()
+        if (upscaler == null) {
+            ctx.warn(ctx.text(R.string.run_hires_no_upscaler, "Hires fix skipped: no upscaler installed. Download one in Models"))
+            return img
+        }
+        if (UpscaleNode.fittingScale(img.w, img.h, 2) == null) {
+            ctx.warn(ctx.text(R.string.run_hires_too_large, "Hires fix skipped: %1\$dx%2\$d is too large to double", img.w, img.h))
+            return img
+        }
+        ctx.say(ctx.text(R.string.run_hires_upscaling, "hires fix: upscaling ×2"))
+        val big = UpscaleNode.upscaleTo(ctx, node.id, img, upscaler, 2)
+        val spec = ModelCatalog.byId(p["model"].orEmpty()) ?: defaultSpec()
+        val native = spec.native
+        val square = ContextKey(ModelCatalog.backendTypeOf(spec.id), spec.id, native.width, native.height)
+        if (backendContextKey(node) != square && ctx.switchKey?.invoke(square) != true) {
+            ctx.warn(ctx.text(R.string.run_hires_no_square, "Hires fix skipped: could not load the model at %1\$dx%2\$d for it", native.width, native.height))
+            return img
+        }
+        val bmp = ctx.images.get(big.id)
+            ?: throw IllegalStateException("node \"${node.id}\": the upscaled picture vanished from the store")
+        val (w, h) = UltraFix.snap(bmp.width, bmp.height)
+        val src = if (w == bmp.width && h == bmp.height) bmp else android.graphics.Bitmap.createScaledBitmap(bmp, w, h, true)
+        val u = appCtx?.let { UltraFix.load(it) } ?: UltraFix.Params()
+        ctx.say(ctx.text(R.string.run_hires_redrawing, "hires fix: redrawing the detail at %1\$dx%2\$d", w, h))
+        val r = ctx.host.ultrafix(
+            png = ImageStore.encodePng(src), width = w, height = h,
+            prompt = if (u.qualityPrompt) UltraFix.QUALITY_PROMPT else prompt.positive,
+            negative = prompt.negative,
+            steps = u.steps,
+            cfg = p["cfg"]?.toDoubleOrNull() ?: defaultSpec().cfg,
+            seed = p["seed"]?.toIntOrNull()?.takeIf { it != 0 } ?: kotlin.random.Random.nextInt(1, Int.MAX_VALUE),
+            denoise = UltraFix.strength(u.denoiseSteps, u.steps),
+            tileSize = tile,
+            scheduler = p["scheduler"]?.takeIf { it.isNotBlank() } ?: defaultSpec().scheduler,
+            onProgress = ctx.onProgress,
+        )
+        val out = when (r) {
+            is Ops.Result.Ok -> r.value
+            is Ops.Result.Err -> throw OpFailure("ultrafix", r.code, r.body)
+        }
+        val fixed = android.graphics.BitmapFactory.decodeByteArray(out.png, 0, out.png.size)
+            ?: throw IllegalStateException("node \"${node.id}\": the hires picture would not decode")
+        return Value.Image(ctx.images.put(fixed), fixed.width, fixed.height)
+    }
+
+    /**
+     * ⭐⭐ **Enlarge ×2** ([ENLARGE]): the finished render through the first installed upscaler —
+     * the hires fix's first half, with no redraw, so it works on EVERY family (a DiT has no UltraFix).
+     * Asked for 2026-10-11: Z-Image text to image, enlarged, then an inpaint fixing the faces —
+     * "Only masked" renders the crop at the model's size, so the bigger the source, the more
+     * detail the face gets back. ⚠ Every way it does not happen keeps the render and WARNS, as
+     * [hiresFix] does. ⚠ `/upscale` runs in whatever backend is up, a DiT one included
+     * (backend 008), so no relaunch.
+     */
+    private suspend fun enlarge(ctx: NodeCtx, node: Node, img: Value.Image): Value.Image {
+        if (hasHires || !effectiveParams(node)[ENLARGE].equals("true", ignoreCase = true)) return img
+        val upscaler = UpscalerCatalog.installedIds.firstOrNull()
+        if (upscaler == null) {
+            ctx.warn(ctx.text(R.string.run_enlarge_no_upscaler, "Not enlarged: no upscaler installed. Download one in Models"))
+            return img
+        }
+        if (UpscaleNode.fittingScale(img.w, img.h, 2) == null) {
+            ctx.warn(ctx.text(R.string.run_enlarge_too_large, "Not enlarged: %1\$dx%2\$d is too large to double", img.w, img.h))
+            return img
+        }
+        ctx.say(ctx.text(R.string.run_enlarging, "enlarging ×2"))
+        return UpscaleNode.upscaleTo(ctx, node.id, img, upscaler, 2)
+    }
+
+    private fun keepPhotoOnly(ctx: NodeCtx, node: Node, p: Map<String, String>, img: Value.Image): Value.Image {
+        if (!zoomsOut(node.type, p)) return img
+        val f = CropGeometry.photoInFrame(
+            p["x"]?.toFloatOrNull() ?: 0f, p["y"]?.toFloatOrNull() ?: 0f,
+            p["w"]?.toFloatOrNull() ?: 1f, p["h"]?.toFloatOrNull() ?: 1f,
+        ) ?: return img
+        val bmp = ctx.images.get(img.id) ?: return img
+        val r = CropGeometry.photoPixels(f, bmp.width, bmp.height) ?: return img
+        val out = android.graphics.Bitmap.createBitmap(bmp, r[0], r[1], r[2], r[3])
+        ctx.say("[zoom] kept the photo's ${out.width}x${out.height} of the ${bmp.width}x${bmp.height} render")
+        return Value.Image(ctx.images.put(out), out.width, out.height)
+    }
+
+    /**
+     * ⭐ The reference at [REF_MAX]'s longest edge, **aspect preserved exactly**.
+     *
+     * ⚠⚠⚠ This is a DETAIL control, not a memory one, and the distinction is
+     * the most expensive thing learned on 2026-09-20. A reference is
+     * VAE-encoded at the output canvas's size whatever it is sent at
+     * ([REF_ENCODED_AT_CANVAS]), so shrinking one here saves nothing — it only
+     * decides whether the model reads sharp context or upscaled context. Two
+     * shipped fixes assumed the opposite and were reverted.
+     *
+     * ⚠ [REF_ORIGINAL], anything unparseable, and a picture already smaller
+     * than the bound all return the bitmap untouched.
+     */
+    private fun boundReference(
+        src: android.graphics.Bitmap,
+        setting: String?,
+    ): android.graphics.Bitmap {
+        val maxEdge = setting?.toIntOrNull() ?: return src
+        val longest = maxOf(src.width, src.height)
+        if (maxEdge <= 0 || longest <= maxEdge) return src
+        val scale = maxEdge.toFloat() / longest
+        val w = (src.width * scale).toInt().coerceAtLeast(1)
+        val h = (src.height * scale).toInt().coerceAtLeast(1)
+        return android.graphics.Bitmap.createScaledBitmap(src, w, h, true)
+    }
+
+    /** ⚠ Never put in the store: [ImageStore.encodePng] says why. */
+    private suspend fun encode(
+        ctx: NodeCtx,
+        png: ByteArray,
+        seed: Int,
+        w: Int,
+        h: Int,
+    ): String = when (
+        val r = ctx.host.vaeEncode(png, seed, w, h)
+    ) {
+        is Ops.Result.Ok -> r.value.handle
+        is Ops.Result.Err -> throw OpFailure("vae_encode", r.code, r.body)
+    }
+
+    /** ⭐ The node's variation seed, or null when its strength is 0 (the plain seed, bit for bit). */
+    private fun variationOf(p: Map<String, String>): Ops.Variation? {
+        val strength = p[SUBSEED_STRENGTH]?.toDoubleOrNull()?.takeIf { it > 0.0 } ?: return null
+        return Ops.Variation(p[SUBSEED]?.toIntOrNull() ?: 0, strength.coerceAtMost(1.0))
+    }
+
+    private suspend fun sample(
+        ctx: NodeCtx,
+        p: Map<String, String>,
+        cond: String,
+        latent: String?,
+        w: Int,
+        h: Int,
+        aspect: String?,
+        inpaintImage: ByteArray? = null,
+        inpaintMask: ByteArray? = null,
+        template: Ops.TemplateInputs? = null,
+    ): String {
+        val r = ctx.host.sample(
+            steps = p["steps"]?.toIntOrNull() ?: 20,
+            cfg = p["cfg"]?.toDoubleOrNull() ?: 7.5,
+            seed = p["seed"]?.toIntOrNull() ?: 0,
+            width = w,
+            height = h,
+            latentHandle = latent,
+            variation = variationOf(p),
+            denoise = p["denoise"]?.toDoubleOrNull() ?: defaultDenoise(family).toDouble(),
+            scheduler = p["scheduler"].orEmpty(),
+            condHandle = cond,
+            aspect = aspect,
+            inpaintImage = inpaintImage,
+            inpaintMask = inpaintMask,
+            template = template,
+            onProgress = ctx.onProgress,
+        )
+        return when (r) {
+            is Ops.Result.Ok -> r.value.handle
+            is Ops.Result.Err -> throw OpFailure("sample", r.code, r.body)
+        }
+    }
+}
+
+/**
+ * ⭐⭐ The end of a flow: show what came out, and keep it.
+ *
+ * ⚠⚠ **A display, and nothing else** — the user's call, 2026-09-15: every
+ * post-process belongs to the sampler. It takes a picture OR a clip, because
+ * "which of these is the deliverable" is the same question either way.
+ *
+ * ⚠ Deleted on 2026-09-13 as a node whose only widget had become a no-op, and
+ * un-deleted here because chaining gave it back a job: in
+ * `sampler → sampler → output` it is what marks the picture worth keeping, so
+ * the intermediates do not fill the gallery.
+ *
+ * ⚠⚠ NOT cacheable — saving is a side effect, and a cached Output would skip the
+ * write on the second Run, leaving the user having pressed the button twice for
+ * one file.
+ */
+object MediaOutputNode : NodeType {
+    override val name = "core.output"
+    override val version = "1"
+
+    /**
+     * ⚠ `MEDIA`, not `IMAGE` — the one port type that accepts either. A second
+     * output node for clips is the shape §5.7 deleted: two nodes that differ by
+     * what they happen to be handed is one node too many.
+     */
+    override val inputs = listOf(Port("media", "MEDIA"))
+
+    /** ⚠ No outputs: this is where a graph ends. [run] still returns its input
+     * so the canvas and the harness can draw what was produced. */
+    override val outputs = emptyList<Port>()
+    override val category = "output"
+    override val cacheable = false
+
+    /**
+     * ⚠⚠ Twice the ordinary width — the user's call, 2026-09-15. This node
+     * holds the picture the whole flow was for, and the height follows the
+     * width because a preview is laid out at the image's own aspect: doubling
+     * one doubles both.
+     */
+    override val defaultWidth = com.abrah.nightmare.canvas.Sizes.PROSE_NODE_WIDTH
+
+
+    /**
+     * ⭐⭐ **Autosave — every Run is KEPT in Results, automatically.**
+     *
+     * ⚠⚠ Not a gallery write. The user's call, 2026-09-15: the gallery is an
+     * EXPORT and stays a deliberate tap on ⬇, or twenty runs while tweaking a
+     * prompt become twenty files in the camera roll. Results is the app's own
+     * shelf, and it keeps the FLOW beside the picture, which is what an
+     * automatic keep should fill.
+     */
+    const val AUTOSAVE = "autosave"
+
+    /**
+     * ⭐⭐⭐ **Enlarge the result without a node for it** — the user's call,
+     * 2026-09-22: *"i plan to eventually remove need of upscale node, output
+     * node can have auto upscale checkbox"*.
+     *
+     * ⚠⚠ It is the same work `image.upscale` does, through the same function
+     * ([UpscaleNode.upscaleTo]) — not a second implementation. That node is
+     * RETIRED from the palette rather than deleted, so flows that already have
+     * one keep working.
+     *
+     * ⚠ A picture only. A clip reaching here is passed through untouched: the
+     * upscaler takes RGB frames and nothing wires a video into it on purpose.
+     */
+    // ⚠ `auto_upscale`, not `upscale`: [knobLabel] turns a param id into the
+    // label, so the id IS the words on the row — "Auto upscale", which is what
+    // the user asked it be called (2026-09-22). A separate label field would be
+    // a second place to keep in step.
+    const val UPSCALE = "auto_upscale"
+    const val UPSCALER = "upscaler"
+    /** ⭐ `2x`/`3x`/`4x` — [UpscaleNode.SCALE]'s param, on the node that enlarges. */
+    const val SCALE = UpscaleNode.SCALE
+
+    /** ⭐ Colour: the ids are the rows' words ([knobLabel]). [BRIGHTNESS]..[WARMTH] show while [ADJUST] is on. */
+    const val AUTO_COLOR = "auto_colour"
+    const val ADJUST = "adjust_colours"
+    const val BRIGHTNESS = "brightness"
+    const val CONTRAST = "contrast"
+    const val SATURATION = "saturation"
+    const val WARMTH = "warmth"
+
+    /**
+     * ⭐⭐⭐ **The graph that enlarges one picture on disk**: photo → output,
+     * upscale ticked. Its output is node `upscale`.
+     *
+     * ⚠⚠⚠ Results' Upscale and the `save_upscaled` op each built
+     * `photo → image.upscale` by hand, and kept doing so after that type was
+     * DELETED (2026-09-22) — so both failed with *unknown node type*. Reported
+     * from Results 2026-09-27. ⇒ ONE builder, over the node that exists.
+     *
+     * @param path a file PATH, not a `file://` URI — `core.image` reads any
+     *   non-`content://` string as a path.
+     */
+    fun upscaleGraph(path: String, upscalerId: String, scale: Int = UpscaleNode.NATIVE_SCALE): Graph =
+        Graph(
+            listOf(
+                Node("photo", LoadImageNode.name, params = mapOf("uri" to path)),
+                Node(
+                    "upscale", name,
+                    params = mapOf(UPSCALE to "true", UPSCALER to upscalerId, SCALE to "${scale}x"),
+                    inputs = sources("media" to "photo"),
+                ),
+            )
+        )
+
+    override val widgets = listOf(
+        // ⭐ ON by default: placing this node IS the statement that this is the
+        // result you want back, and Results is private to the app.
+        Widget(AUTOSAVE, "bool", "true", hintRes = R.string.hint_autosave),
+        // ⭐⭐ OFF by default: an upscale costs seconds and a download, and a
+        // flow that quietly did it would surprise someone on their first Run.
+        Widget(
+            UPSCALE, "bool", "false",
+            hintRes = R.string.hint_auto_upscale,
+        ),
+        // ⚠⚠ The OPTIONS are the INSTALLED set and the DEFAULT is the first of
+        // them, exactly as `image.upscale` declares it — the same trap applies:
+        // a control pre-set to weights that are not on the phone fails the
+        // instant it runs. ⚠ Falls back to the whole catalogue when nothing is
+        // installed, so [run] can name what to download.
+        Widget(
+            UPSCALER, "string",
+            (UpscalerCatalog.installedIds.firstOrNull() ?: UpscalerCatalog.ALL.first().id),
+            options = UpscalerCatalog.installedIds.ifEmpty { UpscalerCatalog.ALL.map { it.id } },
+            hintRes = R.string.hint_upscaler,
+        ),
+        // ⭐ How much larger (the user's ask, 2026-09-26). ⚠ Capped at
+        // [UpscaleNode.MAX_OUT_EDGE]: a render too big for this falls back to
+        // the largest scale that fits, and says so.
+        Widget(
+            SCALE, "string", "4x",
+            options = UpscaleNode.SCALES,
+            hintRes = R.string.hint_upscale_scale,
+        ),
+        // ⭐ Colour ([colour]): auto levels + white balance, and the four sliders behind [ADJUST].
+        Widget(AUTO_COLOR, "bool", "false", hintRes = R.string.hint_auto_colour),
+        Widget(ADJUST, "bool", "false", hintRes = R.string.hint_adjust_colours),
+        Widget(BRIGHTNESS, "float", "0", -1.0, 1.0),
+        Widget(CONTRAST, "float", "0", -1.0, 1.0),
+        Widget(SATURATION, "float", "0", -1.0, 1.0),
+        Widget(WARMTH, "float", "0", -1.0, 1.0, hintRes = R.string.hint_warmth),
+        // ⚠⚠ **No `name` box.** It was the filename prefix for the gallery
+        // write this node used to do, and that write is gone — autosave keeps
+        // into Results, which names things by seed and prompt. A text box whose
+        // value nothing reads is worse than no box: it invites typing that has
+        // no effect. Removed 2026-09-15 on the user's question, *"what does it
+        // even do?"* — which was the right question, and the answer was nothing.
+    )
+
+    override fun contextKey(node: Node): ContextKey? = null
+
+    override suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value {
+        val media = inputs["media"]
+            ?: throw IllegalArgumentException(
+                "node \"${node.id}\": nothing is wired into \"media\""
+            )
+        if (media !is Value.Image && media !is Value.Video) {
+            throw IllegalArgumentException(
+                "node \"${node.id}\": \"media\" carries ${media.describe()}, " +
+                    "which is not a picture or a clip"
+            )
+        }
+        // ⚠⚠ **It writes nothing.** Autosave KEEPS into Results, and Results is
+        // a ViewModel concern — it needs the store, the flow that made the
+        // picture, the seed and the batch label, none of which a node can
+        // reach. `HarnessViewModel` reads [AUTOSAVE] off this node after the
+        // run. ⇒ This node's whole job is to be the thing a graph points at, so
+        // the result has a named destination and something to draw it.
+        //
+        // ⚠ It used to write a PNG to the gallery when `save` was ticked. That
+        // was the same confusion the disk icon had — an export wearing the word
+        // "save" — and the gallery is a deliberate tap on ⬇ now.
+        //
+        // ⭐⭐⭐ …one exception: [UPSCALE]. It is the only thing this node
+        // DOES to what it is handed, and it is here rather than in a node of its
+        // own because a flow already ends here.
+        // ⚠ A clip passes through: the upscaler takes RGB frames.
+        val params = effectiveParams(node)
+        val out = enlarged(ctx, node, media, params)
+        return if (out is Value.Image) colour(ctx, params, out) else out
+    }
+
+    /**
+     * ⭐⭐ Colour, after the upscale ([AUTO_COLOR], [ADJUST], the user's ask 2026-10-17): auto levels and
+     * white balance, then brightness, contrast, saturation and warmth ([ColorTools]). The sampler's render
+     * is cached, so moving a slider re-runs this node alone.
+     */
+    private fun colour(ctx: NodeCtx, params: Map<String, String>, img: Value.Image): Value.Image {
+        val auto = params[AUTO_COLOR].equals("true", ignoreCase = true)
+        val manual = params[ADJUST].equals("true", ignoreCase = true)
+        if (!auto && !manual) return img
+        val bmp = ctx.images.get(img.id) ?: return img
+        var px = ColorTools.pixels(bmp)
+        if (auto) px = ColorTools.autoColor(px)
+        if (manual) {
+            fun v(k: String) = params[k]?.toFloatOrNull() ?: 0f
+            px = ColorTools.adjust(px, v(BRIGHTNESS), v(CONTRAST), v(SATURATION), v(WARMTH))
+        }
+        val done = ColorTools.bitmap(px, bmp.width, bmp.height)
+        return Value.Image(ctx.images.put(done), done.width, done.height)
+    }
+
+    private suspend fun enlarged(ctx: NodeCtx, node: Node, media: Value, params: Map<String, String>): Value {
+        if (media is Value.Image &&
+            params[UPSCALE].equals("true", ignoreCase = true)
+        ) {
+            // ⭐⭐ The largest scale up to the one chosen that stays within
+            // [UpscaleNode.MAX_OUT_EDGE] — the user's call, 2026-09-26.
+            val wanted = UpscaleNode.scaleOf(params[SCALE])
+            val scale = UpscaleNode.fittingScale(media.w, media.h, wanted)
+            // ⚠⚠ [NodeCtx.warn], not `say`: both succeed with a picture that is
+            // not what was asked for, and a run-log line alone was invisible —
+            // *"nothing happens"*, reported 2026-09-27.
+            if (scale == null) {
+                ctx.warn(
+                    ctx.text(
+                        R.string.run_not_upscaled_too_large,
+                        "Not upscaled: %1\$dx%2\$d would pass %3\$d px even at 2x",
+                        media.w, media.h, UpscaleNode.MAX_OUT_EDGE,
+                    )
+                )
+                return media
+            }
+            if (scale < wanted) {
+                ctx.warn(ctx.text(
+                    R.string.run_upscaled_smaller,
+                    "Upscaled %1\$dx, not %2\$dx. %2\$dx would pass %3\$d px",
+                    scale, wanted, UpscaleNode.MAX_OUT_EDGE,
+                ))
+            }
+            return UpscaleNode.upscaleTo(ctx, node.id, media, params[UPSCALER].orEmpty(), scale)
+        }
+        return media
+    }
+
+    /**
+     * ⭐ Whether [graph] keeps every Run on its own.
+     *
+     * ⚠ Asked by the picture actions, which dim the keep button when it is true
+     * — keeping by hand would make a second copy of something already there.
+     */
+    /**
+     * ⭐ Whether THIS node enlarges what it is handed.
+     *
+     * ⚠ One reader of the param, so the canvas, the inspector and the run all
+     * ask the same question the same way.
+     */
+    fun autoUpscales(node: Node): Boolean =
+        node.type == name && effectiveParams(node)[UPSCALE].equals("true", ignoreCase = true)
+
+    /**
+     * ⭐ Whether this output is wired a CLIP: the port feeding `media` is a `VIDEO` one. ⚠ Read
+     * off the wire, not a list of video node names: Wan's `last_frame` is an IMAGE port, and an
+     * output fed from it can be enlarged like any picture. Its auto upscale and its Upscale
+     * button are dimmed with [R.string.output_clip_no_upscale] (the user, 2026-10-15).
+     */
+    fun takesVideo(graph: Graph, node: Node, types: Map<String, NodeType>): Boolean {
+        val src = node.inputs["media"] ?: return false
+        val outs = graph.byId[src.node]?.let { types[it.type] }?.outputs ?: return false
+        val port = src.port?.let { p -> outs.firstOrNull { it.name == p } } ?: outs.firstOrNull()
+        return port?.type == "VIDEO"
+    }
+
+    fun autosaves(graph: Graph): Boolean = graph.nodes
+        .filter { it.type == name }
+        .any { effectiveParams(it)[AUTOSAVE].equals("true", ignoreCase = true) }
+}

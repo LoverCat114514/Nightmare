@@ -1,0 +1,635 @@
+--- ../LocalDream/local-dream/app/src/main/cpp/src/Pipeline.hpp
++++ backend-src/src/Pipeline.hpp
+@@ -88,11 +88,60 @@
+   // latents per target size. False when the user uploaded their own image
+   // (img2img / inpaint), where the base image is content-dependent.
+   bool aspect_pad_synthetic_base = false;
++  // ⭐ The sample() op: run everything up to and including the denoising loop,
++  // then return the VAE-ready latent instead of decoding it. Off for every
++  // /generate request, so the monolithic path is bit-for-bit unchanged.
++  bool return_latent = false;
++  // ⭐ img2img FROM A GRAPH: a starting latent supplied by the caller, in the
++  // same VAE space opSample() and opVaeEncodeFromRgb() return.
++  //
++  // ⚠⚠ When this is set, generate() uses it INSTEAD of encoding img_data --
++  // which is the whole point: a node graph already holds a latent, and making
++  // it decode to pixels just so the backend could encode them again would cost
++  // a VAE round trip (~190 ms and 1.4% of the picture, measured) for nothing.
++  //
++  // ⚠ Empty means "no latent supplied"; img2img then behaves exactly as it
++  // always did, so /generate is unaffected.
++  std::vector<float> init_latents;
++  // ⭐ CONDITIONING supplied by the graph, so `encode_text` can be a wire
++  // rather than a hidden step inside the sampler.
++  //
++  // ⚠ Empty hidden means "encode the prompt yourself", which is what /generate
++  // always does. When set, the prompt strings are NOT re-encoded -- so the
++  // handle the caller passed is exactly what the UNet sees, which is the only
++  // way a CLIP node can be said to feed a sampler at all.
++  //
++  // ⚠⚠ A prompt is still REQUIRED even when this is set: generate() rejects an
++  // empty prompt, and more importantly the prompt is part of the sample handle
++  // key. Two renders that differ only in a conditioning handle must not collide,
++  // and the conditioning's own hash is what the endpoint adds to the key.
++  //
++  // ⚠ Held as flat fields rather than as a `Conditioning`, because that struct
++  // is declared BELOW this one. Reordering upstream types to hold it by value
++  // would churn the patch record for a purely cosmetic gain.
++  std::vector<float> init_cond_hidden;    // [2, seq_len, hidden_dim]
++  std::vector<float> init_cond_pooled;    // SDXL only; empty for SD1.5
++  std::vector<float> init_cond_time_ids;  // SDXL only
++  int init_cond_seq = 0;
++  int init_cond_dim = 0;
+   // True when the request actually carried a "mask" field (real inpaint).
+   // False when the mask was auto-installed by the aspect-padding pipeline
+   // (txt2img / img2img-with-aspect). Used to decide whether to laplacian-blend
+   // the decoded image against the original after generation.
+   bool user_supplied_mask = false;
++  // Per-step latent blend (re-imposing the original outside the mask at every
++  // step). On by default for every model type; set 0 to disable, which is what
++  // diffusers does for 9-channel inpainting checkpoints. Kept switchable
++  // because that variant is worth re-checking on any new inpaint model -- see
++  // the measurement noted at the blend site.
++  int mask_latent_blend = 1;
++
++  // ControlNet (--type controlnet): pre-decoded canny hint image in the
++  // NHWC 0..1 float layout the QNN graph consumes directly, plus the
++  // standard residual multiplier.
++  bool has_control = false;
++  float control_strength = 1.0f;
++  std::vector<float> control_image_data;  // [1,512,512,3] NHWC, 0..1
+ 
+   // Ultrafix: tiled img2img over an arbitrarily large (upscaled) input.
+   // VAE encode, every UNet denoising step and the final decode all run as
+@@ -116,7 +165,6 @@
+   std::vector<float> time_ids;  // [2, 6]
+   int hidden_dim = 0;
+   int pooled_dim = 0;
+-  int negative_chunks = 1, positive_chunks = 1;
+   int seq_len = 77;  // 77 for CLIP (SD/SDXL), 512 for Qwen/T5 (Anima)
+ 
+   float *negHidden() { return hidden.data(); }
+@@ -184,6 +232,14 @@
+   // Anima runs the same fixed-1024 graphs as SDXL but isn't an SDXL pipeline;
+   // the request parser uses this to force the 1024 canvas.
+   virtual bool isAnima() const { return false; }
++  // ControlNet pipeline: fixed 512 canvas, requires a control_image, no
++  // img2img/mask/ultrafix. The request parser keys its validation on this.
++  virtual bool isControlNet() const { return false; }
++  // True SD1.5-inpainting checkpoint (9-channel UNet). Requires both an image
++  // and a mask: they are fed to the model as extra input channels, not merely
++  // blended around it. Note the request's denoise_strength still applies --
++  // send 1.0 for a full repaint of the masked region.
++  virtual bool isInpaintModel() const { return false; }
+   // Ultrafix needs the VAE encoder (img2img) plus fixed-size graphs that can
+   // be run as tiles; the MNN (CPU) format has neither constraint nor need.
+   virtual bool supportsUltrafix() const {
+@@ -197,26 +253,6 @@
+     nsfw_threshold_ = threshold;
+   }
+ 
+-  // Blanks an RGB result that the NSFW checker scores over the threshold.
+-  // generate() runs this on its way out; any pipeline that overrides generate()
+-  // has to call it too, or the filter build silently stops filtering.
+-  void applySafetyChecker(std::vector<uint8_t> &rgb, int width, int height) {
+-    if (!safety_interpreter_) return;
+-    auto safety_start = std::chrono::high_resolution_clock::now();
+-    float score = 0.0f;
+-    if (safety_check(rgb, width, height, score, safety_interpreter_,
+-                     safety_session_)) {
+-      std::cout << "NSFW Score: " << score << std::endl;
+-      if (score > nsfw_threshold_) {
+-        QNN_WARN("NSFW detected (%.2f>%.2f).", score, nsfw_threshold_);
+-        std::fill(rgb.begin(), rgb.end(), 255);
+-      }
+-    } else {
+-      QNN_WARN("Safety check failed.");
+-    }
+-    std::cout << "Safety check dur: " << elapsedMs(safety_start) << "ms\n";
+-  }
+-
+   // Mutates `req` only to release the decoded image buffer once it is no
+   // longer needed (a ~190 MB allocation at ultrafix sizes).
+   //
+@@ -225,6 +261,194 @@
+   virtual GenerationResult generate(GenerationRequest &req,
+                                     const ProgressCallback &progress_callback);
+ 
++  // --- op surface (Nightmare) --------------------------------------------
++  // A node graph needs the stage hooks individually, not just generate().
++  // They already exist below; they are merely protected/private, so this is a
++  // visibility shim and NOTHING else -- no logic, no reordering, no behaviour
++  // change to generate(), which keeps calling the same methods it always did.
++  //
++  // ⚠ Keep it that way. The moment an op here does something generate() does
++  // not, the graph and the monolithic path can disagree about what a "step"
++  // means, and that difference will surface as an image that is subtly wrong
++  // rather than as an error.
++  //
++  // ⚠ These do NOT take the generation mutex. main.cpp owns serialisation for
++  // both /generate and the op endpoints, because the pipelines share MNN
++  // sessions and the global IO dimensions.
++  Conditioning opEncodeText(const GenerationRequest &req) {
++    return encodePrompts(req);
++  }
++
++  /**
++   * ⭐ The fused sampler (§3): CLIP, scheduler, the whole denoising loop, and
++   * then STOP, returning the VAE-ready latent.
++   *
++   * ⚠ It calls generate() rather than reimplementing the loop, and that is the
++   * point. A second copy of the sampler would drift from the one /generate uses
++   * and the two would disagree about what a "step" means -- which shows up as
++   * an image that is subtly wrong, never as an error. §3 also decided NOT to
++   * expose unet_step in v1 for the same reason: per-step control would force
++   * scheduler state out of C++ and into JS.
++   *
++   * ⚠ Takes `req` by non-const reference because generate() does; it releases
++   * the decoded image buffer through it.
++   */
++  GenerationResult opSample(GenerationRequest &req,
++                            const ProgressCallback &progress_callback) {
++    req.return_latent = true;
++    return generate(req, progress_callback);
++  }
++  // Latent -> RGB bytes, guarded.
++  //
++  // ⚠⚠ The guard is the point, and it lives HERE rather than in the caller.
++  // vaeDecode() writes into graph tensors sized by the CURRENT global IO
++  // dimensions; hand it a latent of the wrong size and it walks off the end and
++  // the server dies with SIGSEGV/SEGV_ACCERR. Upstream hit exactly this at
++  // 768x512 (../docs/ARCHITECTURE.md §3). An HTTP endpoint takes its sizes from
++  // a request body, so "the caller will get it right" is not a safety argument.
++  //
++  // Returns tightly packed RGB8, height * width * 3, ready for encodePNG.
++  std::vector<uint8_t> opVaeDecodeToRgb(const GenerationRequest &req,
++                                        const std::vector<float> &latents) {
++    const size_t want = (size_t)latentChannels() * (size_t)(req.width / 8) *
++                        (size_t)(req.height / 8);
++    if (latents.size() != want) {
++      throw std::invalid_argument(
++          "latent size " + std::to_string(latents.size()) + " != expected " +
++          std::to_string(want) + " (" + std::to_string(latentChannels()) +
++          " x " + std::to_string(req.height / 8) + " x " +
++          std::to_string(req.width / 8) + ") for " +
++          std::to_string(req.width) + "x" + std::to_string(req.height));
++    }
++    // ⚠⚠ The same globals hazard opVaeEncodeFromRgb documents at length:
++    // vaeDecode() sizes its memcpys from the Config.hpp globals, and this
++    // endpoint bypasses parseGenerationRequest too. The guard above checks the
++    // LATENT's length against `req`, which is what makes a mismatch look
++    // handled -- it is not, because the graph IO is sized from somewhere else
++    // entirely.
++    ScopedSizeOverride io(req.width, req.height, req.width / 8, req.height / 8);
++
++    // ⚠⚠⚠ **decodeToPixels(), NEVER vaeDecode() directly** -- the exact mirror
++    // of the rule opVaeEncodeFromRgb already follows, and this op broke it.
++    //
++    // The VAE graph is compiled at vaeTilePixelSize() square (512 for SD 1.5,
++    // 1024 for SDXL). decodeToPixels() branches on useTiledVae(): at or below
++    // that size it decodes in one pass, and ABOVE it slices the latent into
++    // tiles, decodes each under its own ScopedSizeOverride and blends them.
++    // Calling vaeDecode() directly skips the slicing and hands a fixed-512
++    // graph a full-size buffer.
++    //
++    // ⚠⚠ **At 512x512 the two paths are identical**, which is why this shipped
++    // and why nothing caught it: v1 was pinned to 512 (docs/ARCHITECTURE.md
++    // section 5.2), the op tests all ran there, and the bug was invisible until
++    // resolution patches made another size reachable. Measured on device
++    // 2026-09-11: a ZERO latent -- which must decode to one flat field --
++    // came back at 768x512 as a 3x3 grid of mismatched tiles with visible
++    // seams, while the same zero latent at 512x512 on the same process was
++    // correctly uniform.
++    //
++    // ⇒ Anything that decodes a latent goes through decodeToPixels(). The
++    // encoder's own comment says the same thing about vaeEncode(); the two
++    // halves are now consistent.
++    std::vector<int> lat_shape = {1, latentChannels(), req.height / 8,
++                                  req.width / 8};
++    std::vector<float> lat_vec(latents.begin(), latents.end());
++    xt::xarray<float> lat = xt::adapt(lat_vec, lat_shape);
++    xt::xarray<float> px = decodeToPixels(req, lat, /*verbose=*/false);
++    return pixelsToBytes(px);
++  }
++  /**
++   * ⭐ RGB bytes -> a latent, for img2img and for anything that wants to put a
++   * picture back into a graph.
++   *
++   * ⚠⚠ Routes through encodePixelsToLatentStats(), NEVER vaeEncode()
++   * directly. vaeEncode copies 3 * width * height floats into a graph input
++   * tensor fixed at vaeTilePixelSize() square, so a direct call at any
++   * non-512 size overruns it and the server dies with SIGSEGV -- upstream hit
++   * exactly that at 768x512 (../docs/ARCHITECTURE.md section 3). The safe path
++   * tiles instead.
++   *
++   * ⚠⚠ Returns the SAME latent space opSample() does: VAE space, ready for
++   * opVaeDecodeToRgb. encodeImageToLatent's caller applies vaeToLatents()
++   * afterwards to reach model space for the sampler; a handle that sometimes
++   * meant one space and sometimes the other would decode to plausible garbage
++   * with nothing to indicate which it was.
++   *
++   * ⚠ Seeds the RNG from req.seed. The latent is mean + std * noise, so
++   * without a seed the same image would encode differently every call -- and a
++   * content-addressed handle over a non-deterministic op is a cache that never
++   * hits and a check that can never be reproduced.
++   */
++  std::vector<float> opVaeEncodeFromRgb(GenerationRequest &req,
++                                        const std::vector<uint8_t> &rgb) {
++    const size_t want = (size_t)3 * req.width * req.height;
++    if (rgb.size() != want)
++      throw std::invalid_argument(
++          "image is " + std::to_string(rgb.size()) + " bytes, expected " +
++          std::to_string(want) + " for " + std::to_string(req.width) + "x" +
++          std::to_string(req.height) + " RGB");
++
++    // ⚠⚠⚠ **The QNN graph helpers size their IO from the Config.hpp GLOBALS,
++    // and NOTHING on this endpoint's path sets them.** Only the generate/sample
++    // path assigns them ("The QNN graph helpers size their IO from these
++    // globals", below); `/vae_encode` deliberately bypasses
++    // parseGenerationRequest, and so inherits whatever the last request left --
++    // on a freshly launched backend, the defaults: 512x512 pixels, 64x64 latent.
++    //
++    // At 1024 that made executeVaeEncoderGraphs* copy 3*512*512 floats into a
++    // 3*1024*1024 input tensor (three quarters of it left as whatever the heap
++    // held) and fill 4*64*64 of the mean/std buffers -- which
++    // encodePixelsToLatentStats had also SIZED at 64x64. The `xt::adapt` below
++    // then reads them at 1x4x128x128 and runs 49,152 floats off the end of each.
++    //
++    // ⇒ The latent that came back was heap garbage shaped like a latent. It
++    // decoded to a washed-out ghost of the picture, it raised nothing, and
++    // because a process's heap layout is stable it was REPRODUCIBLE -- which is
++    // what made it look like a caching bug for two days.
++    //
++    // ⚠ Measured on device 2026-09-10, same image and seed throughout: the
++    // first /vae_encode after a launch returns latent_sha c69a9011, and every
++    // one after a single /sample returns 24bd8769 -- which round-trips the photo
++    // exactly. One /sample in between is the entire difference, because that is
++    // the only thing that assigns the globals.
++    //
++    // ⚠ The user-visible bug was an inpaint/img2img render whose UNMASKED area
++    // -- the `vae_encode` latent, carried through `latent_blend` -- came out
++    // grey and smeared while the sampled area was clean, on the first Run of a
++    // session and after every model switch (which relaunches the process).
++    // "Touch the crop and it is fixed" worked because by then a sample HAD run,
++    // so the re-encode the changed crop forced was a correct one.
++    ScopedSizeOverride io(req.width, req.height, req.width / 8, req.height / 8);
++
++    // NHWC bytes -> NCHW floats in [-1, 1]. ⚠ The same normalisation
++    // RequestParser applies to an img2img image (x / 127.5 - 1); a different
++    // range here would encode to a latent that decodes to a washed-out or
++    // clipped picture rather than to an error.
++    std::vector<int> shape_nchw = {1, 3, req.height, req.width};
++    xt::xarray<float> nchw = xt::zeros<float>(shape_nchw);
++    for (int c = 0; c < 3; ++c)
++      for (int y = 0; y < req.height; ++y)
++        for (int x = 0; x < req.width; ++x)
++          nchw(0, c, y, x) =
++              (float)rgb[((size_t)y * req.width + x) * 3 + c] / 127.5f - 1.0f;
++
++    xt::random::seed(req.seed);
++    std::vector<float> mean, std_dev;
++    encodePixelsToLatentStats(req, nchw, mean, std_dev);
++
++    std::vector<int> lat_shape = {1, latentChannels(), req.height / 8,
++                                  req.width / 8};
++    auto m = xt::adapt(mean, lat_shape);
++    auto sd = xt::adapt(std_dev, lat_shape);
++    xt::xarray<float> noise = xt::random::randn<float>(lat_shape);
++    xt::xarray<float> lat = xt::eval(m + sd * noise);
++    return std::vector<float>(lat.begin(), lat.end());
++  }
++
++  int opTextSeqLen() const { return textSeqLen(); }
++  int opTextHiddenDim() const { return textHiddenDim(); }
++  int opLatentChannels() const { return latentChannels(); }
++
+  protected:
+   // --- stage hooks -------------------------------------------------------
+   // Runs CLIP for the sides that missed the prompt cache, writing into the
+@@ -238,6 +462,21 @@
+   // Single VAE-decoder pass at the current global IO dimensions.
+   virtual void vaeDecode(const GenerationRequest &req, const float *latents,
+                          float *pixels) = 0;
++  // Encode arbitrary NCHW pixels to latent (mean, std), tiling when the input
++  // is larger than the fixed VAE encoder graph.
++  //
++  // ⚠ Anything encoding a full-resolution image MUST come through here rather
++  // than calling vaeEncode() directly. vaeEncode copies
++  // `3 * output_width * output_height` elements into a graph input tensor that
++  // is fixed at vaeTilePixelSize() square (QnnModel.hpp `elementCount`), so at
++  // any non-512 resolution a direct call overruns that tensor and the server
++  // dies with SIGSEGV/SEGV_ACCERR. That is exactly what inpaint did at 768x512:
++  // 3 * 768 * 512 = 1,179,648 elements into a 3 * 512 * 512 = 786,432 buffer.
++  void encodePixelsToLatentStats(const GenerationRequest &req,
++                                 const xt::xarray<float> &pixels_nchw,
++                                 std::vector<float> &out_mean,
++                                 std::vector<float> &out_std);
++
+   // Called before / after the denoising loop (load per-request UNet, lowram).
+   virtual void beginDenoise(const GenerationRequest &req) {}
+   virtual void endDenoise() {}
+@@ -269,6 +508,8 @@
+   float vaeScale() const { return sdxl_ ? 0.13025f : 0.18215f; }
+ 
+   // --- text-conditioning generalization hooks ----------------------------
++  // Context sequence length fed to the UNet: CLIP = 77, Anima (T5/Qwen) = 512.
++  virtual int textSeqLen() const { return 77; }
+   // encoder_hidden_states feature dim: SD = 768, SDXL = 768+1280, Anima = 1024.
+   virtual int textHiddenDim() const {
+     return sdxl_ ? text_embedding_size + text_embedding_size_2
+@@ -384,11 +625,9 @@
+   Conditioning cond;
+   cond.hidden_dim = textHiddenDim();
+   cond.pooled_dim = textPooledDim();
+-  cond.seq_len = text_encoder_.contextLength(req.prompt, req.negative_prompt);
++  cond.seq_len = textSeqLen();
+   cond.hidden.assign((size_t)batch_size * cond.seq_len * cond.hidden_dim, 0.0f);
+   if (sdxl_) {
+-    cond.negative_chunks = std::min(cond.seq_len / 77, std::max(1, (text_encoder_.tokenizeInfo(req.negative_prompt).count + 72) / 75));
+-    cond.positive_chunks = std::min(cond.seq_len / 77, std::max(1, (text_encoder_.tokenizeInfo(req.prompt).count + 72) / 75));
+     cond.pooled.assign((size_t)batch_size * cond.pooled_dim, 0.0f);
+     cond.time_ids.assign((size_t)batch_size * 6, 0.0f);
+     for (int b = 0; b < batch_size; b++) {
+@@ -416,9 +655,7 @@
+ 
+   const uint32_t cache_mode =
+       isAnima() ? prompt_cache::kModeAnima
+-                : (sdxl_ ? (text_encoder_.fixed_chunks_ ? prompt_cache::kModeSdxlFixedChunks
+-                                                      : prompt_cache::kModeSdxlChunked)
+-                       : prompt_cache::kModeSd15);
++                : (sdxl_ ? prompt_cache::kModeSdxl : prompt_cache::kModeSd15);
+ 
+   bool neg_hit =
+       neg_cache_eligible &&
+@@ -462,6 +699,72 @@
+   return cond;
+ }
+ 
++inline void Pipeline::encodePixelsToLatentStats(
++    const GenerationRequest &req, const xt::xarray<float> &pixels_nchw,
++    std::vector<float> &out_mean, std::vector<float> &out_std) {
++  const int latent_ch = latentChannels();
++  const size_t plane = (size_t)sample_width * sample_height;
++  out_mean.assign(latent_ch * plane, 0.0f);
++  out_std.assign(latent_ch * plane, 0.0f);
++
++  if (!useTiledVae(req)) {
++    // Fits the graph: one pass at the current global IO dimensions.
++    vaeEncode(req, pixels_nchw.data(), out_mean.data(), out_std.data());
++    return;
++  }
++
++  std::cout << "Using VAE encoder tiling for " << req.width << "x" << req.height
++            << " input (latent stats)..." << std::endl;
++
++  const int tile_px = vaeTilePixelSize();
++  const int tile_lat = tile_px / 8;
++
++  auto [img_positions, latent_positions, img_overlap_x, img_overlap_y,
++        latent_overlap_x, latent_overlap_y] =
++      calculate_vae_tile_positions(req.width, req.height, tile_px);
++
++  std::vector<std::pair<xt::xarray<float>, xt::xarray<float>>> tiles;
++  tiles.reserve(img_positions.size());
++
++  {
++    // The encoder graph's IO size is read from the Config.hpp globals, so they
++    // must read as one tile for the duration of the tile passes. This is the
++    // step the direct vaeEncode() call was missing.
++    ScopedSizeOverride tile_io(tile_px, tile_px, tile_lat, tile_lat);
++
++    for (size_t i = 0; i < img_positions.size(); ++i) {
++      auto pos = img_positions[i];
++      xt::xarray<float> img_tile =
++          xt::view(pixels_nchw, 0, xt::all(),
++                   xt::range(pos.second, pos.second + tile_px),
++                   xt::range(pos.first, pos.first + tile_px));
++
++      std::vector<float> tile_vec(img_tile.begin(), img_tile.end());
++      // 4, not latentChannels(): blend_vae_encoder_tile_stats accumulates a
++      // fixed 4-channel plane, and the tiled path is QNN-4-channel only
++      // (Anima is 16-channel but never tiles). Matches the img2img tiled path.
++      std::vector<float> tile_mean(1 * 4 * tile_lat * tile_lat);
++      std::vector<float> tile_std(1 * 4 * tile_lat * tile_lat);
++
++      vaeEncode(req, tile_vec.data(), tile_mean.data(), tile_std.data());
++
++      std::vector<int> tile_shape = {1, 4, tile_lat, tile_lat};
++      tiles.push_back(
++          {xt::adapt(tile_mean, tile_shape), xt::adapt(tile_std, tile_shape)});
++    }
++  }
++
++  auto [mean, std_dev] = blend_vae_encoder_tile_stats(
++      tiles, latent_positions, sample_height, sample_width, tile_lat,
++      latent_overlap_x, latent_overlap_y);
++
++  out_mean.assign(mean.begin(), mean.end());
++  out_std.assign(std_dev.begin(), std_dev.end());
++
++  std::cout << "VAE encoder tiling completed: " << tiles.size()
++            << " tiles blended into latent stats" << std::endl;
++}
++
+ inline xt::xarray<float> Pipeline::encodeImageToLatent(
+     const GenerationRequest &req, const xt::xarray<float> &original_image) {
+   // Latent channel count varies by format (SD/SDXL = 4, Anima = 16); the tiled
+@@ -893,14 +1196,28 @@
+ 
+ inline GenerationResult Pipeline::generate(
+     GenerationRequest &req, const ProgressCallback &progress_callback) {
+-  if (req.prompt.empty()) throw std::invalid_argument("Prompt empty");
++  // ⚠⚠ An empty prompt is refused only when the CLIP encode is actually
++  // going to run. A caller that supplied a conditioning has already provided
++  // the text -- the encode below is skipped entirely -- so demanding a prompt
++  // string as well asks for a field that is never read, and the graph's sampler
++  // node no longer has one to send (docs/ARCHITECTURE.md §3). Same reasoning as
++  // the img2img guards immediately below: do not validate an input the request
++  // does not use.
++  if (req.prompt.empty() && req.init_cond_hidden.empty())
++    throw std::invalid_argument("Prompt empty");
+   if (safety_interpreter_ && !safety_session_)
+     throw std::runtime_error("SafetyChecker missing");
+-  if (req.img2img && !supportsImg2Img())
++  // ⚠⚠ Both img2img guards are skipped when the caller supplied a LATENT.
++  // Starting from a latent encodes nothing, so it needs neither pixels nor the
++  // VAE encoder -- a build launched with --no_img2img can still do it. Without
++  // this, /sample with a latent_handle failed with "Invalid img_data", an error
++  // about a field the caller never sent.
++  const bool encodes_pixels = req.img2img && req.init_latents.empty();
++  if (encodes_pixels && !supportsImg2Img())
+     throw std::runtime_error("img2img not available (VAE encoder not loaded)");
+   if (req.ultrafix && !supportsUltrafix())
+     throw std::runtime_error("ultrafix not available on this backend");
+-  if (req.img2img && req.img_data.size() != (size_t)3 * req.width * req.height)
++  if (encodes_pixels && req.img_data.size() != (size_t)3 * req.width * req.height)
+     throw std::invalid_argument("Invalid img_data");
+   if (req.has_mask &&
+       (req.mask_data.size() !=
+@@ -928,8 +1245,34 @@
+ 
+     // --- CLIP ---
+     auto clip_start = std::chrono::high_resolution_clock::now();
+-    Conditioning cond = encodePrompts(req);
+-    std::cout << "CLIP dur: " << elapsedMs(clip_start) << "ms\n";
++    // ⭐ A conditioning handed in by the graph replaces the encode entirely.
++    // ⚠ Checked by SHAPE, not merely by non-emptiness: a conditioning from a
++    // different model would be the wrong seq_len or hidden_dim, and feeding it
++    // to the UNet reads off the end of the buffer rather than failing.
++    Conditioning cond;
++    if (!req.init_cond_hidden.empty()) {
++      const size_t want =
++          (size_t)2 * req.init_cond_seq * req.init_cond_dim;
++      if (req.init_cond_hidden.size() != want ||
++          req.init_cond_seq != textSeqLen() ||
++          req.init_cond_dim != textHiddenDim())
++        throw std::invalid_argument(
++            "conditioning is " + std::to_string(req.init_cond_seq) + "x" +
++            std::to_string(req.init_cond_dim) + " (" +
++            std::to_string(req.init_cond_hidden.size()) +
++            " floats); this model wants " + std::to_string(textSeqLen()) + "x" +
++            std::to_string(textHiddenDim()));
++      cond.hidden = req.init_cond_hidden;
++      cond.pooled = req.init_cond_pooled;
++      cond.time_ids = req.init_cond_time_ids;
++      cond.seq_len = req.init_cond_seq;
++      cond.hidden_dim = req.init_cond_dim;
++      cond.pooled_dim = cond.pooled.empty() ? 0 : (int)(cond.pooled.size() / 2);
++      std::cout << "CLIP: supplied by the caller\n";
++    } else {
++      cond = encodePrompts(req);
++      std::cout << "CLIP dur: " << elapsedMs(clip_start) << "ms\n";
++    }
+     current_step++;
+     progress_callback(current_step, total_run_steps, "");
+ 
+@@ -958,13 +1301,32 @@
+     if (req.img2img) {
+       auto vae_enc_start = std::chrono::high_resolution_clock::now();
+       std::vector<int> img_shape = {1, 3, req.height, req.width};
+-      original_image = xt::adapt(req.img_data, img_shape);
+-
+-      xt::xarray<float> img_lat = encodeImageToLatent(req, original_image);
+-      xt::xarray<float> img_lat_scaled = img_lat;
+-      vaeToLatents(img_lat_scaled);
+ 
+-      std::cout << "VAE Enc dur: " << elapsedMs(vae_enc_start) << "ms\n";
++      xt::xarray<float> img_lat_scaled;
++      if (!req.init_latents.empty()) {
++        // ⭐ The graph handed us a latent: no encode, no pixels.
++        //
++        // ⚠ original_image stays EMPTY, and that is safe only because it is
++        // read again nowhere except the post-decode laplacian blend, which
++        // runs only for a user-supplied mask. A masked img2img from a latent
++        // would have to carry the pixels too.
++        const size_t want = (size_t)latentChannels() * sample_width * sample_height;
++        if (req.init_latents.size() != want)
++          throw std::invalid_argument(
++              "init latent has " + std::to_string(req.init_latents.size()) +
++              " floats, expected " + std::to_string(want) + " for " +
++              std::to_string(req.width) + "x" + std::to_string(req.height));
++        std::vector<int> lat_shape = {1, latentChannels(), sample_height,
++                                      sample_width};
++        img_lat_scaled = xt::adapt(req.init_latents, lat_shape);
++        vaeToLatents(img_lat_scaled);
++      } else {
++        original_image = xt::adapt(req.img_data, img_shape);
++        xt::xarray<float> img_lat = encodeImageToLatent(req, original_image);
++        img_lat_scaled = img_lat;
++        vaeToLatents(img_lat_scaled);
++        std::cout << "VAE Enc dur: " << elapsedMs(vae_enc_start) << "ms\n";
++      }
+ 
+       original_latents = img_lat_scaled;
+       start_step = req.steps * (1.0f - req.denoise_strength);
+@@ -1198,8 +1560,27 @@
+         }
+       }
+ 
+-      if (req.has_mask) {
+-        xt::xarray<int> t_xt = {(int)(timesteps(i))};
++      // RePaint-style latent blend: re-impose the original outside the mask.
++      //
++      // `latents` was advanced to t[i+1] above, so the original has to be
++      // re-noised to t[i+1] too -- using t[i] leaves the unmasked region a
++      // full step noisier than the masked one at every model input. The last
++      // step has no t[i+1] and needs no blend, the pixel-space blend being the
++      // final composite; blending there would just re-noise the result.
++      // diffusers' inpaint pipelines do both of these.
++      //
++      // diffusers additionally skips this block entirely for a 9-channel
++      // inpainting UNet (`num_channels_unet == 4`), on the reasoning that a
++      // model receiving the mask as input already knows what to preserve. That
++      // was measured here at a fixed seed on both test masks and did NOT hold:
++      // dropping the blend produced a different sample of the same quality
++      // (mean |diff| inside the mask 81.3 vs 80.2 on the fill case) while
++      // leaving the region outside the mask slightly freer to drift (1.75% vs
++      // 1.20% of pixels changed by >8). So the blend stays on for every model;
++      // `mask_latent_blend` keeps the comparison one request away.
++      const bool do_latent_blend = req.mask_latent_blend != 0;
++      if (req.has_mask && do_latent_blend && !is_last_step) {
++        xt::xarray<int> t_xt = {(int)(timesteps(i + 1))};
+         xt::xarray<float> orig_noised =
+             scheduler->add_noise(original_latents, latents_noise, t_xt);
+         latents = xt::eval(orig_noised * (1.0f - mask) + latents * mask);
+@@ -1208,11 +1589,6 @@
+       current_step++;
+     }
+ 
+-    // The loop reports progress on entry, so the last denoising step has no
+-    // iteration left to report it. Without this the bar sits at the second to
+-    // last slot through the whole VAE decode and then jumps straight to done.
+-    progress_callback(current_step, total_run_steps, "");
+-
+     endDenoise();
+ 
+     // --- VAE Decode ---
+@@ -1224,6 +1600,23 @@
+     }
+ 
+     latentsToVae(latents);
++
++    // ⭐ sample() stops HERE -- after latentsToVae, before the decoder. That
++    // boundary is deliberate: it makes a latent handle mean exactly one thing
++    // ("ready for vaeDecode"), so vae_decode never has to ask whether the
++    // scaling has been applied yet. Getting that wrong decodes to plausible
++    // garbage rather than to an error.
++    if (req.return_latent) {
++      GenerationResult latent_only;
++      latent_only.width = req.width;
++      latent_only.height = req.height;
++      latent_only.channels = latentChannels();
++      latent_only.generation_time_ms = (int)elapsedMs(start_time);
++      latent_only.first_step_time_ms = first_step_time_ms;
++      latent_only.latent_data.assign(latents.begin(), latents.end());
++      return latent_only;
++    }
++
+     xt::xarray<float> pixels = decodeToPixels(req, latents, /*verbose=*/true);
+ 
+     std::cout << "VAE Dec dur: " << elapsedMs(vae_dec_start) << "ms\n";
+@@ -1275,7 +1668,23 @@
+     int final_height = req.height;
+ 
+     // --- Safety Checker ---
+-    applySafetyChecker(out_data, final_width, final_height);
++    if (safety_interpreter_) {
++      auto safety_start = std::chrono::high_resolution_clock::now();
++      float score = 0.0f;
++
++      if (safety_check(out_data, req.width, req.height, score,
++                       safety_interpreter_, safety_session_)) {
++        std::cout << "NSFW Score: " << score << std::endl;
++        if (score > nsfw_threshold_) {
++          QNN_WARN("NSFW detected (%.2f>%.2f).", score, nsfw_threshold_);
++          std::fill(out_data.begin(), out_data.end(), 255);
++        }
++      } else {
++        QNN_WARN("Safety check failed.");
++      }
++
++      std::cout << "Safety check dur: " << elapsedMs(safety_start) << "ms\n";
++    }
+ 
+     current_step++;
+     progress_callback(current_step, total_run_steps, "");

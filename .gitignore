@@ -1,0 +1,118 @@
+# Android / Gradle
+*.iml
+.gradle/
+local.properties
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+
+# Keys and secrets
+*.jks
+*.keystore
+
+# Big or generated
+*.apk
+*.aab
+*.bin
+*.onnx
+*.zip
+models/
+
+# ⚠⚠ ...but a TEST FIXTURE is not a model archive. These are kilobytes, and one
+# of them cannot be synthesised by the suite even in principle: it reproduces a
+# bug in another tool's zip WRITER (PowerShell's Compress-Archive emits `\`
+# separators), and every zip built with ZipOutputStream is conformant. Ignoring
+# it would leave a green suite on a clean clone with the regression unguarded.
+!app/src/test/resources/*.zip
+
+# ⚠ The forked C++ backend is NC-licensed and must never be published.
+# Mirror edits into backend-patches/ instead -- that patch is the only record.
+backend-src/
+
+# Personal Claude Code config -- references the private ../LocalDream tree
+.claude/settings.local.json
+
+# Personal launcher -- profile switching + skip-permissions, not project material
+claude-yolo.bat
+
+# Stray device captures. Screenshots go to the scratchpad, never the repo --
+# they routinely contain whatever the user had on screen.
+/shot.png
+/*-shot.png
+/screenshots/
+
+# Kotlin compiler scratch. Contains absolute paths and is pure build noise.
+.kotlin/
+
+# ⚠⚠ NEVER COMMIT THESE. Both are redistribution hazards, not just big files:
+#   - libstable_diffusion_core.so is built from backend-src/, which descends
+#     from CC BY-NC `local-dream`.
+#   - the QNN runtime libs come from the QAIRT SDK, which has its own
+#     redistribution restrictions.
+# They are BUILD OUTPUT staged into the app by tools/stage_backend.ps1, and the
+# app is useless without them -- which is exactly why the temptation to commit
+# them will recur. Don't.
+app/src/main/jniLibs/
+app/src/main/assets/qnnlibs/
+app/src/main/assets/ditlibs/
+# Foxlet (prompt translation) — built from source by tools/build_foxlet.sh, never committed.
+app/libs/*.aar
+
+# QuickJS is fetched, not vendored -- tools/fetch_quickjs.ps1 (pinned tag + sha256).
+# Our CMakeLists and JNI bridge beside it ARE committed.
+app/src/main/cpp/third_party/
+
+# ⚠ The QNN headers libnmqnn.so is built against -- QAIRT SDK material with its
+# own redistribution terms, fetched by tools/fetch_qnn_headers.ps1. `nmqnn.cpp`
+# and the CMakeLists beside them ARE committed.
+app/src/main/cpp/include/
+
+# ⚠ The NPU canary (tools/stage_neodragon.ps1). Build output of ../Neodragon's
+# conversion pipeline, and a `.bin` the rule above would catch anyway -- named
+# here so the reason is recorded rather than inferred.
+app/src/main/assets/npu/
+
+# Dev docs stay out of the published tree (the user's call, 2026-09-10). The
+# ones already in history are left alone; nothing NEW is added.
+docs/DEVICES.md
+
+# ⚠⚠ DOCS AND NOTES ARE LOCAL ONLY (the user's call, 2026-09-10).
+#
+# Everything in docs/ and notes/, CLAUDE.md, and backend-patches/README.md are
+# working material: measurements, wrong turns, device serials in prose, and the
+# reasoning behind decisions that have since changed. They are what makes the
+# next session cheap and they are not what a reader of a public repo wants.
+#
+# ⚠ The root README.md is the ONE exception and is negated below. It is the
+# canonical description of the project; if something matters to an outsider it
+# belongs there, not in a doc that is no longer published.
+#
+# ⚠⚠ These files still exist on disk and are still the source of truth for
+# working on this. "Not in the repo" is not "deleted".
+*.md
+# The ROOT readme only. A bare `!README.md` would also un-ignore
+# backend-patches/README.md, which is working material like the rest.
+!/README.md
+# ⭐ The user guide IS public: it is the GitHub Pages site (guide/, built by
+# .github/workflows/guide.yml). Its pages are Markdown, so they are negated here.
+# ⚠ guide/ only — docs/ and notes/ stay private.
+!/guide/**/*.md
+# ⚠ `models/` (line ~23, for model binaries) also matches the guide's models/ PAGES,
+# and git cannot re-include a file whose parent directory is excluded.
+!/guide/pages/models/
+# MkDocs build output, from `mkdocs build -f guide/mkdocs.yml` (site_dir: ../site).
+/site/
+
+# ⚠ The icon SOURCE artwork. `tools/build_icon.py` generates every asset under
+# res/mipmap-* from it, and those are committed; shipping the source too invites
+# someone to edit it and wonder why nothing changed.
+icon-source.png
+
+# ⚠ The raw screen captures. `media/workflows.png` is the committed one; the
+# video it was cut from is three times the size for no benefit in a README.
+media/*.mp4
+media/*.gif

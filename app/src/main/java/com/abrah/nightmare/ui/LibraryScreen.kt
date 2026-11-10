@@ -1,0 +1,479 @@
+package com.abrah.nightmare.ui
+
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.size
+import kotlinx.coroutines.launch
+import androidx.compose.ui.res.stringResource
+import com.abrah.nightmare.R
+
+/** The two halves of the library: what you can render WITH, and what you can render. */
+/**
+ * ⚠ RESULTS is last because it is where you go AFTER making something, and
+ * the other two are where you go before.
+ */
+enum class LibraryTab(val label: String, @androidx.annotation.StringRes val labelRes: Int) {
+    // ⚠ "Results", kept — it was renamed History for a day and the user asked
+    // for the name back (2026-09-17); only the LAYOUT follows DreamUI's History.
+    MODELS("Models", R.string.nav_models),
+    FLOWS("Flows", R.string.nav_flows),
+    RESULTS("Results", R.string.nav_results),
+}
+
+/**
+ * ⭐⭐ Models and Flows as one screen with two tabs, rather than two screens.
+ *
+ * ⚠ They were separate full screens reached from separate buttons, so moving
+ * between them meant closing one, finding the canvas bar, and opening the
+ * other — three taps to compare "which checkpoints do I have" against "which
+ * recipes want one". They are the same question asked twice, and the answer to
+ * one is usually why you are asking the other.
+ *
+ * ⚠ The top row switches by TAP, not by swipe, and that is deliberate: the
+ * swipe axis belongs to the family sub-tabs inside Models. Two nested pagers on
+ * one axis is a gesture a user has to think about, and the inner one is the one
+ * that earns it — a 15-row list whose two halves differ in size by 3.5×.
+ */
+@Composable
+fun LibraryScreen(
+    tab: LibraryTab,
+    onTab: (LibraryTab) -> Unit,
+    models: @Composable () -> Unit,
+    flows: @Composable () -> Unit,
+    results: @Composable () -> Unit = {},
+    modifier: Modifier = Modifier,
+    /** ⚠ False under the shell, whose tiles ARE the tabs (Violet Studio, 2026-10-08). */
+    showTabs: Boolean = true,
+    /** ⭐ The header's ☰ — the sidebar, from inside the sheet. Null draws none. */
+    onMenu: (() -> Unit)? = null,
+    /** ⭐ Drawn at the Models title's end: the import "+" ([ImportButton]). */
+    modelsAction: (@Composable () -> Unit)? = null,
+    /** ⭐ …and at the Flows title's end: a flow's import "+", the same button (the user, 2026-10-23). */
+    flowsAction: (@Composable () -> Unit)? = null,
+) {
+    if (!showTabs) {
+        // ⭐⭐ A [PullDownSheet] again, like Settings (the user, 2026-10-10: "make models, flows,
+        // results just like settings — sheet with top bar and close btn"). Settings' layout: the
+        // header (☰ + title) under the sheet's bar, the page filling the rest.
+        Column(modifier.fillMaxSize().navigationBarsPadding().padding(16.dp)) {
+            // ⭐⭐ Models and Flows as TWO CARDS at the top, the open one selected (the user, 2026-10-23: "go to Flows
+            // from Models and vice versa, both cards on top and we can toggle"); each list's "+" after them.
+            if (tab != LibraryTab.RESULTS) Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(Space.s),
+            ) {
+                LibraryToggleCard(ModelsIcon, stringResource(R.string.nav_models), tab == LibraryTab.MODELS, Modifier.weight(1f)) {
+                    onTab(LibraryTab.MODELS)
+                }
+                LibraryToggleCard(FlowsIcon, stringResource(R.string.nav_flows), tab == LibraryTab.FLOWS, Modifier.weight(1f)) {
+                    onTab(LibraryTab.FLOWS)
+                }
+                if (tab == LibraryTab.MODELS) modelsAction?.invoke() else flowsAction?.invoke()
+            } else ScreenHeader(
+                stringResource(R.string.nav_results),
+                onClose = null,
+                // ⭐ No ☰ of its own: the main bar's, in the gap above the sheet, is the one
+                // ([PullDownSheet]'s `onMenu`, the user's mock 2026-10-10).
+                onMenu = null,
+            )
+            // ⚠ The list scrolls only the list — the sheet is pulled by its bar ([keepScrollInside]).
+            Column(Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp).keepScrollInside()) {
+                when (tab) {
+                    LibraryTab.MODELS -> models()
+                    LibraryTab.FLOWS -> flows()
+                    LibraryTab.RESULTS -> results()
+                }
+            }
+        }
+        return
+    }
+    // ⭐⭐⭐ **BOTH insets, here, for all three tabs.**
+    //
+    // ⚠⚠⚠ Reported from the phone 2026-09-20: Models, Flows and Results
+    // ran their content under the navigation bar, so the last row of a list
+    // sat behind the gesture pill. Only the status bar was cleared — this
+    // screen has owned the TOP inset since it took the header and nobody
+    // gave it the bottom one.
+    //
+    // ⚠⚠ It belongs HERE and not in the three tab bodies, which is how the
+    // top one is done: three copies would be three chances to miss one, and
+    // that is exactly what happened — Flows had `navigationBarsPadding()` on
+    // its own list and the other two did not.
+    //
+    // ⚠ Roborazzi reports ZERO insets, so no golden can catch this
+    // (`docs/UI.md` §5). It is checked by looking at the phone.
+    // ⭐ Inside a pull-down sheet since 2026-09-26 ([PullDownSheet]), which
+    // starts below the status bar — so only the BOTTOM inset is this screen's.
+    Column(
+        modifier.fillMaxSize().navigationBarsPadding().padding(16.dp),
+    ) {
+        // ⚠ No name and logo here since 1.6.083 (the user's call, 2026-10-06):
+        // the canvas header right behind the sheet already shows them.
+        // ⭐⭐⭐ **The underline moves on the TAP's frame** (the user, 2026-10-06:
+        // the purple line was "so delayed"). Two causes, both removed: Material's
+        // indicator GLIDES for 250 ms, and it could not start until the frame
+        // that composed the new tab's whole list had finished. So the row draws
+        // [picked] at once with no animation, and the list follows a frame later.
+        var picked by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(tab) }
+        androidx.compose.runtime.LaunchedEffect(tab) { picked = tab }
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        TabRow(
+            selectedTabIndex = picked.ordinal,
+            indicator = { positions ->
+                val at = positions[picked.ordinal]
+                androidx.compose.foundation.layout.Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .wrapContentSize(androidx.compose.ui.Alignment.BottomStart)
+                        .offset(x = at.left)
+                        .width(at.width)
+                        .height(3.dp)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
+            },
+            // ⚠ The sheet's own colour shows through — `background` drew a darker
+            // box once the header above it went (1.6.084).
+            containerColor = androidx.compose.ui.graphics.Color.Transparent,
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        ) {
+            for (t in LibraryTab.entries) {
+                Tab(
+                    selected = t == picked,
+                    onClick = {
+                        if (t != picked) {
+                            picked = t
+                            scope.launch {
+                                androidx.compose.runtime.withFrameNanos { }
+                                onTab(t)
+                            }
+                        }
+                    },
+                    text = {
+                        Text(
+                            stringResource(t.labelRes),
+                            fontWeight = if (t == picked) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                    },
+                )
+            }
+        }
+        // ⭐⭐ The tab's list scrolls ONLY the list ([keepScrollInside]): the sheet
+        // is pulled down by the header above, never by the list hitting its top
+        // (the user's call, 2026-10-01). ⚠ Around all three tabs — the same sheet,
+        // the same rule.
+        Column(Modifier.fillMaxWidth().weight(1f).keepScrollInside()) {
+            when (tab) {
+                LibraryTab.MODELS -> models()
+                LibraryTab.FLOWS -> flows()
+                LibraryTab.RESULTS -> results()
+            }
+        }
+    }
+}
+
+/** ⭐ One of the Models / Flows cards at the top of the library sheet: [StudioCard], selected when it is open. */
+@Composable
+private fun LibraryToggleCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    selected: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    StudioCard(modifier, selected = selected, onClick = if (selected) null else onClick) {
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            androidx.compose.material3.Icon(
+                icon, contentDescription = null, modifier = Modifier.size(22.dp),
+                tint = if (selected) MaterialTheme.studio.accentText else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            androidx.compose.foundation.layout.Spacer(Modifier.width(Space.s))
+            Text(
+                label, style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * ⭐⭐⭐ **The logo and the wordmark, and the ONE place they are drawn.**
+ *
+ * ⚠⚠ Extracted 2026-09-22, when the canvas asked for the same mark: *"in
+ * canvas view we still dont have app name and logo at top — make sure its
+ * consistent with how we show it in Models/Flows/Results"*. Two surfaces that
+ * must agree call the SAME function (`CLAUDE.md`); a second copy of a gradient,
+ * a letter-spacing and a corner radius is a second copy that stops agreeing.
+ *
+ * ⚠ The canvas header is now its only caller (the library dropped it, 1.6.083).
+ */
+@Composable
+fun BrandMark(modifier: Modifier = Modifier, version: String = "") {
+    // ⚠⚠⚠ **The wordmark SHRINKS to the width it is given, and the icons beside
+    // it never do.** Reported from the phone 2026-09-23 with a screenshot: the
+    // canvas header drew save and ⓘ and no gear. At 28sp the mark and the
+    // version are ~265dp, three 36dp icons are 108dp, and a 384dp phone
+    // (1080px at 450dpi — the S25 Ultra at its default display size) leaves the
+    // card ~350dp. The icons were measured after the mark and the last one got
+    // zero width. Every golden was 411dp, which has exactly enough room.
+    // ⇒ The callers give this `weight(1f, fill = false)` so it is measured
+    // LAST, and the name steps down from headlineMedium until it fits. The logo
+    // keeps its size and place, so it still does not jump between screens.
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+        val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val base = MaterialTheme.typography.headlineMedium.copy(
+            fontWeight = FontWeight.Black,
+            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+            letterSpacing = (-0.5).sp,
+        )
+        val versionStyle = NoteTextStyle.copy(fontSize = 10.sp)
+        val versionW = if (version.isEmpty()) 0.dp else with(density) {
+            measurer.measure("v$version", versionStyle).size.width.toDp() + 12.dp
+        }
+        val room = maxWidth - 40.dp - 12.dp - versionW
+        // ⚠ Measured, not guessed from the width: a font-scale setting moves
+        // the answer as much as the screen does.
+        val size = remember(room, base, version) {
+            var sp = base.fontSize.value
+            while (sp > 14f && with(density) {
+                    measurer.measure("Nightmare", base.copy(fontSize = sp.sp)).size.width.toDp()
+                } > room) sp -= 1f
+            sp.sp
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(com.abrah.nightmare.R.drawable.brand_logo),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(11.dp)),
+            )
+            Text(
+                "Nightmare",
+                style = base.copy(
+                    fontSize = size,
+                    // ⭐ The logo's own violet, fading to lavender.
+                    brush = androidx.compose.ui.graphics.Brush.linearGradient(
+                        listOf(Color(0xFF9B6BFF), Color(0xFFD9C8FF)),
+                    ),
+                ),
+                maxLines = 1,
+                softWrap = false,
+            )
+            // ⭐⭐ **The build, drawn HERE** — so the canvas and the library cannot
+            // disagree about where it sits or what it looks like. The user's call,
+            // 2026-09-22: it is wanted on both, with the `v`.
+            // ⚠ The `v` is added here rather than stored in `versionName`, which
+            // Android compares numerically and a tag is cut from (`CLAUDE.md`).
+            if (version.isNotEmpty()) {
+                Text(
+                    "v$version",
+                    style = versionStyle,
+                    maxLines = 1,
+                    softWrap = false,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * ⭐ A **pill** row over a swipeable pager, for a list that splits by family.
+ *
+ * ⚠⚠ **Pills, not a second `TabRow`, and that is the whole point of this
+ * change.** This sits directly under [LibraryScreen]'s own tab row, and two
+ * underlined tab rows stacked five dp apart read as one confused control:
+ * nothing says which of "Models / Flows" and "SD 1.5 / SDXL" is the parent, and
+ * the two underlines compete. Reported from the phone 2026-09-10.
+ *
+ * ⇒ The OUTER level keeps the underlined tabs — it is the primary navigation —
+ * and this inner one becomes a segmented pill group, which is Material's own
+ * idiom for filtering the content of a page rather than changing pages.
+ *
+ * ⚠⚠ The PAGER is the source of truth and the row follows it. Driving both from
+ * one externally-held index makes a half-finished swipe leave the row and the
+ * page disagreeing, and the row then highlights a tab the user is not looking
+ * at.
+ *
+ * ⚠ A tap animates rather than jumps, so a tap and a swipe land the user in the
+ * same place by the same motion — otherwise the two read as different features.
+ */
+@Composable
+fun SwipeTabs(
+    labels: List<String>,
+    modifier: Modifier = Modifier,
+    /**
+     * ⚠⚠ True when the caller gives this a FIXED height and every page should
+     * fill it. Inside a bottom sheet a pager sized by its page resizes the whole
+     * sheet on every swipe, so the pills and cards jump away from the finger and
+     * a tap lands on the scrim and closes it — reported 2026-09-17 on Add node.
+     */
+    fillHeight: Boolean = false,
+    /** ⚠ For a golden, which cannot swipe. */
+    initialPage: Int = 0,
+    /** ⭐ The settled page, for a caller whose state follows the tab (History's filter). */
+    onPage: (Int) -> Unit = {},
+    /**
+     * ⭐⭐ Draw a thin rule BEFORE this pill — null for no rule.
+     *
+     * ⚠⚠ The node inspector's strip puts the nodes that are not part of the
+     * main flow last ([com.abrah.nightmare.canvas.looseNodes]) and needs the
+     * boundary to be visible; without a mark, "last" is indistinguishable from
+     * "later in the run". ⚠ A rule rather than a second LazyRow or a heading
+     * pill: a heading would be tappable and would page to something.
+     */
+    dividerBefore: Int? = null,
+    /** ⭐ Space before the first pill — the Nodes view's card lines its pills up with its fields. */
+    edge: androidx.compose.ui.unit.Dp = 4.dp,
+    page: @Composable (Int) -> Unit,
+) {
+    val state = rememberPagerState(initialPage = initialPage, pageCount = { labels.size })
+    // ⚠⚠ The SETTLED page, never `currentPage`: Run's turn to the output (below) passes every page
+    // between, each one went out as the inspected node, moved [initialPage] mid-animation and
+    // restarted the effect below, which cancelled the turn and then skipped (a scroll "in progress"):
+    // the Default view stopped half-swiped on the node before the output (the user, 2026-10-20).
+    androidx.compose.runtime.LaunchedEffect(state.settledPage) { onPage(state.settledPage) }
+    // ⭐ A page chosen from OUTSIDE — the Nodes view turning to the output node after a Run.
+    // ⚠ Never mid-swipe, and a no-op when the caller's page is the one already showing.
+    androidx.compose.runtime.LaunchedEffect(initialPage) {
+        if (initialPage != state.currentPage && !state.isScrollInProgress && initialPage in labels.indices) {
+            state.animateScrollToPage(initialPage)
+        }
+    }
+    val scope = rememberCoroutineScope()
+
+    // ⭐ Keeps the selected pill on screen when a swipe lands on one that is
+    // scrolled out of view.
+    val row = androidx.compose.foundation.lazy.rememberLazyListState()
+    androidx.compose.runtime.LaunchedEffect(state.currentPage) {
+        row.animateScrollToItem((state.currentPage - 1).coerceAtLeast(0))
+    }
+
+    Column(modifier.fillMaxWidth()) {
+        // ⚠⚠⚠ **Scrollable, each pill its own text's width — never `weight(1f)`.**
+        // Five tabs (three families, Upscalers, Video) split one phone width
+        // into slivers: "Upscalers" did not fit, and when selected it went
+        // SemiBold, got WIDER, wrapped to a second line and made the whole row
+        // taller — so the page under it jumped down every time that tab took
+        // focus. Reported from the phone 2026-09-16 as a "snapping animation"
+        // on the Upscalers and Video tabs, and as text that does not fit.
+        // ⇒ One line, one weight whether selected or not (colour carries the
+        // selection), and room to scroll instead of room to squeeze.
+        androidx.compose.foundation.lazy.LazyRow(
+            state = row,
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = edge),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(labels.size) { i ->
+                val label = labels[i]
+                val on = i == state.currentPage
+                // ⚠⚠ A Row, because a LazyRow item lays out ONE child: two
+                // siblings emitted into one slot have no arrangement between
+                // them. The rule scrolls with the pills it separates.
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                if (i == dividerBefore && i > 0) {
+                    androidx.compose.foundation.layout.Box(
+                        Modifier
+                            .padding(end = 8.dp)
+                            .size(width = 1.dp, height = 22.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant),
+                    )
+                }
+                Surface(
+                    onClick = { scope.launch { state.animateScrollToPage(i) } },
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (on) {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    } else {
+                        // ⚠ Transparent rather than `surfaceVariant`: an unselected
+                        // pill with its own fill makes the group look like two
+                        // buttons, and the selected one stops standing out.
+                        Color.Transparent
+                    },
+                    border = if (on) null else BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant,
+                    ),
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = if (on) {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        maxLines = 1,
+                        softWrap = false,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .widthIn(min = 72.dp)
+                            .padding(horizontal = 18.dp, vertical = 8.dp),
+                    )
+                }
+                }
+            }
+        }
+        // ⚠⚠ **`key(i)`, or a page inherits the scroll of the one before it.**
+        // A pager REUSES composition slots between pages, so the `LazyListState`
+        // a `LazyColumn` remembers is handed to whichever page lands in that
+        // slot next. Swiping from a scrolled checkpoint list to the two-row
+        // Upscalers tab composed it at the old offset, which then clamped to 0
+        // — the list visibly started halfway down and snapped to the top.
+        // Reported from the phone 2026-09-15.
+        //
+        // ⚠ Keyed for EVERY page, not just the short one: the same reuse makes
+        // any two tabs of unequal length do it, and the upscalers tab is only
+        // where it is most obvious.
+        HorizontalPager(
+            state = state,
+            modifier = Modifier.fillMaxWidth().then(if (fillHeight) Modifier.weight(1f) else Modifier),
+            verticalAlignment = androidx.compose.ui.Alignment.Top,
+        ) { i ->
+            key(i) { page(i) }
+        }
+    }
+}
