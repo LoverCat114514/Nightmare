@@ -343,6 +343,18 @@ object BackendProcess {
         private set
 
     /**
+     * ⭐ dit/096: where [Backend.writeDitScheduleFile] writes the DiT schedule the
+     * person picked, and the engine reads it back through `NM_DIT_SCHEDULE_FILE`
+     * (injected at launch in [start]). The path is fixed per process — only the
+     * file's CONTENT changes between renders, which is the whole point: the
+     * schedule is the one per-render knob that survives without a relaunch. Set
+     * on every launch (harmless where nothing reads it); cleared with the process.
+     */
+    @Volatile
+    var launchedScheduleFile: String? = null
+        private set
+
+    /**
      * ⭐⭐ The running launch's backend token, sent by [Backend] on every request (backend-patches
      * 042). ⚠ Never logged or put in a report. Null before the first launch: a hand-run backend
      * started without `NM_BACKEND_TOKEN` checks nothing, so the harness can still drive one.
@@ -1202,6 +1214,16 @@ object BackendProcess {
                         spec?.flowShift?.let { put("NM_DIT_FLOW_SHIFT", it) }
                         // ⭐ Weights kept between renders, and Spectrum where it is turned on ([ditSpeedEnv]).
                         if (!diagnosing) putAll(ditSpeedEnv(spec, DeviceProbe.caps().ramBytes, Prefs.ditSpectrum))
+                        // ⭐ dit/096: the engine's per-render schedule file (`request.cpp` reads it on
+                        // every resolve). The PATH binds at launch like everything here; the content
+                        // does not — [Backend.writeDitScheduleFile] rewrites it before each render.
+                        // A stale file from a previous run is deleted, and the engine falls back to
+                        // the wire's scheduler whenever the file is missing, empty or unmatchable.
+                        File(runtimeDir(context), "dit-schedule.txt").let { f ->
+                            runCatching { f.delete() }
+                            put("NM_DIT_SCHEDULE_FILE", f.absolutePath)
+                            launchedScheduleFile = f.absolutePath
+                        }
                         // ⭐ FLUX.1 ([Family.FLUX1], `dit/092`): CLIP-L's path, this model's or its donor's, and both its text
                         // encoders on the CPU, which is how it was measured. ⚠ Before the diagnostic override, which beats it.
                         if (spec?.family == Family.FLUX1) {

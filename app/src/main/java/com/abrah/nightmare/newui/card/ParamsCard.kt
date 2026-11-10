@@ -132,7 +132,9 @@ fun ParamsCard(
             val bongStr = stringResource(R.string.schedule_bong_tangent)
             val simpleStr = stringResource(R.string.schedule_simple)
             val betaStr = stringResource(R.string.schedule_beta)
-            val schedNames = remember(normalStr, karrasStr, expStr, sgmStr, bongStr, simpleStr, betaStr) {
+            val beta57Str = stringResource(R.string.schedule_beta57)
+            val radianceStr = stringResource(R.string.schedule_radiance_shift)
+            val schedNames = remember(normalStr, karrasStr, expStr, sgmStr, bongStr, simpleStr, betaStr, beta57Str, radianceStr) {
                 mapOf(
                     "" to normalStr,
                     "_karras" to karrasStr,
@@ -141,6 +143,8 @@ fun ParamsCard(
                     "_bong_tangent" to bongStr,
                     "_simple" to simpleStr,
                     "_beta" to betaStr,
+                    "_beta57" to beta57Str,
+                    "_radiance_shift" to radianceStr,
                 )
             }
             DropdownWire(

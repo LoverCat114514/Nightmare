@@ -742,6 +742,7 @@ object Ops {
             .toString()
 
         var complete: JSONObject? = null
+        writeDitScheduleFile(scheduler)
         var streamError: String? = null
         var nProgress = 0
         var nPreviews = 0
@@ -930,6 +931,7 @@ object Ops {
             }
             .toString()
 
+        writeDitScheduleFile(scheduler)
         var complete: JSONObject? = null
         var streamError: String? = null
         val r = Backend.postSse("/generate?stream=1", body, readTimeoutMs = Backend.DIT_SSE_READ_TIMEOUT_MS) { ev ->
@@ -1336,5 +1338,32 @@ object Ops {
                 wireMs = r.millis,
             )
         )
+    }
+
+    /**
+     * ⭐⭐ dit/096: the schedule the engine uses travels by FILE, not by the wire.
+     *
+     * The private backend splits `scheduler` into sampler + suffix against a fixed
+     * whitelist that has no `beta57`/`radiance_shift` — sending the real name would
+     * downgrade the whole sampler to Euler backend-side. So the picker's full value
+     * (`res_multistep_beta57`) still goes on the wire — it keeps the sample-handle
+     * key distinct and lands on a whitelisted suffix — and the engine-side schedule
+     * is resolved from the file this writes before every render
+     * (`NM_DIT_SCHEDULE_FILE`, injected at [BackendProcess] launch).
+     *
+     * ⚠ The trailing newline is the format: the engine reads the first line and
+     * strips it. Writing "" clears any previous pick, so a render right after a
+     * beta57 one falls back to the wire's own value — no stale schedule can leak.
+     * ⚠ Only the DiT engine reads the file; for every other family (and before any
+     * launch, or on any IO failure) this is a no-op and the wire decides
+     * everything, which is exactly the pre-096 behaviour.
+     */
+    private fun writeDitScheduleFile(scheduler: String?) {
+        val path = BackendProcess.launchedScheduleFile ?: return
+        val pick = ModelCatalog.splitScheduler(scheduler ?: ModelCatalog.DEFAULT_SCHEDULER).second
+            .removePrefix("_").takeIf { it.isNotEmpty() } ?: return
+        runCatching {
+            java.io.File(path).writeText("$pick\n")
+        }
     }
 }

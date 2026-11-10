@@ -1568,6 +1568,14 @@ object ModelCatalog {
         "_bong_tangent" to "Bong Tangent",
         "_simple" to "Simple",
         "_beta" to "Beta",
+        // ⭐ dit/096: RES4LYF's beta pinned to the community's 0.5/0.7 shape, and
+        // ComfyUI-UtilsCollection's radiance curve. The private backend's suffix
+        // whitelist knows neither name, so the wire still carries the plain
+        // `euler` sampler and the real pick travels by file ([Backend.writeDitScheduleFile],
+        // engine `NM_DIT_SCHEDULE_FILE`): the suffix keeps the sample-handle key
+        // distinct while the engine resolves the schedule itself.
+        "_beta57" to "Beta 57",
+        "_radiance_shift" to "Radiance Shift",
     )
 
     /**

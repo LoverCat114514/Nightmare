@@ -180,20 +180,23 @@ object DitEngine {
      * (Same rule, same reason, as `Segmenter.URL`'s "a new filename per
      * revision, never an upload over the old one".)
      */
-    // ⭐ Current since 1.6.290: abi111-moss093's line + `dit/094` (Spectrum, `NM_SPECTRUM`) and `dit/095` (weights kept between
-    // renders, `NM_KEEP_RUNNERS`), both off unless [BackendProcess.ditSpeedEnv] sets them. CI 42738336004 (NPU), 42738369300
-    // (GPU), branch `dit-088-engine`. Still ABI 111; the wrapper only, skels are `dit/091`'s.
+    // ⭐ Current since 1.6.352: the adjudicated 102-patch chain — keep095's line (094 Spectrum, 095 keep-runners,
+    // both off unless [BackendProcess.ditSpeedEnv] sets them) + `dit/096`: the `beta57` and `radiance_shift`
+    // schedulers, picked through `NM_DIT_SCHEDULE_FILE` ([BackendProcess.launchedScheduleFile]). NPU = CI
+    // 42886948210 (`opencl=false`), GPU = CI 42897054638 (`opencl=true`), branch `dit-088-engine` on
+    // LoverCat114514/Nightmare. Still ABI 111; the wrapper only, skels are `dit/091`'s.
     private const val NPU_URL =
-        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-keep095/dit-engine-abi111-keep095.zip"
+        "https://github.com/LoverCat114514/Nightmare/releases/download/dit-engine-abi111-beta57/dit-engine-abi111-beta57.zip"
 
     /**
      * ⭐⭐ The GPU variant ([DitGpu]): the same patch line + ggml's OpenCL backend with the Adreno kernels and `dit/067`
      * (old drivers, Mali), `080` (the screen's turns), `081` (PR #28446). ⚠ It NEEDS `libOpenCL.so`, so only a phone
      * that has one is ever given it ([DitGpu.hasOpenCl]); it keeps the Hexagon backend, so an NPU model still runs.
-     * Still ABI 110. Its own tag and file name, so the stamp tells the two apart and a switch re-fetches.
+     * Rebuilt on the 102-patch line at CI 42897054638 (branch `dit-088-engine`). Still ABI 111. Its own
+     * tag and file name, so the stamp tells the two apart and a switch re-fetches.
      */
     private const val GPU_URL =
-        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-keep095/dit-engine-abi111-keep095-gpu.zip"
+        "https://github.com/LoverCat114514/Nightmare/releases/download/dit-engine-abi111-beta57/dit-engine-abi111-beta57-gpu.zip"
 
     /** ⭐ Which of the two this phone runs: the GPU's wherever [DitGpu.wanted]. */
     private val gpu: Boolean get() = DitGpu.wanted()
@@ -219,11 +222,11 @@ object DitEngine {
         if (downloadBase != Prefs.HF_ORIGIN) listOf(HF_URL, URL) else listOf(URL, HF_URL)
 
     /** ⚠ The ARCHIVE's size, measured off the file that was uploaded. */
-    val BYTES: Long get() = if (gpu) GPU_BYTES else 23_321_126L
+    val BYTES: Long get() = if (gpu) GPU_BYTES else 23_347_294L
 
     /** The unpacked `.so`, checked after extraction. */
     /** ⚠ Public so a test can build an engine fixture without the network. */
-    val FILE_BYTES: Long get() = if (gpu) GPU_FILE_BYTES else 56_239_152L
+    val FILE_BYTES: Long get() = if (gpu) GPU_FILE_BYTES else 56_305_424L
 
     /**
      * ⭐ The GPU variant: CI 41781422175 (branch `gpu-110`), the NPU list + 067 + 080 + 081 + `085`, `opencl=true`.
@@ -233,9 +236,9 @@ object DitEngine {
      * without the dense DP4A kernel (an 8 Gen 1, Saved #7647; the S25 with it off). Skels unchanged.
      * ⭐ 2026-11-05 port from upstream v1.6.280.
      */
-    private const val GPU_BYTES = 24_005_404L
-    private const val GPU_FILE_BYTES = 59_083_280L
-    private const val GPU_SHA256 = "11f4c9cc29f2d7ce242b7e2a6e210248e57f4fb53ef3efc556d98d396013ede4"
+    private const val GPU_BYTES = 24_037_192L
+    private const val GPU_FILE_BYTES = 59_152_528L
+    private const val GPU_SHA256 = "dc6b3df07b2409a9292be4ba951a0114ee7027f48ec9cae56e1dd9ea30ec33e9"
 
     /**
      * ⚠ A deviation from [com.abrah.nightmare.segment.Segmenter], which checks
@@ -245,7 +248,7 @@ object DitEngine {
      * ⭐ It is the digest GitHub publishes for the release asset, so there is
      * no second place to keep it in step.
      */
-    private val SHA256: String get() = if (gpu) GPU_SHA256 else "d43a819fbb0d1e353c22bc5379ccef4ad8cc27a7078107babfcabf304d76783f"
+    private val SHA256: String get() = if (gpu) GPU_SHA256 else "5c91449f74a129df4063dc084b58807ba367a7742d0fd893661c20730a87c0d5"
 
     fun dir(context: Context): File = BackendProcess.runtimeDir(context)
 
