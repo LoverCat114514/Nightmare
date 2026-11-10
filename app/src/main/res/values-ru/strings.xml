@@ -217,6 +217,10 @@
     <string name="anima_seq_dit_hint">Только в режиме малой памяти Anima: две половины DiT никогда не хранятся в памяти одновременно. Включите, если у вас 12 ГБ памяти, а режим малой памяти Anima всё равно не запускается. Каждый шаг медленнее.</string>
     <string name="wan_stream">Видео: потоковая загрузка модели</string>
     <string name="wan_stream_hint">Wan читает модель из памяти устройства, а не держит её в ОЗУ. Примерно на 30% медленнее. Включите, если видео выходит цветной сеткой или шумом</string>
+    <string name="speed_title">Скорость</string>
+    <string name="speed_note">Быстрее, ценой небольшой потери деталей.</string>
+    <string name="dit_spectrum">Предсказывать часть шагов (Anima, MOSS-Image, от 8 шагов)</string>
+    <string name="dit_spectrum_hint">После первых 4 шагов часть шагов предсказывается по предыдущим, а не вычисляется. Примерно на 15–30 процентов быстрее, та же картинка, чуть мягче. Генерации меньше 8 шагов не меняются.</string>
     <string name="cn_label">ControlNet</string>
     <string name="cn_hint">canny находит контуры фото, openpose находит позу, depth определяет глубину; также можно взять готовый скелет или карту глубины</string>
     <string name="cn_not_installed">ControlNet %1$s ещё не установлен на этом телефоне.</string>

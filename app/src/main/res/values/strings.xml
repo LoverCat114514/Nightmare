@@ -237,6 +237,10 @@
     <string name="anima_seq_dit_hint">Only with Anima low RAM mode: never keep both DiT halves in memory at the same time. Enable this if you have 12GB RAM but Anima low RAM mode still cannot run. Slower per step.</string>
     <string name="wan_stream">Video: stream the model</string>
     <string name="wan_stream_hint">Wan streams its model from storage instead of holding it in memory. About 30% slower. Turn it on if your videos come out as a coloured grid or noise</string>
+    <string name="speed_title">Speed</string>
+    <string name="speed_note">Shorter renders for a little detail.</string>
+    <string name="dit_spectrum">Predict some steps (Anima, MOSS-Image, 8 steps or more)</string>
+    <string name="dit_spectrum_hint">After the first 4 steps, some steps are predicted from the earlier ones instead of being run. About 15 to 30 percent faster, the same picture a little softer. Renders under 8 steps are not changed.</string>
     <string name="cn_label">ControlNet</string>
     <string name="cn_hint">canny finds the edges of a photo, openpose finds the pose and depth the depth in a photo, or each takes a ready-made skeleton or depth map</string>
     <string name="cn_not_installed">The %1$s ControlNet is not installed on this phone yet.</string>
