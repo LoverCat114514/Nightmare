@@ -164,6 +164,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     /** ⭐ The bar's Settings slot: open the list, over the canvas. */
     fun openSettingsMenu() {
+        closeMoreMenu()
         if (settingsPage != null) {
             settingsPage = null
             settingsMenuOpen = false
@@ -182,6 +183,18 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         settingsMenuOpen = false
         settingsPage = page
     }
+
+    /** ⭐ The bottom bar's More slot: open the More menu card (online gallery, tools). */
+    var moreMenuOpen by mutableStateOf(false)
+        private set
+
+    fun openMoreMenu() {
+        closeSettingsMenu()
+        closeLibrary()
+        moreMenuOpen = !moreMenuOpen
+    }
+
+    fun closeMoreMenu() { moreMenuOpen = false }
 
     // ---- app settings ----------------------------------------------------
 

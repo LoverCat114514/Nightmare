@@ -161,6 +161,14 @@
             android:label="Moss LayOut"
             android:theme="@style/Theme.Nightmare" />
 
+        <!-- Online Gallery Activity (aitag.win) -->
+        <activity
+            android:name=".gallery.OnlineGalleryActivity"
+            android:exported="false"
+            android:label="在线画廊"
+            android:theme="@style/Theme.Nightmare"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
+
         <!-- The FOREGROUND harness entry: the same activity, reached with the same
              "op" and "arg" extras, but guarded by DUMP like OpService. MainActivity
              honours an op ONLY when the intent names this alias, because the

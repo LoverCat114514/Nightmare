@@ -518,6 +518,32 @@ fun HarnessScreen(
         val canvasLoraPicker = rememberLauncherForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
         ) { uri -> if (uri != null) vm.importLora(uri) }
+        val galleryLauncher = rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+        ) { r ->
+            if (r.resultCode == android.app.Activity.RESULT_OK) {
+                val prompt = r.data?.getStringExtra(com.abrah.nightmare.gallery.OnlineGalleryActivity.EXTRA_PROMPT)
+                val negative = r.data?.getStringExtra(com.abrah.nightmare.gallery.OnlineGalleryActivity.EXTRA_NEGATIVE)
+                var applied = false
+                if (!prompt.isNullOrBlank()) {
+                    vm.wbPromptBridge?.let { bridge ->
+                        val old = bridge.positive.trim()
+                        bridge.onPositive?.invoke(if (old.isNotEmpty()) "$old, $prompt" else prompt)
+                        applied = true
+                    }
+                }
+                if (!negative.isNullOrBlank()) {
+                    vm.wbPromptBridge?.let { bridge ->
+                        val old = bridge.negative.trim()
+                        bridge.onNegative?.invoke(if (old.isNotEmpty()) "$old, $negative" else negative)
+                        applied = true
+                    }
+                }
+                if (applied) {
+                    vm.toast("✨ 已将画廊提示词应用到画布！")
+                }
+            }
+        }
         // ⭐⭐ How the app died last time, if it did — null on an ordinary
         // launch, which is nearly every launch (`CrashReport`). Drawn on the
         // FIRST screen, because the person who needs it is the one who just
@@ -852,31 +878,31 @@ fun HarnessScreen(
             open = vm.settingsMenuOpen,
             onDismiss = vm::closeSettingsMenu,
         )
+        com.abrah.nightmare.ui.MoreMenuScrim(
+            open = vm.moreMenuOpen,
+            onDismiss = { vm.closeMoreMenu() },
+        )
         com.abrah.nightmare.ui.NightmareBottomBar(
             selected = dest,
             // ⚠⚠ Every slot closes the menu FIRST: a tap on another slot means
             // "leave Settings", not "leave Settings open behind Models".
-            onCanvas = { vm.closeSettingsMenu(); vm.closeLibrary(); vm.setCanvasVisible(true) },
-            onModels = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); vm.setModelsVisible(true) },
-            onFlows = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); vm.setWorkflowsVisible(true) },
-            onResults = { vm.closeSettingsMenu(); vm.setCanvasVisible(true); vm.setResultsVisible(true) },
-            // ⭐⭐ The Settings slot opens the MENU, not the sheet (the user, 2026-11-05):
-            // a vertical list grows up out of the slot, and a row of it opens the sheet on
-            // one page. ⚠ Not `openLater`: nothing is closing, so there is no close
-            // animation to wait for — and the canvas stays behind the menu on purpose,
-            // which is what keeps the bar's other slots working under it.
+            onCanvas = { vm.closeSettingsMenu(); vm.closeMoreMenu(); vm.closeLibrary(); vm.setCanvasVisible(true) },
+            onModels = { vm.closeSettingsMenu(); vm.closeMoreMenu(); vm.setCanvasVisible(true); vm.setModelsVisible(true) },
+            onFlows = { vm.closeSettingsMenu(); vm.closeMoreMenu(); vm.setCanvasVisible(true); vm.setWorkflowsVisible(true) },
+            onResults = { vm.closeSettingsMenu(); vm.closeMoreMenu(); vm.setCanvasVisible(true); vm.setResultsVisible(true) },
             onSettings = {
                 // ⭐ Close any open card/sheet before opening settings, eliminating overlap!
                 vm.closeLibrary()
+                vm.closeMoreMenu()
                 vm.openSettingsMenu()
             },
-            // ⭐ The card unfolds out of the tapped slot (2026-11-06).
             onAnchor = { vm.noteBarAnchor(it) },
             modelsBusy = vm.importing != null,
             hideFlows = (vm.canvasView == com.abrah.nightmare.MainView.NEWUI),
             onMore = {
                 vm.closeSettingsMenu()
-                vm.toast("更多功能正在开发中，敬请期待")
+                vm.closeLibrary()
+                vm.openMoreMenu()
             },
         )
         // ⭐⭐ The list itself, over the bar's Settings slot and clear of it.
@@ -885,6 +911,20 @@ fun HarnessScreen(
             onPick = { page -> vm.openSettingsPage(page) },
             onFull = { vm.openSettingsPage(null) },
             onAnchor = { vm.noteSettingsAnchor(it) },
+        )
+        // ⭐⭐ The More menu card over the bar's More slot (aitag.win online gallery).
+        // ⚠ HarnessScreen is a top-level composable — `this@MainActivity` does not
+        // resolve here; capture the context from the CompositionLocal instead.
+        val galleryCtx = androidx.compose.ui.platform.LocalContext.current
+        com.abrah.nightmare.ui.MoreMenu(
+            open = vm.moreMenuOpen,
+            onDismiss = { vm.closeMoreMenu() },
+            onOpenGallery = {
+                vm.closeMoreMenu()
+                galleryLauncher.launch(
+                    android.content.Intent(galleryCtx, com.abrah.nightmare.gallery.OnlineGalleryActivity::class.java)
+                )
+            },
         )
     }
     // ⭐⭐ Models / Flows / Results are SHEETS over the canvas again, like Settings (the user's call
