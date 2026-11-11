@@ -342,10 +342,10 @@ internal fun SettingsCardSheet(
                 shape = RoundedCornerShape(20.dp),
                 color = Color.White.copy(alpha = 0.95f),
                 tonalElevation = 0.dp,
-                shadowElevation = 14.dp,
+                shadowElevation = (8.dp * v).coerceAtLeast(0.dp),
                 border = BorderStroke(
                     1.2.dp,
-                    Color.White.copy(alpha = 0.90f),
+                    Color.White.copy(alpha = 0.90f * v),
                 ),
                 modifier = Modifier
                     .offset(x = targetLeft, y = targetTop)
@@ -357,12 +357,13 @@ internal fun SettingsCardSheet(
                     )
                     .graphicsLayer {
                         alpha = v.coerceIn(0f, 1f)
-                        // GPU-accelerated water-droplet split from capsule anchor:
                         scaleX = 0.72f + 0.28f * v
                         scaleY = 0.72f + 0.28f * v
                         translationX = (1f - v) * (totalW - targetLeft - 72.dp).toPx()
                         translationY = (1f - v) * (capsuleCenterY - (targetTop + targetHeightVal * pivotY)).toPx() * 0.35f
                         transformOrigin = TransformOrigin(1f, pivotY)
+                        spotShadowColor = Color.Black.copy(alpha = 0.14f * v)
+                        ambientShadowColor = Color.Black.copy(alpha = 0.07f * v)
                     },
             ) {
                 // Content smoothly blooms in as the card reaches full size

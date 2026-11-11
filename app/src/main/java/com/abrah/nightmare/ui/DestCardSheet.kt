@@ -100,34 +100,35 @@ internal fun DestCardSheet(
                 .fillMaxSize()
                 .padding(start = 16.dp, end = 16.dp, bottom = BOTTOM_BAR_RESERVE + 8.dp),
         ) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 3.dp,
-                shadowElevation = 12.dp,
-                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+            val v = p.value.coerceIn(0f, 1f)
+            Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .fillMaxHeight(0.82f)
-                    // ⚠ Swallows taps so a tap on the BODY never reaches the scrim.
-                    // ⭐ fix32: only while actually visible — same gate as the scrim.
                     .then(
                         if (interactive) Modifier.pointerInput(Unit) { detectTapGestures { } }
                         else Modifier,
                     )
                     .graphicsLayer {
-                        val v = p.value
                         alpha = v
-                        // ⭐ The rise: out of the BOTTOM edge — Y leads (64 dp),
-                        // the scale does the growth, the origin is the card's own
-                        // bottom centre. No side origin any more (2026-11-06).
-                        translationY = (1f - v) * 64.dp.toPx()
+                        translationY = (1f - v) * 56.dp.toPx()
                         scaleX = 0.96f + 0.04f * v
                         scaleY = 0.96f + 0.04f * v
                         transformOrigin = TransformOrigin(0.5f, 1f)
+                        spotShadowColor = Color.Black.copy(alpha = 0.16f * v)
+                        ambientShadowColor = Color.Black.copy(alpha = 0.08f * v)
                     },
-            ) { content() }
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 0.dp,
+                    shadowElevation = (8.dp * v).coerceAtLeast(0.dp),
+                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f * v)),
+                    modifier = Modifier.fillMaxSize(),
+                ) { content() }
+            }
         }
     }
 }

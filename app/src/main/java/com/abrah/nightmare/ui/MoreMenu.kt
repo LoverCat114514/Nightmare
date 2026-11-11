@@ -70,7 +70,7 @@ internal fun MoreMenuScrim(
 
 /**
  * ⭐⭐⭐ The More Menu card — elegant floating card over the bottom bar's 'More' slot
- * with pure NewUI aesthetics and fluid spring animation (reverted to single clean card).
+ * with pure NewUI aesthetics and fluid spring animation.
  */
 @Composable
 internal fun MoreMenu(
@@ -98,6 +98,7 @@ internal fun MoreMenu(
     if (!shown) return
     BackHandler { onDismiss() }
 
+    val v = p.value.coerceIn(0f, 1f)
     Box(
         modifier
             .fillMaxSize()
@@ -106,125 +107,131 @@ internal fun MoreMenu(
             .padding(bottom = BOTTOM_BAR_RESERVE + 10.dp, start = 16.dp, end = 16.dp),
         contentAlignment = Alignment.BottomCenter,
     ) {
-        Surface(
-            shape = RoundedCornerShape(26.dp),
-            color = Color.White.copy(alpha = 0.98f),
-            tonalElevation = 0.dp,
-            shadowElevation = 14.dp,
-            border = BorderStroke(1.2.dp, Color(0xFFEDE9FE)),
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 380.dp)
                 .graphicsLayer {
-                    alpha = p.value.coerceIn(0f, 1f)
-                    scaleX = 0.90f + 0.10f * p.value
-                    scaleY = 0.90f + 0.10f * p.value
-                    translationY = (1f - p.value) * 22.dp.toPx()
+                    alpha = v
+                    scaleX = 0.90f + 0.10f * v
+                    scaleY = 0.90f + 0.10f * v
+                    translationY = (1f - v) * 22.dp.toPx()
                     transformOrigin = TransformOrigin(0.5f, 1f)
+                    spotShadowColor = Color.Black.copy(alpha = 0.14f * v)
+                    ambientShadowColor = Color.Black.copy(alpha = 0.07f * v)
                 },
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp),
+            Surface(
+                shape = RoundedCornerShape(26.dp),
+                color = Color.White.copy(alpha = 0.98f),
+                tonalElevation = 0.dp,
+                shadowElevation = (8.dp * v).coerceAtLeast(0.dp),
+                border = BorderStroke(1.2.dp, Color(0xFFEDE9FE).copy(alpha = v)),
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                // ── Header Row (Clean: ✨ 更多功能) ──
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFFEDE9FE)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("✨", fontSize = 15.sp)
-                    }
-                    Text(
-                        text = "更多功能",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Nm.ink,
-                    )
-                }
-
-                Spacer(Modifier.height(14.dp))
-
-                // ── Online Gallery Card ──
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color(0xFFF9F8FD),
-                    border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .clickable(onClick = onOpenGallery),
+                        .padding(20.dp),
                 ) {
+                    // ── Header Row (Clean: ✨ 更多功能) ──
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFFEDE9FE)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("✨", fontSize = 15.sp)
+                        }
+                        Text(
+                            text = "更多功能",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Nm.ink,
+                        )
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+
+                    // ── Online Gallery Card ──
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color(0xFFF9F8FD),
+                        border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                            .clip(RoundedCornerShape(20.dp))
+                            .clickable(onClick = onOpenGallery),
                     ) {
-                        // Icon Box with gradient
-                        Box(
+                        Row(
                             modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(Color(0xFF8B5CF6), Color(0xFF6D28D9))
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // Icon Box with gradient
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF8B5CF6), Color(0xFF6D28D9))
+                                        )
                                     )
+                                    .shadow(8.dp, RoundedCornerShape(14.dp), ambientColor = Color(0x407C3AED)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_gallery),
+                                    contentDescription = "在线画廊",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp),
                                 )
-                                .shadow(8.dp, RoundedCornerShape(14.dp), ambientColor = Color(0x407C3AED)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_gallery),
-                                contentDescription = "在线画廊",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp),
-                            )
-                        }
+                            }
 
-                        Spacer(Modifier.width(14.dp))
+                            Spacer(Modifier.width(14.dp))
 
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                text = "在线画廊",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = Nm.ink,
-                            )
-                            Spacer(Modifier.height(3.dp))
-                            Text(
-                                text = "AI 绘画咒语图库 · 灵感检索与提示词应用",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Nm.sub,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = "在线画廊",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Nm.ink,
+                                )
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    text = "AI 绘画咒语图库 · 灵感检索与提示词应用",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Nm.sub,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
 
-                        Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(8.dp))
 
-                        // Chevron
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFEDE9FE).copy(alpha = 0.6f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                "›",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF7C3AED),
-                            )
+                            // Chevron
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFEDE9FE).copy(alpha = 0.6f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    "›",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF7C3AED),
+                                )
+                            }
                         }
                     }
                 }

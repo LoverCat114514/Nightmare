@@ -18,8 +18,17 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -239,111 +248,77 @@ private fun GalleryContainer(
         }
     }
 
-    if (activeSite == null) {
-        // ── View A: Gallery Site Selection Hub (Clean, beautiful cards) ──
-        GalleryHubView(
-            sites = GALLERY_SITES,
-            onClose = onClose,
-            onPickSite = { site ->
-                if (site.id == "custom") {
-                    showCustomUrlDialog = true
-                } else {
-                    activeSite = site
-                }
-            },
-        )
-    } else {
-        // ── View B: Gallery Web Browser (Docked layout so web controls are NEVER blocked) ──
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFFF2F0F7)),
-        ) {
-            // ── 1. Top Navigation Bar ──
-            Surface(
-                color = Color.White.copy(alpha = 0.96f),
-                tonalElevation = 0.dp,
-                shadowElevation = 3.dp,
-                border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
-                modifier = Modifier.fillMaxWidth(),
+    // ⭐ Fluid AnimatedContent transition between Hub and Browser: eliminates jarring hard cuts!
+    AnimatedContent(
+        targetState = activeSite,
+        transitionSpec = {
+            if (targetState != null) {
+                // Opening Web Browser from Hub: slides up with spring and fades in
+                (slideInVertically(
+                    animationSpec = tween(340, easing = CubicBezierEasing(0.20f, 0.95f, 0.28f, 1f)),
+                    initialOffsetY = { (it * 0.12f).toInt() },
+                ) + fadeIn(
+                    animationSpec = tween(280),
+                )).togetherWith(
+                    fadeOut(animationSpec = tween(180)) + scaleOut(targetScale = 0.96f, animationSpec = tween(240)),
+                )
+            } else {
+                // Returning to Hub from Web Browser: scales & fades back in, browser slides down
+                (fadeIn(
+                    animationSpec = tween(260),
+                ) + scaleIn(
+                    initialScale = 0.96f,
+                    animationSpec = tween(280, easing = CubicBezierEasing(0.20f, 0.95f, 0.28f, 1f)),
+                )).togetherWith(
+                    slideOutVertically(
+                        animationSpec = tween(240, easing = CubicBezierEasing(0.35f, 0f, 0.75f, 0.15f)),
+                        targetOffsetY = { (it * 0.12f).toInt() },
+                    ) + fadeOut(animationSpec = tween(200)),
+                )
+            }
+        },
+        label = "galleryTransition",
+        modifier = Modifier.fillMaxSize(),
+    ) { currentSite ->
+        if (currentSite == null) {
+            // ── View A: Gallery Site Selection Hub (Clean, beautiful cards) ──
+            GalleryHubView(
+                sites = GALLERY_SITES,
+                onClose = onClose,
+                onPickSite = { site ->
+                    if (site.id == "custom") {
+                        showCustomUrlDialog = true
+                    } else {
+                        activeSite = site
+                    }
+                },
+            )
+        } else {
+            // ── View B: Gallery Web Browser (Docked layout so web controls are NEVER blocked) ──
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFFF2F0F7)),
             ) {
-                Column {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .statusBarsPadding()
-                            .height(56.dp)
-                            .padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        // Left: Return to Hub
-                        Surface(
-                            shape = CircleShape,
-                            color = Color(0xFFF2F0F7),
+                // ── 1. Top Navigation Bar ──
+                Surface(
+                    color = Color.White.copy(alpha = 0.96f),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 3.dp,
+                    border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column {
+                        Row(
                             modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .clickable { activeSite = null },
+                                .fillMaxWidth()
+                                .statusBarsPadding()
+                                .height(56.dp)
+                                .padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text("←", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Nm.ink)
-                            }
-                        }
-
-                        // Center: Title and badge
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Text(
-                                    text = activeSite?.name ?: "在线画廊",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = Nm.ink,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Surface(
-                                    shape = RoundedCornerShape(999.dp),
-                                    color = Color(0xFFEDE9FE),
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(0xFF10B981)),
-                                        )
-                                        Text(
-                                            text = activeSite?.domain ?: "",
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF6D28D9),
-                                        )
-                                    }
-                                }
-                            }
-                            Text(
-                                text = currentTitle.ifBlank { activeSite?.description ?: "" },
-                                fontSize = 11.sp,
-                                color = Nm.sub,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-
-                        // Right: Switch site, Reload, External Browser
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            // ⊞ Switch Site button
+                            // Left: Return to Hub
                             Surface(
                                 shape = CircleShape,
                                 color = Color(0xFFF2F0F7),
@@ -353,258 +328,327 @@ private fun GalleryContainer(
                                     .clickable { activeSite = null },
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    Text("⊞", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Nm.ink)
+                                    Text("←", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Nm.ink)
                                 }
                             }
 
-                            // 🔄 Refresh button
-                            Surface(
-                                shape = CircleShape,
-                                color = Color(0xFFF2F0F7),
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(CircleShape)
-                                    .clickable { webViewRef?.reload() },
+                            // Center: Title and badge
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text("🔄", fontSize = 14.sp)
-                                }
-                            }
-
-                            // 🌐 External browser button
-                            Surface(
-                                shape = CircleShape,
-                                color = Color(0xFFF2F0F7),
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(CircleShape)
-                                    .clickable {
-                                        val url = webViewRef?.url ?: activeSite?.url ?: ""
-                                        if (url.isNotBlank()) {
-                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        text = currentSite.name,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = Nm.ink,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = Color(0xFFEDE9FE),
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(6.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFF10B981)),
+                                            )
+                                            Text(
+                                                text = currentSite.domain,
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF6D28D9),
+                                            )
                                         }
-                                    },
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text("🌐", fontSize = 14.sp)
+                                    }
+                                }
+                                Text(
+                                    text = currentTitle.ifBlank { currentSite.description },
+                                    fontSize = 11.sp,
+                                    color = Nm.sub,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+
+                            // Right: Switch site, Reload, External Browser
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                // ⊞ Switch Site button
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFFF2F0F7),
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(CircleShape)
+                                        .clickable { activeSite = null },
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text("⊞", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Nm.ink)
+                                    }
+                                }
+
+                                // 🔄 Refresh button
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFFF2F0F7),
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(CircleShape)
+                                        .clickable { webViewRef?.reload() },
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text("🔄", fontSize = 14.sp)
+                                    }
+                                }
+
+                                // 🌐 External browser button
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFFF2F0F7),
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(CircleShape)
+                                        .clickable {
+                                            val url = webViewRef?.url ?: currentSite.url
+                                            if (url.isNotBlank()) {
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                            }
+                                        },
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text("🌐", fontSize = 14.sp)
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // Loading Progress Indicator
-                    val animatedProgress by animateFloatAsState(
-                        targetValue = loadingProgress / 100f,
-                        label = "webLoadingProgress",
-                    )
-                    if (loadingProgress in 1..99) {
-                        LinearProgressIndicator(
-                            progress = { animatedProgress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(2.5.dp),
-                            color = Color(0xFF7C3AED),
-                            trackColor = Color(0xFFEDE9FE),
+                        // Loading Progress Indicator
+                        val animatedProgress by animateFloatAsState(
+                            targetValue = loadingProgress / 100f,
+                            label = "webLoadingProgress",
                         )
+                        if (loadingProgress in 1..99) {
+                            LinearProgressIndicator(
+                                progress = { animatedProgress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(2.5.dp),
+                                color = Color(0xFF7C3AED),
+                                trackColor = Color(0xFFEDE9FE),
+                            )
+                        }
                     }
                 }
-            }
 
-            // ── 2. WebView Content (weight(1f) strictly ends above the bottom bar, NEVER covers web controls) ──
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-            ) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { ctx ->
-                        WebView(ctx).apply {
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                            )
-                            settings.apply {
-                                javaScriptEnabled = true
-                                domStorageEnabled = true
-                                databaseEnabled = true
-                                loadWithOverviewMode = true
-                                useWideViewPort = true
-                                setSupportZoom(true)
-                                builtInZoomControls = true
-                                displayZoomControls = false
-                                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                                userAgentString = userAgentString.replace("; wv", "")
-                            }
-
-                            webChromeClient = object : WebChromeClient() {
-                                override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                                    loadingProgress = newProgress
-                                    canGoBack = view?.canGoBack() == true
-                                    canGoForward = view?.canGoForward() == true
+                // ── 2. WebView Content (weight(1f) strictly ends above the bottom bar, NEVER covers web controls) ──
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                ) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            WebView(ctx).apply {
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                )
+                                // Prevent black flash during initialization
+                                setBackgroundColor(android.graphics.Color.parseColor("#F2F0F7"))
+                                settings.apply {
+                                    javaScriptEnabled = true
+                                    domStorageEnabled = true
+                                    databaseEnabled = true
+                                    loadWithOverviewMode = true
+                                    useWideViewPort = true
+                                    setSupportZoom(true)
+                                    builtInZoomControls = true
+                                    displayZoomControls = false
+                                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                                    userAgentString = userAgentString.replace("; wv", "")
                                 }
 
-                                override fun onReceivedTitle(view: WebView?, title: String?) {
-                                    if (!title.isNullOrBlank()) {
-                                        currentTitle = title
+                                webChromeClient = object : WebChromeClient() {
+                                    override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                        loadingProgress = newProgress
+                                        canGoBack = view?.canGoBack() == true
+                                        canGoForward = view?.canGoForward() == true
                                     }
-                                }
-                            }
 
-                            webViewClient = object : WebViewClient() {
-                                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                                    loadingProgress = 15
-                                    canGoBack = view?.canGoBack() == true
-                                    canGoForward = view?.canGoForward() == true
-                                }
-
-                                override fun onPageFinished(view: WebView?, url: String?) {
-                                    loadingProgress = 100
-                                    canGoBack = view?.canGoBack() == true
-                                    canGoForward = view?.canGoForward() == true
-                                }
-
-                                override fun shouldOverrideUrlLoading(
-                                    view: WebView?,
-                                    request: WebResourceRequest?,
-                                ): Boolean {
-                                    val u = request?.url?.toString() ?: return false
-                                    return if (u.startsWith("http://") || u.startsWith("https://")) {
-                                        false
-                                    } else {
-                                        try {
-                                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
-                                            true
-                                        } catch (e: Exception) {
-                                            true
+                                    override fun onReceivedTitle(view: WebView?, title: String?) {
+                                        if (!title.isNullOrBlank()) {
+                                            currentTitle = title
                                         }
                                     }
                                 }
+
+                                webViewClient = object : WebViewClient() {
+                                    override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                        loadingProgress = 15
+                                        canGoBack = view?.canGoBack() == true
+                                        canGoForward = view?.canGoForward() == true
+                                    }
+
+                                    override fun onPageFinished(view: WebView?, url: String?) {
+                                        loadingProgress = 100
+                                        canGoBack = view?.canGoBack() == true
+                                        canGoForward = view?.canGoForward() == true
+                                    }
+
+                                    override fun shouldOverrideUrlLoading(
+                                        view: WebView?,
+                                        request: WebResourceRequest?,
+                                    ): Boolean {
+                                        val u = request?.url?.toString() ?: return false
+                                        return if (u.startsWith("http://") || u.startsWith("https://")) {
+                                            false
+                                        } else {
+                                            try {
+                                                ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
+                                                true
+                                            } catch (e: Exception) {
+                                                true
+                                            }
+                                        }
+                                    }
+                                }
+
+                                loadUrl(currentSite.url)
+                                webViewRef = this
+                                onRegisterWebView(this)
                             }
+                        },
+                        update = { view ->
+                            val url = currentSite.url
+                            if (url.isNotBlank() && view.url != url) {
+                                view.loadUrl(url)
+                            }
+                        },
+                    )
+                }
 
-                            loadUrl(activeSite?.url ?: "")
-                            webViewRef = this
-                            onRegisterWebView(this)
-                        }
-                    },
-                    update = { view ->
-                        val url = activeSite?.url ?: ""
-                        if (url.isNotBlank() && view.url != url) {
-                            view.loadUrl(url)
-                        }
-                    },
-                )
-            }
-
-            // ── 3. Docked Bottom Bar (Cleanly docked below WebView, NEVER overlaps any web buttons!) ──
-            Surface(
-                color = Color.White,
-                tonalElevation = 0.dp,
-                shadowElevation = 8.dp,
-                border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding(),
-            ) {
-                Row(
+                // ── 3. Docked Bottom Bar (Cleanly docked below WebView, NEVER overlaps any web buttons!) ──
+                Surface(
+                    color = Color.White,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 8.dp,
+                    border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .navigationBarsPadding(),
                 ) {
-                    // Navigation controls
                     Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = if (canGoBack) Color(0xFFF3E8FF) else Color(0xFFF3F4F6),
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .clickable(enabled = canGoBack) { webViewRef?.goBack() },
+                        // Navigation controls
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    "‹",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (canGoBack) Color(0xFF7C3AED) else Color(0xFF9CA3AF),
-                                )
+                            Surface(
+                                shape = CircleShape,
+                                color = if (canGoBack) Color(0xFFF3E8FF) else Color(0xFFF3F4F6),
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .clickable(enabled = canGoBack) { webViewRef?.goBack() },
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        "‹",
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (canGoBack) Color(0xFF7C3AED) else Color(0xFF9CA3AF),
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                shape = CircleShape,
+                                color = if (canGoForward) Color(0xFFF3E8FF) else Color(0xFFF3F4F6),
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .clickable(enabled = canGoForward) { webViewRef?.goForward() },
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        "›",
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (canGoForward) Color(0xFF7C3AED) else Color(0xFF9CA3AF),
+                                    )
+                                }
+                            }
+
+                            // Switch gallery button
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = Color(0xFFF2F0F7),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .clickable { activeSite = null },
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text("⊞", fontSize = 13.sp, color = Nm.ink)
+                                    Text("换站点", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Nm.ink)
+                                }
                             }
                         }
 
-                        Surface(
-                            shape = CircleShape,
-                            color = if (canGoForward) Color(0xFFF3E8FF) else Color(0xFFF3F4F6),
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .clickable(enabled = canGoForward) { webViewRef?.goForward() },
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    "›",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (canGoForward) Color(0xFF7C3AED) else Color(0xFF9CA3AF),
-                                )
-                            }
-                        }
-
-                        // Switch gallery button
+                        // Primary Action: Apply Prompt to Canvas
                         Surface(
                             shape = RoundedCornerShape(999.dp),
-                            color = Color(0xFFF2F0F7),
+                            color = Color.Transparent,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(999.dp))
-                                .clickable { activeSite = null },
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFF8B5CF6), Color(0xFF6D28D9))
+                                    )
+                                )
+                                .clickable {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    val clipText = cm?.primaryClip?.let { clip ->
+                                        if (clip.itemCount > 0) clip.getItemAt(0)?.text?.toString() else null
+                                    } ?: ""
+                                    extractedPromptText = clipText.trim()
+                                    showExtractDialog = true
+                                },
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
-                                Text("⊞", fontSize = 13.sp, color = Nm.ink)
-                                Text("换站点", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Nm.ink)
-                            }
-                        }
-                    }
-
-                    // Primary Action: Apply Prompt to Canvas
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color.Transparent,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(Color(0xFF8B5CF6), Color(0xFF6D28D9))
+                                Text("✨", fontSize = 13.sp)
+                                Text(
+                                    text = "提取并填入画布",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
                                 )
-                            )
-                            .clickable {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                val clipText = cm?.primaryClip?.let { clip ->
-                                    if (clip.itemCount > 0) clip.getItemAt(0)?.text?.toString() else null
-                                } ?: ""
-                                extractedPromptText = clipText.trim()
-                                showExtractDialog = true
-                            },
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text("✨", fontSize = 13.sp)
-                            Text(
-                                text = "提取并填入画布",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                            )
+                            }
                         }
                     }
                 }
