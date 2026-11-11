@@ -71,8 +71,7 @@ internal fun MoreMenuScrim(
 
 /**
  * ⭐⭐⭐ The More Menu card — an elegant, responsive floating card expanding out of the
- * bottom bar's 'More' slot (user ask 2026-11-11: "在线画廊的入口就放在底导航栏的更多里面吧，
- * 点击更多展开卡片，然后在里面放着在线画廊").
+ * bottom bar's 'More' slot.
  */
 @Composable
 internal fun MoreMenu(
@@ -127,47 +126,30 @@ internal fun MoreMenu(
                     .fillMaxWidth()
                     .padding(20.dp),
             ) {
-                // ── Header Row ──
+                // ── Header Row (Clean, no redundant badges) ──
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFEDE9FE)),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xFFEDE9FE)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text("✨", fontSize = 14.sp)
-                        }
-                        Text(
-                            text = "更多功能",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Nm.ink,
-                        )
+                        Text("✨", fontSize = 14.sp)
                     }
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color(0xFFF3E8FF),
-                    ) {
-                        Text(
-                            text = "AI 创作社区",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF7C3AED),
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
-                        )
-                    }
+                    Text(
+                        text = "更多功能",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Nm.ink,
+                    )
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(14.dp))
 
                 // ── Online Gallery Card ──
                 Surface(
@@ -209,32 +191,15 @@ internal fun MoreMenu(
                         Spacer(Modifier.width(14.dp))
 
                         Column(Modifier.weight(1f)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Text(
-                                    text = "在线画廊",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Nm.ink,
-                                )
-                                Surface(
-                                    shape = RoundedCornerShape(999.dp),
-                                    color = Color(0xFFEDE9FE),
-                                ) {
-                                    Text(
-                                        text = "aitag.win",
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF6D28D9),
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-                                    )
-                                }
-                            }
+                            Text(
+                                text = "在线画廊",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Nm.ink,
+                            )
                             Spacer(Modifier.height(3.dp))
                             Text(
-                                text = "AI TAG 咒语图库 · 灵感检索与一键应用",
+                                text = "AI 绘画咒语图库 · 灵感检索与提示词应用",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Nm.sub,
                                 maxLines = 1,
@@ -260,22 +225,6 @@ internal fun MoreMenu(
                             )
                         }
                     }
-                }
-
-                Spacer(Modifier.height(14.dp))
-
-                // ── Footer Hint ──
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "💡 浏览海量生图作品，在画廊中快捷提取提示词填入画布",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Nm.sub.copy(alpha = 0.75f),
-                        fontSize = 11.5.sp,
-                    )
                 }
             }
         }
