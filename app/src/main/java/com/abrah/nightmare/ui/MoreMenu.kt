@@ -51,8 +51,7 @@ import com.abrah.nightmare.R
 import com.abrah.nightmare.newui.theme.Nm
 
 /**
- * ⭐ The transparent touch detector covering the screen behind the More card:
- * tap anywhere outside closes the card.
+ * Transparent backdrop that closes the More card on tap outside.
  */
 @Composable
 internal fun MoreMenuScrim(
@@ -70,14 +69,17 @@ internal fun MoreMenuScrim(
 }
 
 /**
- * ⭐⭐⭐ The More Menu card — an elegant, responsive floating card expanding out of the
- * bottom bar's 'More' slot.
+ * ⭐⭐⭐ The More Menu card — elegant floating card over the bottom bar's 'More' slot
+ * with pure NewUI aesthetics and fluid spring animation (reverted to single clean card).
  */
 @Composable
 internal fun MoreMenu(
     open: Boolean,
     onDismiss: () -> Unit,
     onOpenGallery: () -> Unit,
+    onSettings: (() -> Unit)? = null,
+    onResults: (() -> Unit)? = null,
+    onToast: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var shown by remember { mutableStateOf(open) }
@@ -86,9 +88,9 @@ internal fun MoreMenu(
     LaunchedEffect(open) {
         if (open) {
             shown = true
-            p.animateTo(1f, tween(320, easing = CubicBezierEasing(0.20f, 0.95f, 0.28f, 1f)))
+            p.animateTo(1f, tween(300, easing = CubicBezierEasing(0.20f, 0.95f, 0.28f, 1f)))
         } else if (shown) {
-            p.animateTo(0f, tween(200, easing = CubicBezierEasing(0.35f, 0f, 0.75f, 0.15f)))
+            p.animateTo(0f, tween(180, easing = CubicBezierEasing(0.35f, 0f, 0.75f, 0.15f)))
             shown = false
         }
     }
@@ -101,23 +103,23 @@ internal fun MoreMenu(
             .fillMaxSize()
             .navigationBarsPadding()
             // Sits right above the floating bottom bar
-            .padding(bottom = BOTTOM_BAR_RESERVE + 12.dp, start = 20.dp, end = 20.dp),
+            .padding(bottom = BOTTOM_BAR_RESERVE + 10.dp, start = 16.dp, end = 16.dp),
         contentAlignment = Alignment.BottomCenter,
     ) {
         Surface(
             shape = RoundedCornerShape(26.dp),
-            color = Color.White.copy(alpha = 0.97f),
+            color = Color.White.copy(alpha = 0.98f),
             tonalElevation = 0.dp,
-            shadowElevation = 16.dp,
+            shadowElevation = 14.dp,
             border = BorderStroke(1.2.dp, Color(0xFFEDE9FE)),
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 380.dp)
                 .graphicsLayer {
                     alpha = p.value.coerceIn(0f, 1f)
-                    scaleX = 0.88f + 0.12f * p.value
-                    scaleY = 0.88f + 0.12f * p.value
-                    translationY = (1f - p.value) * 26.dp.toPx()
+                    scaleX = 0.90f + 0.10f * p.value
+                    scaleY = 0.90f + 0.10f * p.value
+                    translationY = (1f - p.value) * 22.dp.toPx()
                     transformOrigin = TransformOrigin(0.5f, 1f)
                 },
         ) {
@@ -126,7 +128,7 @@ internal fun MoreMenu(
                     .fillMaxWidth()
                     .padding(20.dp),
             ) {
-                // ── Header Row (Clean, no redundant badges) ──
+                // ── Header Row (Clean: ✨ 更多功能) ──
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -134,12 +136,12 @@ internal fun MoreMenu(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(30.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color(0xFFEDE9FE)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("✨", fontSize = 14.sp)
+                        Text("✨", fontSize = 15.sp)
                     }
                     Text(
                         text = "更多功能",
