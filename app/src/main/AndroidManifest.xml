@@ -161,11 +161,19 @@
             android:label="Moss LayOut"
             android:theme="@style/Theme.Nightmare" />
 
-        <!-- Online Gallery Activity (aitag.win) -->
+        <!-- Online Gallery Activity -->
         <activity
             android:name=".gallery.OnlineGalleryActivity"
             android:exported="false"
             android:label="在线画廊"
+            android:theme="@style/Theme.Nightmare"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
+
+        <!-- Image Scramble Activity -->
+        <activity
+            android:name=".scramble.ImageScrambleActivity"
+            android:exported="false"
+            android:label="图片混淆"
             android:theme="@style/Theme.Nightmare"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
 

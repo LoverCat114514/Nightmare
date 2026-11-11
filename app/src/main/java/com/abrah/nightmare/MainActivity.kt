@@ -518,6 +518,9 @@ fun HarnessScreen(
         val canvasLoraPicker = rememberLauncherForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
         ) { uri -> if (uri != null) vm.importLora(uri) }
+        val scrambleLauncher = rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+        ) { /* Return from Scramble */ }
         val galleryLauncher = rememberLauncherForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
         ) { r ->
@@ -923,6 +926,12 @@ fun HarnessScreen(
                 vm.closeMoreMenu()
                 galleryLauncher.launch(
                     android.content.Intent(galleryCtx, com.abrah.nightmare.gallery.OnlineGalleryActivity::class.java)
+                )
+            },
+            onOpenScramble = {
+                vm.closeMoreMenu()
+                scrambleLauncher.launch(
+                    android.content.Intent(galleryCtx, com.abrah.nightmare.scramble.ImageScrambleActivity::class.java)
                 )
             },
         )

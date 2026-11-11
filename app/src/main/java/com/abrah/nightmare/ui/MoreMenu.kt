@@ -39,8 +39,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -68,15 +70,34 @@ internal fun MoreMenuScrim(
     }
 }
 
+private fun mmGlyph(name: String, pathData: String): ImageVector =
+    ImageVector.Builder(
+        name = name,
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        addPath(
+            pathData = androidx.compose.ui.graphics.vector.PathParser().parsePathString(pathData).toNodes(),
+            fill = SolidColor(Color.White),
+        )
+    }.build()
+
+private val IconLock: ImageVector by lazy {
+    mmGlyph("Lock", "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z")
+}
+
 /**
  * ⭐⭐⭐ The More Menu card — elegant floating card over the bottom bar's 'More' slot
- * with pure NewUI aesthetics and fluid spring animation.
+ * with pure NewUI aesthetics and fluid spring animation, housing Online Gallery and Image Scramble.
  */
 @Composable
 internal fun MoreMenu(
     open: Boolean,
     onDismiss: () -> Unit,
     onOpenGallery: () -> Unit,
+    onOpenScramble: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
     onResults: (() -> Unit)? = null,
     onToast: ((String) -> Unit)? = null,
@@ -159,7 +180,7 @@ internal fun MoreMenu(
 
                     Spacer(Modifier.height(14.dp))
 
-                    // ── Online Gallery Card ──
+                    // ── 1. Online Gallery Card ──
                     Surface(
                         shape = RoundedCornerShape(20.dp),
                         color = Color(0xFFF9F8FD),
@@ -186,11 +207,90 @@ internal fun MoreMenu(
                                         )
                                     )
                                     .shadow(8.dp, RoundedCornerShape(14.dp), ambientColor = Color(0x407C3AED)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_gallery),
+                                contentDescription = "在线画廊",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
+
+                        Spacer(Modifier.width(14.dp))
+
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = "在线画廊",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Nm.ink,
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                text = "AI 绘画咒语图库 · 灵感检索与提示词应用",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Nm.sub,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+
+                        Spacer(Modifier.width(8.dp))
+
+                        // Chevron
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFEDE9FE).copy(alpha = 0.6f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "›",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF7C3AED),
+                            )
+                        }
+                    }
+                }
+
+                if (onOpenScramble != null) {
+                    Spacer(Modifier.height(10.dp))
+
+                    // ── 2. Image Scramble Card ──
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color(0xFFF9F8FD),
+                        border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .clickable(onClick = onOpenScramble),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // Icon Box with Coral/Rose Gradient
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFFF43F5E), Color(0xFFBE123C))
+                                        )
+                                    )
+                                    .shadow(8.dp, RoundedCornerShape(14.dp), ambientColor = Color(0x40BE123C)),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
-                                    painter = painterResource(R.drawable.ic_gallery),
-                                    contentDescription = "在线画廊",
+                                    imageVector = IconLock,
+                                    contentDescription = "图片混淆",
                                     tint = Color.White,
                                     modifier = Modifier.size(24.dp),
                                 )
@@ -200,14 +300,14 @@ internal fun MoreMenu(
 
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    text = "在线画廊",
+                                    text = "图片混淆",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = Nm.ink,
                                 )
                                 Spacer(Modifier.height(3.dp))
                                 Text(
-                                    text = "AI 绘画咒语图库 · 灵感检索与提示词应用",
+                                    text = "无损像素置换 · 安全加密与还原",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Nm.sub,
                                     maxLines = 1,
@@ -222,14 +322,14 @@ internal fun MoreMenu(
                                 modifier = Modifier
                                     .size(28.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFFEDE9FE).copy(alpha = 0.6f)),
+                                    .background(Color(0xFFFEE2E2).copy(alpha = 0.7f)),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
                                     "›",
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF7C3AED),
+                                    color = Color(0xFFBE123C),
                                 )
                             }
                         }
@@ -238,4 +338,5 @@ internal fun MoreMenu(
             }
         }
     }
+}
 }
