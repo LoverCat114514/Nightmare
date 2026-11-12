@@ -88,6 +88,10 @@ private val IconLock: ImageVector by lazy {
     mmGlyph("Lock", "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z")
 }
 
+private val IconEye: ImageVector by lazy {
+    mmGlyph("Visibility", "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z")
+}
+
 /**
  * ⭐⭐⭐ The More Menu card — elegant floating card over the bottom bar's 'More' slot
  * with pure NewUI aesthetics and fluid spring animation, housing Online Gallery and Image Scramble.
@@ -98,6 +102,7 @@ internal fun MoreMenu(
     onDismiss: () -> Unit,
     onOpenGallery: () -> Unit,
     onOpenScramble: (() -> Unit)? = null,
+    onOpenReversePrompt: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
     onResults: (() -> Unit)? = null,
     onToast: ((String) -> Unit)? = null,
@@ -330,6 +335,84 @@ internal fun MoreMenu(
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFFBE123C),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (onOpenReversePrompt != null) {
+                    Spacer(Modifier.height(10.dp))
+
+                    // ── 3. Reverse Prompt (反推) Card ──
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color(0xFFF9F8FD),
+                        border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .clickable(onClick = onOpenReversePrompt),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF3B82F6), Color(0xFF1D4ED8))
+                                        )
+                                    )
+                                    .shadow(8.dp, RoundedCornerShape(14.dp), ambientColor = Color(0x401D4ED8)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = IconEye,
+                                    contentDescription = "反推",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                            }
+
+                            Spacer(Modifier.width(14.dp))
+
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = "反推",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Nm.ink,
+                                )
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    text = "Qwen3-VL 端侧旗舰 · 在线 API 双引擎",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Nm.sub,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+
+                            Spacer(Modifier.width(8.dp))
+
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFDBEAFE).copy(alpha = 0.8f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    "›",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1D4ED8),
                                 )
                             }
                         }

@@ -521,6 +521,19 @@ fun HarnessScreen(
         val scrambleLauncher = rememberLauncherForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
         ) { /* Return from Scramble */ }
+        val reversePromptLauncher = rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+        ) { r ->
+            if (r.resultCode == android.app.Activity.RESULT_OK) {
+                val prompt = r.data?.getStringExtra(com.abrah.nightmare.reverse.ReversePromptActivity.EXTRA_PROMPT)
+                if (!prompt.isNullOrBlank()) {
+                    vm.wbPromptBridge?.let { bridge ->
+                        bridge.onPositive?.invoke(prompt)
+                        vm.toast("✨ 已将反推提示词填入画布！")
+                    }
+                }
+            }
+        }
         val galleryLauncher = rememberLauncherForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
         ) { r ->
@@ -932,6 +945,12 @@ fun HarnessScreen(
                 vm.closeMoreMenu()
                 scrambleLauncher.launch(
                     android.content.Intent(galleryCtx, com.abrah.nightmare.scramble.ImageScrambleActivity::class.java)
+                )
+            },
+            onOpenReversePrompt = {
+                vm.closeMoreMenu()
+                reversePromptLauncher.launch(
+                    android.content.Intent(galleryCtx, com.abrah.nightmare.reverse.ReversePromptActivity::class.java)
                 )
             },
         )

@@ -177,6 +177,14 @@
             android:theme="@style/Theme.Nightmare"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
 
+        <!-- Reverse Prompt Activity -->
+        <activity
+            android:name=".reverse.ReversePromptActivity"
+            android:exported="false"
+            android:label="反推"
+            android:theme="@style/Theme.Nightmare"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
+
         <!-- The FOREGROUND harness entry: the same activity, reached with the same
              "op" and "arg" extras, but guarded by DUMP like OpService. MainActivity
              honours an op ONLY when the intent names this alias, because the
