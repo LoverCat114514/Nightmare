@@ -153,67 +153,6 @@ private val API_PRESETS = listOf(
     ApiPreset("自定义", "", ""),
 )
 
-/**
- * Placeholder UI-side backend so the screen is 100% interactive while waiting
- * for the user's real backend implementation of [ReversePromptBackend].
- */
-private class UiStubReversePromptBackend(private val context: Context) : ReversePromptBackend {
-    private var currentStatus = LocalModelStatus()
-
-    override suspend fun getLocalModelStatus(): LocalModelStatus = currentStatus
-
-    override fun downloadFlagshipModel(): Flow<LocalModelStatus> = flow {
-        emit(currentStatus.copy(isDownloading = true, downloadProgress = 0.05f, downloadDetail = "等待后端接入下载实现..."))
-    }
-
-    override fun cancelDownload() {
-        currentStatus = currentStatus.copy(isDownloading = false, downloadProgress = 0f, downloadDetail = "")
-    }
-
-    override suspend fun importLocalModelFile(uri: Uri, isMmproj: Boolean): LocalModelStatus {
-        var fileName = uri.lastPathSegment ?: "model.gguf"
-        var fileSize = 0L
-        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
-                if (nameIdx >= 0) fileName = cursor.getString(nameIdx)
-                if (sizeIdx >= 0) fileSize = cursor.getLong(sizeIdx)
-            }
-        }
-        currentStatus = if (isMmproj) {
-            currentStatus.copy(mmprojName = fileName, mmprojBytes = fileSize)
-        } else {
-            currentStatus.copy(mainModelName = fileName, mainModelBytes = fileSize)
-        }
-        currentStatus = currentStatus.copy(
-            modelReady = currentStatus.mainModelName != null && currentStatus.mmprojName != null,
-        )
-        return currentStatus
-    }
-
-    override suspend fun deleteLocalModel(): LocalModelStatus {
-        currentStatus = LocalModelStatus()
-        return currentStatus
-    }
-
-    override suspend fun testApiConnection(config: ApiEndpointConfig): Result<String> {
-        return if (config.baseUrl.isBlank() || config.apiKey.isBlank() || config.modelId.isBlank()) {
-            Result.failure(IllegalArgumentException("请先填写完整的 Base URL、API Key 与模型名称"))
-        } else {
-            Result.failure(IllegalStateException("UI 已就绪，请接入后端 API 连通性检测"))
-        }
-    }
-
-    override fun runReversePrompt(
-        bitmap: Bitmap,
-        mode: ReverseEngineMode,
-        style: ReverseOutputStyle,
-        apiConfig: ApiEndpointConfig,
-    ): Flow<ReverseProgress> = flow {
-        emit(ReverseProgress.Error("UI 已就绪：请接入后端推理实现（当前为纯 UI 预览状态）"))
-    }
-}
 
 /**
  * ⭐⭐⭐ Reverse Prompt Activity (反推) — Dual-mode UI supporting Flagship On-Device
@@ -230,7 +169,7 @@ class ReversePromptActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        val backend: ReversePromptBackend = UiStubReversePromptBackend(applicationContext)
+        val backend: ReversePromptBackend = ReversePromptBackendImpl(applicationContext)
 
         setContent {
             ReversePromptScreen(
@@ -321,16 +260,25 @@ private fun ReversePromptScreen(
     val mainModelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             scope.launch {
-                localStatus = backend.importLocalModelFile(uri, isMmproj = false)
+                localStatus = try {
+                    backend.importLocalModelFile(uri, isMmproj = false)
+                } catch (t: Throwable) {
+                    Toast.makeText(context, "导入失败：${t.message ?: t.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
                 Toast.makeText(context, "已导入主模型：${localStatus.mainModelName}", Toast.LENGTH_SHORT).show()
             }
         }
     }
-
     val mmprojPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             scope.launch {
-                localStatus = backend.importLocalModelFile(uri, isMmproj = true)
+                localStatus = try {
+                    backend.importLocalModelFile(uri, isMmproj = true)
+                } catch (t: Throwable) {
+                    Toast.makeText(context, "导入失败：${t.message ?: t.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
                 Toast.makeText(context, "已导入视觉投影：${localStatus.mmprojName}", Toast.LENGTH_SHORT).show()
             }
         }
