@@ -222,6 +222,7 @@ private fun ReversePromptScreen(
     var isRunning by remember { mutableStateOf(false) }
     var statusBanner by remember { mutableStateOf<String?>(null) }
     var resultText by remember { mutableStateOf("") }
+    var errorBanner by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         localStatus = backend.getLocalModelStatus()
@@ -707,7 +708,45 @@ private fun ReversePromptScreen(
                         }
 
                         Spacer(Modifier.height(14.dp))
-
+                        // ── Persistent Error Card (full text, never truncated) ──
+                        errorBanner?.let { err ->
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = Color(0xFFFEF2F2),
+                                border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = "⚠ 反推失败",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFB91C1C),
+                                        )
+                                        Spacer(Modifier.weight(1f))
+                                        Text(
+                                            text = "关闭",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = Color(0xFFDC2626),
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable { errorBanner = null }
+                                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                                        )
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        text = err,
+                                        fontSize = 12.5.sp,
+                                        color = Color(0xFF7F1D1D),
+                                        lineHeight = 18.sp,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(14.dp))
+                        }
                         // Start Reverse Prompting Button
                         val canStart = selectedBitmap != null && !isRunning
                         Surface(
@@ -746,7 +785,10 @@ private fun ReversePromptScreen(
                                                 is ReverseProgress.Error -> {
                                                     statusBanner = null
                                                     isRunning = false
-                                                    Toast.makeText(context, progress.message, Toast.LENGTH_LONG).show()
+                                                    // Full error text in a persistent card —
+                                                    // Toasts truncate long messages, which made
+                                                    // errors look like partial/no feedback.
+                                                    errorBanner = progress.message
                                                 }
                                             }
                                         }

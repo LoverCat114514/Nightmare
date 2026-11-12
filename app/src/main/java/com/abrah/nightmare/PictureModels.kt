@@ -31,5 +31,7 @@ object PictureModels {
         DescribeMode.models.forEach { it.trim() }
         // ⚠ On the NPU, not the CPU, and the one this list missed from 1.6.205 to 1.6.216 ([LivePortrait]'s idle note).
         com.abrah.nightmare.portrait.LivePortrait.trim()
+        // Reverse-prompt VLM engine (llama.cpp; ~4 GB resident when loaded).
+        com.abrah.nightmare.reverse.VlmEngine.trim()
     }
 }

@@ -14,6 +14,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -97,23 +98,11 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
         when (mode) {
             ReverseEngineMode.API -> runApiReverse(bitmap, style, apiConfig) { emit(it) }
 
-            ReverseEngineMode.LOCAL -> {
-                // Module 2 (libvlm_engine.so / llama.cpp JNI) is not wired yet.
-                val st = VlmModelManager.status(context)
-                val missing = buildList {
-                    if (st.mainModelName == null) add("主模型")
-                    if (st.mmprojName == null) add("mmproj 视觉投影")
-                }
-                val msg = when {
-                    missing.isNotEmpty() ->
-                        "端侧推理引擎尚未接入，且缺少：${missing.joinToString("、")}。" +
-                            "请先下载或导入模型文件（引擎就绪前请使用「在线 API」模式）"
-                    else ->
-                        "模型文件已就绪（${st.mainModelName}），但端侧推理引擎（libvlm_engine.so）尚未接入。" +
-                            "请使用「在线 API」模式"
-                }
-                emit(ReverseProgress.Error(msg))
-            }
+            ReverseEngineMode.LOCAL -> runLocalReverse(
+                context,
+                bitmap,
+                style,
+            ) { emit(it) }
         }
     }.flowOn(Dispatchers.IO)
 
@@ -322,6 +311,154 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
             val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
             Log.i(TAG, "image encoded: ${bmp.width}x${bmp.height}, ${b64.length} b64 chars")
             return "data:image/jpeg;base64,$b64"
+        } finally {
+            if (recycled) bmp.recycle()
+        }
+    }
+
+    // ---------------------------------------------------------------- LOCAL internals
+
+    /**
+     * Module 2 — on-device inference via [VlmEngine] (llama.cpp JNI).
+     * Loads the flagship Qwen3-VL-4B GGUFs if needed, runs one multimodal
+     * inference, and post-processes exactly like the API path (MOSS style
+     * goes through the same sanitizer so both engines feed the layout
+     * compiler identically).
+     */
+    private suspend fun runLocalReverse(
+        context: Context,
+        bitmap: Bitmap,
+        style: ReverseOutputStyle,
+        onProgress: suspend (ReverseProgress) -> Unit,
+    ) {
+        val st = VlmModelManager.status(context)
+        val missing = buildList {
+            if (st.mainModelName == null) add("主模型")
+            if (st.mmprojName == null) add("mmproj 视觉投影")
+        }
+        if (missing.isNotEmpty()) {
+            onProgress(
+                ReverseProgress.Error(
+                    "端侧模型不完整，缺少：${missing.joinToString("、")}。" +
+                        "请先在「端侧模型」面板下载或导入 GGUF 文件"
+                )
+            )
+            return
+        }
+        val dir = VlmModelManager.vlmDir(context)
+        val mainPath = File(dir, st.mainModelName!!).absolutePath
+        val mmprojPath = File(dir, st.mmprojName!!).absolutePath
+
+        if (!VlmEngine.isLoaded) {
+            onProgress(ReverseProgress.Loading("正在加载端侧模型（Q8_0 约 4.3 GB，首次约 10-30 秒）..."))
+            val code = VlmEngine.ensureLoaded(mainPath, mmprojPath)
+            if (code != 0) {
+                val why = when (code) {
+                    -1 -> "主模型文件不可读"
+                    -2 -> "语言模型加载失败（内存不足或文件损坏？）"
+                    -3 -> "推理上下文创建失败"
+                    -4 -> "mmproj 视觉投影加载失败"
+                    -100 -> "原生引擎库（libvlm_engine.so）缺失"
+                    -101 -> "原生加载崩溃"
+                    else -> "未知错误（代码 $code）"
+                }
+                onProgress(ReverseProgress.Error("端侧引擎加载失败：$why"))
+                return
+            }
+        }
+
+        onProgress(ReverseProgress.Loading("正在预处理图像..."))
+        val prepared = try {
+            bitmapToRgb888(bitmap, maxSide = 768)
+        } catch (t: Throwable) {
+            Log.w(TAG, "local bitmap prep failed", t)
+            onProgress(ReverseProgress.Error("图像预处理失败：${t.message ?: t.javaClass.simpleName}"))
+            return
+        }
+        val (rgb, rgbW, rgbH) = prepared
+
+        val system = if (style == ReverseOutputStyle.MOSS_LAYOUT) {
+            ReversePromptTemplates.MOSS_LAYOUT
+        } else {
+            ReversePromptTemplates.NATURAL
+        }
+        val userText = if (style == ReverseOutputStyle.MOSS_LAYOUT) {
+            "Analyse this image and output the layout JSON now."
+        } else {
+            "Reverse-engineer the full drawing prompt for this image now."
+        }
+
+        onProgress(ReverseProgress.Loading("端侧推理中（8 线程 CPU，约 1-3 分钟）..."))
+        val raw = VlmEngine.inferImage(rgb, rgbW, rgbH, system, userText)
+        if (raw.startsWith("ERR:")) {
+            onProgress(ReverseProgress.Error(raw.removePrefix("ERR:")))
+            return
+        }
+        val text = raw.trim()
+        if (text.isEmpty()) {
+            onProgress(
+                ReverseProgress.Error(
+                    "端侧推理返回为空（模型可能拒绝了请求）。" +
+                        "请重试，或换用「在线 API」模式"
+                )
+            )
+            return
+        }
+
+        if (style == ReverseOutputStyle.MOSS_LAYOUT) {
+            onProgress(ReverseProgress.Loading("正在校验/修复布局 JSON..."))
+            val cleaned = MossJsonSanitizer.stripThinking(text)
+            val sanitized = MossJsonSanitizer.sanitize(cleaned)
+            if (sanitized == null) {
+                onProgress(
+                    ReverseProgress.Error(
+                        "端侧模型输出的布局 JSON 无法修复为合法格式。\n原始输出：\n" +
+                            text.take(600)
+                    )
+                )
+                return
+            }
+            onProgress(ReverseProgress.Success(sanitized))
+        } else {
+            val natural = MossJsonSanitizer.stripThinking(text)
+            if (natural.isBlank()) {
+                onProgress(ReverseProgress.Error("端侧推理返回为空，请重试"))
+                return
+            }
+            onProgress(ReverseProgress.Success(natural))
+        }
+    }
+
+    /**
+     * Scales long edge to <= [maxSide] and converts to packed RGB888
+     * (3 bytes/pixel) — the exact format libvlm_engine.so's nativeInferImage
+     * expects (mtmd_bitmap_init contract). Returns (bytes, width, height).
+     */
+    private fun bitmapToRgb888(src: Bitmap, maxSide: Int): Triple<ByteArray, Int, Int> {
+        var bmp = src
+        var recycled = false
+        val longest = maxOf(src.width, src.height)
+        if (longest > maxSide) {
+            val scale = maxSide.toFloat() / longest
+            val w = (src.width * scale).toInt().coerceAtLeast(1)
+            val h = (src.height * scale).toInt().coerceAtLeast(1)
+            bmp = Bitmap.createScaledBitmap(src, w, h, true)
+            recycled = bmp !== src
+        }
+        try {
+            val w = bmp.width
+            val h = bmp.height
+            val pixels = IntArray(w * h)
+            bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+            val out = ByteArray(w * h * 3)
+            var o = 0
+            for (p in pixels) {
+                out[o++] = ((p shr 16) and 0xFF).toByte() // R
+                out[o++] = ((p shr 8) and 0xFF).toByte()  // G
+                out[o++] = (p and 0xFF).toByte()          // B
+            }
+            Log.i(TAG, "local image prepped: ${w}x${h}, ${out.size} bytes RGB888")
+            return Triple(out, w, h)
         } finally {
             if (recycled) bmp.recycle()
         }
