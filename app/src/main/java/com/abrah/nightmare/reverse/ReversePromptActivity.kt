@@ -84,6 +84,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import com.abrah.nightmare.Prefs
 import com.abrah.nightmare.newui.theme.Nm
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -201,6 +202,20 @@ private fun ReversePromptScreen(
     var outputStyle by remember { mutableStateOf(ReverseOutputStyle.MOSS_LAYOUT) }
     var localStatus by remember { mutableStateOf(LocalModelStatus()) }
     var downloadJob by remember { mutableStateOf<Job?>(null) }
+    // ⭐ On-device model chooser (multi-model era): persisted via Prefs;
+    // "" lets VlmModelManager fall back to the flagship 9B.
+    var selectedModelId by remember { mutableStateOf(Prefs.vlmSelectedModel(context)) }
+    fun selectVlmModel(id: String) {
+        if (id == selectedModelId) return
+        // Switching models cancels an in-flight download of the other one first.
+        if (localStatus.isDownloading) {
+            downloadJob?.cancel()
+            backend.cancelDownload()
+        }
+        selectedModelId = id
+        Prefs.setVlmSelectedModel(context, id)
+        scope.launch { localStatus = backend.getLocalModelStatus(id) }
+    }
 
     // API Config persisted in SharedPreferences
     var apiConfig by remember {
@@ -225,7 +240,7 @@ private fun ReversePromptScreen(
     var errorBanner by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
-        localStatus = backend.getLocalModelStatus()
+        localStatus = backend.getLocalModelStatus(selectedModelId)
     }
 
     fun saveApiConfig(cfg: ApiEndpointConfig) {
@@ -357,21 +372,24 @@ private fun ReversePromptScreen(
                             fontWeight = FontWeight.Black,
                             color = Nm.ink,
                         )
+                        // ⭐ Engine line follows the selected on-device model
+                        // (user request: "要根据模型名称变换").
                         Text(
-                            text = "Qwen3-VL 端侧旗舰 · 在线 API 双引擎",
+                            text = "${localStatus.selectedModelName.ifBlank { "Qwen3-VL" }} 端侧 · 在线 API 双引擎",
                             fontSize = 11.5.sp,
                             color = Nm.sub,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
-
-                // Mode Badge
+                // Mode Badge — shows the selected model's short name (9B / 4B).
                 Surface(
                     shape = RoundedCornerShape(999.dp),
                     color = if (engineMode == ReverseEngineMode.LOCAL) Color(0xFFEDE9FE) else Color(0xFFDBEAFE),
                 ) {
                     Text(
-                        text = if (engineMode == ReverseEngineMode.LOCAL) "端侧 4B" else "在线 API",
+                        text = if (engineMode == ReverseEngineMode.LOCAL) "端侧 ${localStatus.selectedModelShort.ifBlank { "VLM" }}" else "在线 API",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (engineMode == ReverseEngineMode.LOCAL) Color(0xFF6D28D9) else Color(0xFF1D4ED8),
@@ -461,10 +479,11 @@ private fun ReversePromptScreen(
                     if (currentMode == ReverseEngineMode.LOCAL) {
                         LocalModelPanel(
                             status = localStatus,
+                            selectedModelId = selectedModelId,
                             onDownload = {
                                 downloadJob?.cancel()
                                 downloadJob = scope.launch {
-                                    backend.downloadFlagshipModel().collect { st ->
+                                    backend.downloadVlmModel(selectedModelId).collect { st ->
                                         localStatus = st
                                     }
                                 }
@@ -482,6 +501,7 @@ private fun ReversePromptScreen(
                                     Toast.makeText(context, "已清理本地反推模型", Toast.LENGTH_SHORT).show()
                                 }
                             },
+                            onSelectModel = ::selectVlmModel,
                         )
                     } else {
                         ApiConfigPanel(
@@ -773,6 +793,7 @@ private fun ReversePromptScreen(
                                             mode = engineMode,
                                             style = outputStyle,
                                             apiConfig = apiConfig,
+                                            selectedModelId = selectedModelId,
                                         ).collect { progress ->
                                             when (progress) {
                                                 is ReverseProgress.Loading -> statusBanner = progress.message
@@ -934,11 +955,13 @@ private fun ReversePromptScreen(
 @Composable
 private fun LocalModelPanel(
     status: LocalModelStatus,
+    selectedModelId: String,
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
     onImportMain: () -> Unit,
     onImportMmproj: () -> Unit,
     onDelete: () -> Unit,
+    onSelectModel: (String) -> Unit,
 ) {
     Surface(
         shape = RoundedCornerShape(22.dp),
@@ -967,7 +990,7 @@ private fun LocalModelPanel(
                     ) {
                         Icon(
                             imageVector = IconChip,
-                            contentDescription = "旗舰模型",
+                            contentDescription = "端侧视觉模型",
                             tint = Color.White,
                             modifier = Modifier.size(22.dp),
                         )
@@ -977,18 +1000,22 @@ private fun LocalModelPanel(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
+                            // ⭐ Card title follows the selected model (user
+                            // request: "建议显示选择的模型名称").
                             Text(
-                                text = "Qwen3-VL-4B-Instruct",
+                                text = status.selectedModelName.ifBlank { "端侧视觉模型" },
                                 fontSize = 14.5.sp,
                                 fontWeight = FontWeight.Black,
                                 color = Nm.ink,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                             Surface(
                                 shape = RoundedCornerShape(999.dp),
                                 color = Color(0xFFEDE9FE),
                             ) {
                                 Text(
-                                    text = "旗舰 12GB+",
+                                    text = status.selectedModelBadge.ifBlank { "端侧模型" },
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF6D28D9),
@@ -1024,7 +1051,73 @@ private fun LocalModelPanel(
             }
 
             Spacer(Modifier.height(12.dp))
-
+            // ⭐ Model chooser chips — multi-select downloads, single active model
+            // (user request: 端侧模型可以选择使用哪个).
+            if (status.models.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    status.models.forEach { m ->
+                        val selected = m.id == selectedModelId
+                        val ready = m.mainInstalled && m.mmprojInstalled
+                        val partial = !ready && (m.mainInstalled || m.mmprojInstalled)
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = when {
+                                selected -> Color(0xFFEDE9FE)
+                                ready -> Color(0xFFF0FDF4)
+                                else -> Color(0xFFF7F6FA)
+                            },
+                            border = BorderStroke(
+                                1.dp,
+                                when {
+                                    selected -> Color(0xFF8B5CF6)
+                                    ready -> Color(0xFF86EFAC)
+                                    else -> Color(0xFFE5E1EF)
+                                },
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { onSelectModel(m.id) },
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text(
+                                    text = m.displayName,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                                    color = if (selected) Color(0xFF6D28D9) else Nm.ink,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center,
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = when {
+                                        ready -> "已就绪"
+                                        partial -> if (m.mainInstalled) "缺 mmproj" else "缺主模型"
+                                        else -> "未安装"
+                                    },
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = when {
+                                        selected -> Color(0xFF6D28D9)
+                                        ready -> Color(0xFF15803D)
+                                        else -> Nm.sub
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
             // File status pills
             Surface(
                 shape = RoundedCornerShape(14.dp),

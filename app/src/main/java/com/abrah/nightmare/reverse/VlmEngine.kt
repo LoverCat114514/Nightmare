@@ -43,6 +43,15 @@ object VlmEngine {
     /** Generation cap: layout JSON / natural prompts fit easily. */
     private const val MAX_TOKENS = 1024
 
+    /**
+     * ⭐ Multi-model era: absolute path of the resident main GGUF ("" when
+     * nothing is loaded). runLocalReverse compares it against the chosen
+     * definition to decide whether an unload is needed before loading.
+     */
+    @Volatile
+    var loadedMainPath: String = ""
+        private set
+
     private val loadMutex = Mutex()
 
     /**
@@ -90,6 +99,7 @@ object VlmEngine {
             }
             if (code == 0) {
                 lastLoad = CompletableDeferred(0)
+                loadedMainPath = mainPath
             }
             return code
         }
@@ -127,6 +137,7 @@ object VlmEngine {
         } finally {
             // Invalidate the cached load result so a later ensureLoaded() re-arms.
             lastLoad = null
+            loadedMainPath = ""
         }
     }
 

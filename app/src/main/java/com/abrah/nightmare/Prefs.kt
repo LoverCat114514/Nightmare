@@ -337,6 +337,25 @@ object Prefs {
         return if (t.endsWith("/")) t else "$t/"
     }
 
+    // ---- VLM reverse-prompt model chooser (2026-11-13, multi-model era) -----
+    /**
+     * ⭐ Which on-device VLM the reverse-prompt engine downloads/loads. The
+     * default is blank (→ VlmModelManager falls back to the flagship 9B) so a
+     * pre-existing install keeps working without a migration step.
+     */
+    private const val KEY_VLM_MODEL = "vlm_selected_model"
+
+    /** Reads the persisted VLM chooser selection; blank when never chosen. */
+    fun vlmSelectedModel(context: Context): String =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getString(KEY_VLM_MODEL, "") ?: ""
+
+    /** Persists the VLM chooser selection (id from [VlmModelManager.MODELS]). */
+    fun setVlmSelectedModel(context: Context, value: String) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .putString(KEY_VLM_MODEL, value).apply()
+    }
+
     // ---- low RAM: upstream local-dream's three Settings switches -----------
 
     /**

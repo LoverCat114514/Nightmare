@@ -38,11 +38,11 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
 
     // ------------------------------------------------ Module 1: local models
 
-    override suspend fun getLocalModelStatus(): LocalModelStatus =
-        withContext(Dispatchers.IO) { VlmModelManager.status(context) }
+    override suspend fun getLocalModelStatus(modelId: String): LocalModelStatus =
+        withContext(Dispatchers.IO) { VlmModelManager.status(context, modelId) }
 
-    override fun downloadFlagshipModel(): Flow<LocalModelStatus> =
-        VlmModelManager.downloadFlagshipModel(context)
+    override fun downloadVlmModel(modelId: String): Flow<LocalModelStatus> =
+        VlmModelManager.downloadModel(context, modelId)
 
     override fun cancelDownload() = VlmModelManager.cancelDownload()
 
@@ -94,6 +94,7 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
         mode: ReverseEngineMode,
         style: ReverseOutputStyle,
         apiConfig: ApiEndpointConfig,
+        selectedModelId: String,
     ): Flow<ReverseProgress> = flow {
         when (mode) {
             ReverseEngineMode.API -> runApiReverse(bitmap, style, apiConfig) { emit(it) }
@@ -102,6 +103,7 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
                 context,
                 bitmap,
                 style,
+                selectedModelId,
             ) { emit(it) }
         }
     }.flowOn(Dispatchers.IO)
@@ -329,9 +331,10 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
         context: Context,
         bitmap: Bitmap,
         style: ReverseOutputStyle,
+        selectedModelId: String,
         onProgress: suspend (ReverseProgress) -> Unit,
     ) {
-        val st = VlmModelManager.status(context)
+        val st = VlmModelManager.status(context, selectedModelId)
         val missing = buildList {
             if (st.mainModelName == null) add("主模型")
             if (st.mmprojName == null) add("mmproj 视觉投影")
@@ -345,12 +348,22 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
             )
             return
         }
+        val def = VlmModelManager.modelDef(context, selectedModelId)
         val dir = VlmModelManager.vlmDir(context)
         val mainPath = File(dir, st.mainModelName!!).absolutePath
         val mmprojPath = File(dir, st.mmprojName!!).absolutePath
 
+        // ⭐ Multi-model switch (2026-11-13): the native engine keeps at most
+        // ONE model resident. When the chosen definition differs from the one
+        // currently loaded, unload first — otherwise ensureLoaded would
+        // short-circuit and silently run the WRONG model.
+        if (VlmEngine.isLoaded && VlmEngine.loadedMainPath != mainPath) {
+            onProgress(ReverseProgress.Loading("正在切换端侧模型（${def.displayName}）..."))
+            VlmEngine.trim()
+        }
+
         if (!VlmEngine.isLoaded) {
-            onProgress(ReverseProgress.Loading("正在加载端侧模型（Q4_K_M 约 5.6 GB，首次约 10-30 秒）..."))
+            onProgress(ReverseProgress.Loading("正在加载端侧模型（${def.displayName}，首次约 10-30 秒）..."))
             val code = VlmEngine.ensureLoaded(mainPath, mmprojPath)
             if (code != 0) {
                 val why = when (code) {

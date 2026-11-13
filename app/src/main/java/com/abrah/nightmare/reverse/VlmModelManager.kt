@@ -17,29 +17,82 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * ⭐⭐⭐ Module 1 — flagship VLM GGUF storage & download management.
+ * ⭐⭐⭐ Module 1 — on-device VLM GGUF storage, download & model-chooser management.
  *
  * Models live in `<modelsDir>/vlm/` (a sibling of every other model family,
  * same [BackendProcess.modelsDir] root). Downloads use the same `.part` +
  * resume + rename discipline as Upscalers/DitEngine, and go through
  * [Prefs.apply] so the user's HF mirror setting covers them too.
  *
- * Flagship switched 2026-11-13 to Sakura721's DeepSeek-V4-Pro-Qwen3.5-9B
- * (qwen35 hybrid linear-attention arch, qwen3vl_merger projector — verified
- * end-to-end on-device with the standalone harness). The previous flagship
- * (prithivMLmods Qwen3-VL-4B-Instruct-Unredacted-MAX) remains loadable via
- * import if the user keeps the files. mmproj stays f16 — the vision tower is
- * quantization-sensitive and the user explicitly rejected q8_0 for it
- * (hallucination risk).
+ * ⭐ Multi-model era (2026-11-13, user request): the chooser offers every
+ * [VlmModelManager.ModelDef]; the picked id is persisted via
+ * [Prefs.setVlmSelectedModel] and every status/download/infer call targets it.
+ * The previous single-flagship design (DeepSeek 9B only) became just the
+ * first entry of that table.
+ *
+ * mmproj stays f16 — the vision tower is quantization-sensitive and the user
+ * explicitly rejected q8_0 for it (hallucination risk).
  */
 object VlmModelManager {
     private const val TAG = "VlmModelManager"
-    private const val HF_BASE =
-        "https://huggingface.co/Sakura721/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-GGUF/resolve/main/"
-    const val MAIN_FILE = "DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-Q4_K_M.gguf"
-    const val MMPROJ_FILE = "mmproj-DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-f16.gguf"
-    const val MAIN_BYTES = 5_629_111_968L
-    const val MMPROJ_BYTES = 918_167_360L
+
+    /**
+     * One downloadable/loadable on-device VLM. [mainBytes]/[mmprojBytes] are
+     * the exact HF file sizes — the downloader verifies them byte-for-byte
+     * before the atomic rename.
+     */
+    data class ModelDef(
+        val id: String,
+        val displayName: String,
+        val shortName: String,
+        val badge: String,
+        val hfBase: String,
+        val mainFile: String,
+        val mmprojFile: String,
+        val mainBytes: Long,
+        val mmprojBytes: Long,
+    )
+
+    /** Flagship since 2026-11-13: Sakura721's DeepSeek-V4-Pro-Qwen3.5-9B (qwen35
+     *  hybrid linear-attention arch, qwen3vl_merger projector — verified
+     *  end-to-end on-device with the standalone harness). */
+    val DEEPSEEK_9B = ModelDef(
+        id = "deepseek-v4-pro-qwen35-9b",
+        displayName = "DeepSeek-V4-Pro-Qwen3.5-9B",
+        shortName = "9B",
+        badge = "旗舰 12GB+",
+        hfBase = "https://huggingface.co/Sakura721/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-GGUF/resolve/main/",
+        mainFile = "DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-Q4_K_M.gguf",
+        mmprojFile = "mmproj-DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-f16.gguf",
+        mainBytes = 5_629_111_968L,
+        mmprojBytes = 918_167_360L,
+    )
+
+    /** The original flagship (prithivMLmods Qwen3-VL-4B-Instruct-Unredacted-MAX),
+     *  kept as a second downloadable option per the user's multi-select request.
+     *  Sizes are the exact byte counts the app itself downloaded back then. */
+    val QWEN_4B = ModelDef(
+        id = "qwen3-vl-4b-unredacted",
+        displayName = "Qwen3-VL-4B-Instruct",
+        shortName = "4B",
+        badge = "旗舰 8GB+",
+        hfBase = "https://huggingface.co/prithivMLmods/Qwen3-VL-4B-Instruct-Unredacted-MAX-GGUF/resolve/main/",
+        mainFile = "Qwen3-VL-4B-Instruct-Unredacted-MAX.Q8_0.gguf",
+        mmprojFile = "mmproj-Qwen3-VL-4B-Instruct-Unredacted-MAX-f16.gguf",
+        mainBytes = 4_280_406_240L,
+        mmprojBytes = 839_326_048L,
+    )
+
+    val MODELS: List<ModelDef> = listOf(DEEPSEEK_9B, QWEN_4B)
+
+    fun modelDef(context: Context, modelId: String): ModelDef =
+        MODELS.firstOrNull { it.id == modelId } ?: selectedDef(context)
+
+    /** The persisted selection; unknown/blank ids fall back to the flagship 9B. */
+    fun selectedDef(context: Context): ModelDef {
+        val id = Prefs.vlmSelectedModel(context)
+        return MODELS.firstOrNull { it.id == id } ?: DEEPSEEK_9B
+    }
 
     /** Set by [cancelDownload]; every download chunk checks it. */
     @Volatile
@@ -49,25 +102,43 @@ object VlmModelManager {
 
     // ------------------------------------------------------------------ status
 
+    /** Per-definition installed flags for the chooser chips. */
+    private fun optionFor(context: Context, def: ModelDef): VlmModelOption {
+        val dir = vlmDir(context)
+        val names = dir.listFiles()?.mapTo(HashSet()) { it.name } ?: emptySet()
+        return VlmModelOption(
+            id = def.id,
+            displayName = def.displayName,
+            shortName = def.shortName,
+            badge = def.badge,
+            mainInstalled = names.contains(def.mainFile),
+            mmprojInstalled = names.contains(def.mmprojFile),
+        )
+    }
+
     /**
-     * Scans the vlm dir. Canonical flagship names win; otherwise the newest
-     * matching `*.gguf` counts (imported files keep their original names).
+     * Scans the vlm dir for the given model id (or the persisted selection).
+     * The definition's canonical names win; otherwise the newest matching
+     * `*.gguf` counts (imported files keep their original names — status
+     * reports what would actually load, so the UI never lies).
      * `.part` leftovers are ignored.
      */
     fun status(
         context: Context,
+        modelId: String? = null,
         downloading: Boolean = false,
         progress: Float = 0f,
         detail: String = "",
     ): LocalModelStatus {
+        val def = modelDef(context, modelId ?: Prefs.vlmSelectedModel(context))
         val dir = vlmDir(context)
         val ggufs = dir.listFiles { f -> f.isFile && f.name.endsWith(".gguf") }
             ?.sortedByDescending { it.lastModified() }
             .orEmpty()
 
-        val main = ggufs.firstOrNull { it.name == MAIN_FILE }
+        val main = ggufs.firstOrNull { it.name == def.mainFile }
             ?: ggufs.firstOrNull { !it.name.startsWith("mmproj") }
-        val mmproj = ggufs.firstOrNull { it.name == MMPROJ_FILE }
+        val mmproj = ggufs.firstOrNull { it.name == def.mmprojFile }
             ?: ggufs.firstOrNull { it.name.startsWith("mmproj") }
 
         return LocalModelStatus(
@@ -79,26 +150,39 @@ object VlmModelManager {
             isDownloading = downloading,
             downloadProgress = progress,
             downloadDetail = detail,
+            selectedModelId = def.id,
+            // Canonical file installed → clean display name; an imported GGUF
+            // would load instead → show that file's name, the card never lies.
+            selectedModelName = when {
+                main == null -> def.displayName
+                main.name == def.mainFile -> def.displayName
+                else -> main.name.removeSuffix(".gguf")
+            },
+            selectedModelShort = def.shortName,
+            selectedModelBadge = def.badge,
+            models = MODELS.map { optionFor(context, it) },
         )
     }
 
     // ---------------------------------------------------------------- download
 
-    fun downloadFlagshipModel(context: Context): Flow<LocalModelStatus> = flow {
+    fun downloadModel(context: Context, modelId: String): Flow<LocalModelStatus> = flow {
         cancelled = false
+        val def = modelDef(context, modelId)
         val dir = vlmDir(context)
         dir.mkdirs()
-        Log.i(TAG, "flagship download start → ${dir.absolutePath}")
+        Log.i(TAG, "download start [${def.id}] → ${dir.absolutePath}")
 
         suspend fun step(file: File, url: String, expected: Long, label: String) {
             if (file.exists() && file.length() == expected) {
-                emit(status(context, downloading = true, progress = 1f, detail = "$label 已存在，跳过"))
+                emit(status(context, def.id, downloading = true, progress = 1f, detail = "$label 已存在，跳过"))
                 return
             }
             downloadFile(context, url, file, expected) { frac, extra ->
                 emit(
                     status(
                         context,
+                        def.id,
                         downloading = true,
                         progress = frac,
                         detail = "$label ${(frac * 100).toInt()}%$extra",
@@ -108,18 +192,18 @@ object VlmModelManager {
         }
 
         try {
-            step(File(dir, MAIN_FILE), HF_BASE + MAIN_FILE, MAIN_BYTES, "主模型")
+            step(File(dir, def.mainFile), def.hfBase + def.mainFile, def.mainBytes, "主模型")
             if (cancelled) throw DownloadCancelled()
-            step(File(dir, MMPROJ_FILE), HF_BASE + MMPROJ_FILE, MMPROJ_BYTES, "视觉投影")
+            step(File(dir, def.mmprojFile), def.hfBase + def.mmprojFile, def.mmprojBytes, "视觉投影")
             if (cancelled) throw DownloadCancelled()
-            emit(status(context).copy(downloadDetail = "下载完成"))
+            emit(status(context, def.id).copy(downloadDetail = "下载完成"))
         } catch (e: DownloadCancelled) {
-            Log.i(TAG, "flagship download cancelled")
+            Log.i(TAG, "download cancelled [${def.id}]")
             // .part is kept on purpose — the next attempt resumes from it.
-            emit(status(context).copy(downloadDetail = "已取消（进度已保留，可续传）"))
+            emit(status(context, def.id).copy(downloadDetail = "已取消（进度已保留，可续传）"))
         } catch (t: Throwable) {
-            Log.w(TAG, "flagship download failed", t)
-            emit(status(context).copy(downloadDetail = "下载失败：${t.message ?: t.javaClass.simpleName}"))
+            Log.w(TAG, "download failed [${def.id}]", t)
+            emit(status(context, def.id).copy(downloadDetail = "下载失败：${t.message ?: t.javaClass.simpleName}"))
         }
     }.flowOn(Dispatchers.IO)
 

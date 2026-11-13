@@ -14,6 +14,20 @@ import kotlinx.coroutines.flow.Flow
 enum class ReverseEngineMode { LOCAL, API }
 enum class ReverseOutputStyle { MOSS_LAYOUT, NATURAL }
 
+/**
+ * One entry of the on-device model chooser. [mainInstalled]/[mmprojInstalled]
+ * reflect the canonical GGUF files of that definition on disk, so a chip can
+ * show ready / partial / missing before the user commits to it.
+ */
+data class VlmModelOption(
+    val id: String,
+    val displayName: String,
+    val shortName: String,
+    val badge: String,
+    val mainInstalled: Boolean = false,
+    val mmprojInstalled: Boolean = false,
+)
+
 data class LocalModelStatus(
     val modelReady: Boolean = false,
     val mainModelName: String? = null,
@@ -23,6 +37,16 @@ data class LocalModelStatus(
     val isDownloading: Boolean = false,
     val downloadProgress: Float = 0f,
     val downloadDetail: String = "",
+    // ⭐ Multi-model era (2026-11-13): which definition is selected and what the
+    // chooser can offer. [selectedModelName] is what the model card + header show;
+    // when the selected definition's canonical file is missing but an imported
+    // GGUF would be loaded instead, it carries that file's name so the UI never
+    // lies about what will actually run.
+    val selectedModelId: String = "",
+    val selectedModelName: String = "",
+    val selectedModelShort: String = "",
+    val selectedModelBadge: String = "",
+    val models: List<VlmModelOption> = emptyList(),
 )
 
 data class ApiEndpointConfig(
@@ -40,11 +64,11 @@ sealed class ReverseProgress {
 }
 
 interface ReversePromptBackend {
-    /** Inspect whether flagship Qwen3-VL-4B main model + mmproj are installed on disk. */
-    suspend fun getLocalModelStatus(): LocalModelStatus
+    /** Inspect whether the selected on-device VLM (main model + mmproj) is installed. */
+    suspend fun getLocalModelStatus(modelId: String): LocalModelStatus
 
-    /** Start online download for flagship Qwen3-VL-4B (GGUF + mmproj). */
-    fun downloadFlagshipModel(): Flow<LocalModelStatus>
+    /** Start online download for the given VLM definition (GGUF + mmproj). */
+    fun downloadVlmModel(modelId: String): Flow<LocalModelStatus>
 
     /** Cancel an active download. */
     fun cancelDownload()
@@ -58,11 +82,12 @@ interface ReversePromptBackend {
     /** Test online VLM API connectivity. */
     suspend fun testApiConnection(config: ApiEndpointConfig): Result<String>
 
-    /** Run reverse-prompting inference on [bitmap]. */
+    /** Run reverse-prompting inference on [bitmap]. [selectedModelId] picks the LOCAL engine's GGUF. */
     fun runReversePrompt(
         bitmap: Bitmap,
         mode: ReverseEngineMode,
         style: ReverseOutputStyle,
         apiConfig: ApiEndpointConfig,
+        selectedModelId: String,
     ): Flow<ReverseProgress>
 }
