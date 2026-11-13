@@ -88,6 +88,7 @@ import com.abrah.nightmare.Prefs
 import com.abrah.nightmare.newui.theme.Nm
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
@@ -247,6 +248,11 @@ private fun ReversePromptScreen(
     var statusBanner by remember { mutableStateOf<String?>(null) }
     var resultText by remember { mutableStateOf("") }
     var errorBanner by remember { mutableStateOf<String?>(null) }
+    // Elapsed-time progress: VLM streaming carries no real percentage, so the
+    // run shows a 1s-ticking counter next to the banner and a final duration
+    // caption on the result card once Success lands.
+    var elapsedSec by remember { mutableStateOf(0) }
+    var lastDurationMs by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(Unit) {
         localStatus = backend.getLocalModelStatus(selectedModelId)
@@ -701,38 +707,50 @@ private fun ReversePromptScreen(
                             color = Nm.sub,
                         )
                         Spacer(Modifier.height(8.dp))
-                        Row(
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             listOf(
-                                ReverseOutputStyle.MOSS_LAYOUT to "Moss反推模板",
-                                ReverseOutputStyle.ANIMA to "Anima反推模板",
-                                ReverseOutputStyle.NATURAL to "常规自然语言描述",
-                            ).forEach { (style, title) ->
-                                val selected = outputStyle == style
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (selected) Color(0xFFEDE9FE) else Color(0xFFF7F6FA),
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (selected) Color(0xFF8B5CF6) else Color(0xFFE5E1EF),
-                                    ),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable { outputStyle = style },
+                                listOf(
+                                    ReverseOutputStyle.MOSS_LAYOUT to "Moss反推模板",
+                                    ReverseOutputStyle.ANIMA to "Anima反推模板",
+                                ),
+                                listOf(
+                                    ReverseOutputStyle.PURE_TAGS to "纯Tag标签",
+                                    ReverseOutputStyle.NATURAL to "常规自然语言描述",
+                                ),
+                            ).forEach { rowStyles ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    Text(
-                                        text = title,
-                                        fontSize = 12.sp,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (selected) Color(0xFF6D28D9) else Nm.sub,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-                                    )
+                                    rowStyles.forEach { (style, title) ->
+                                        val selected = outputStyle == style
+                                        Surface(
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = if (selected) Color(0xFFEDE9FE) else Color(0xFFF7F6FA),
+                                            border = BorderStroke(
+                                                1.dp,
+                                                if (selected) Color(0xFF8B5CF6) else Color(0xFFE5E1EF),
+                                            ),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .clickable { outputStyle = style },
+                                        ) {
+                                            Text(
+                                                text = title,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (selected) Color(0xFF6D28D9) else Nm.sub,
+                                                textAlign = TextAlign.Center,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -798,30 +816,47 @@ private fun ReversePromptScreen(
                                     scope.launch {
                                         isRunning = true
                                         statusBanner = "正在初始化推理..."
-                                        backend.runReversePrompt(
-                                            bitmap = bmp,
-                                            mode = engineMode,
-                                            style = outputStyle,
-                                            apiConfig = apiConfig,
-                                            selectedModelId = selectedModelId,
-                                        ).collect { progress ->
-                                            when (progress) {
-                                                is ReverseProgress.Loading -> statusBanner = progress.message
-                                                is ReverseProgress.Streaming -> resultText = progress.partialText
-                                                is ReverseProgress.Success -> {
-                                                    resultText = progress.resultText
-                                                    statusBanner = null
-                                                    isRunning = false
-                                                }
-                                                is ReverseProgress.Error -> {
-                                                    statusBanner = null
-                                                    isRunning = false
-                                                    // Full error text in a persistent card —
-                                                    // Toasts truncate long messages, which made
-                                                    // errors look like partial/no feedback.
-                                                    errorBanner = progress.message
+                                        elapsedSec = 0
+                                        lastDurationMs = null
+                                        val startedAt = System.currentTimeMillis()
+                                        // 1-second ticker: streaming carries no real
+                                        // percentage, so elapsed time is the progress
+                                        // signal shown next to the banner text.
+                                        val ticker = launch {
+                                            while (true) {
+                                                delay(1000)
+                                                elapsedSec = ((System.currentTimeMillis() - startedAt) / 1000L).toInt()
+                                            }
+                                        }
+                                        try {
+                                            backend.runReversePrompt(
+                                                bitmap = bmp,
+                                                mode = engineMode,
+                                                style = outputStyle,
+                                                apiConfig = apiConfig,
+                                                selectedModelId = selectedModelId,
+                                            ).collect { progress ->
+                                                when (progress) {
+                                                    is ReverseProgress.Loading -> statusBanner = progress.message
+                                                    is ReverseProgress.Streaming -> resultText = progress.partialText
+                                                    is ReverseProgress.Success -> {
+                                                        resultText = progress.resultText
+                                                        statusBanner = null
+                                                        lastDurationMs = System.currentTimeMillis() - startedAt
+                                                        isRunning = false
+                                                    }
+                                                    is ReverseProgress.Error -> {
+                                                        statusBanner = null
+                                                        isRunning = false
+                                                        // Full error text in a persistent card —
+                                                        // Toasts truncate long messages, which made
+                                                        // errors look like partial/no feedback.
+                                                        errorBanner = progress.message
+                                                    }
                                                 }
                                             }
+                                        } finally {
+                                            ticker.cancel()
                                         }
                                     }
                                 },
@@ -839,7 +874,8 @@ private fun ReversePromptScreen(
                                     )
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        text = statusBanner ?: "正在反推...",
+                                        text = (statusBanner ?: "正在反推...") +
+                                            if (elapsedSec > 0) " · ${elapsedSec}s" else "",
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color.White,
@@ -916,10 +952,20 @@ private fun ReversePromptScreen(
 
                             Spacer(Modifier.height(10.dp))
 
+                            lastDurationMs?.let { ms ->
+                                Text(
+                                    text = "本次反推用时 %.1f 秒".format(ms / 1000.0),
+                                    fontSize = 11.5.sp,
+                                    color = Nm.sub,
+                                    textAlign = TextAlign.End,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(6.dp))
+                            }
+
                             OutlinedTextField(
                                 value = resultText,
                                 onValueChange = { resultText = it },
-                                placeholder = { Text("反推生成的提示词或 MOSS 布局 JSON 将显示在这里...") },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(180.dp),

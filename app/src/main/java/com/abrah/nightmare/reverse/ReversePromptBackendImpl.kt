@@ -110,6 +110,14 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
 
     // ------------------------------------------------ API internals
 
+    /**
+     * PURE_TAGS safety net: strip stray markdown fences and surrounding
+     * whitespace so the result stays a usable tag line even when the model
+     * wraps it in ``` fences despite the prompt ban.
+     */
+    private fun normalizePureTags(raw: String): String =
+        raw.replace(Regex("```[a-zA-Z]*\\n?"), "").replace("```", "").trim()
+
     private suspend fun runApiReverse(
         bitmap: Bitmap,
         style: ReverseOutputStyle,
@@ -134,12 +142,13 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
         val system = when (style) {
             ReverseOutputStyle.MOSS_LAYOUT -> ReversePromptTemplates.MOSS_LAYOUT
             ReverseOutputStyle.ANIMA -> ReversePromptTemplates.ANIMA
+            ReverseOutputStyle.PURE_TAGS -> ReversePromptTemplates.PURE_TAGS
             ReverseOutputStyle.NATURAL -> ReversePromptTemplates.NATURAL
         }
-        val userText = if (style == ReverseOutputStyle.MOSS_LAYOUT) {
-            "Analyse this image and output the layout JSON now."
-        } else {
-            "Reverse-engineer the full drawing prompt for this image now."
+        val userText = when (style) {
+            ReverseOutputStyle.MOSS_LAYOUT -> "Analyse this image and output the layout JSON now."
+            ReverseOutputStyle.PURE_TAGS -> "Extract this image into a single Danbooru tag line now."
+            else -> "Reverse-engineer the full drawing prompt for this image now."
         }
         val messages = JSONArray()
             .put(JSONObject().put("role", "system").put("content", system))
@@ -218,7 +227,12 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
             }
             onProgress(ReverseProgress.Success(sanitized))
         } else {
-            onProgress(ReverseProgress.Success(MossJsonSanitizer.stripThinking(raw)))
+            val natural = MossJsonSanitizer.stripThinking(raw)
+            onProgress(
+                ReverseProgress.Success(
+                    if (style == ReverseOutputStyle.PURE_TAGS) normalizePureTags(natural) else natural
+                )
+            )
         }
     }
 
@@ -414,15 +428,24 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
         val system = when (style) {
             ReverseOutputStyle.MOSS_LAYOUT -> ReversePromptTemplates.MOSS_LAYOUT
             ReverseOutputStyle.ANIMA -> ReversePromptTemplates.ANIMA
+            ReverseOutputStyle.PURE_TAGS -> ReversePromptTemplates.PURE_TAGS
             ReverseOutputStyle.NATURAL -> ReversePromptTemplates.NATURAL
         }
-        val userText = if (style == ReverseOutputStyle.MOSS_LAYOUT) {
-            "Analyse this image and output the layout JSON now."
-        } else {
-            "Reverse-engineer the full drawing prompt for this image now."
+        val userText = when (style) {
+            ReverseOutputStyle.MOSS_LAYOUT -> "Analyse this image and output the layout JSON now."
+            ReverseOutputStyle.PURE_TAGS -> "Extract this image into a single Danbooru tag line now."
+            else -> "Reverse-engineer the full drawing prompt for this image now."
         }
 
-        onProgress(ReverseProgress.Loading("端侧推理中（8 线程 CPU，约 1-3 分钟）..."))
+        // Model-aware runtime estimate: measured on-device 2026-11-14 — the 9B
+        // flagship takes ~5-10 min, the 4B ~1-3 min (8 threads, CPU). Imported
+        // models fall back to a size-agnostic hint.
+        val estimate = when (selectedModelId) {
+            VlmModelManager.DEEPSEEK_9B.id -> "9B 模型约 5-10 分钟"
+            VlmModelManager.QWEN_4B.id -> "4B 模型约 1-3 分钟"
+            else -> "用时视模型大小 1-10 分钟"
+        }
+        onProgress(ReverseProgress.Loading("端侧推理中（8 线程 CPU，$estimate）..."))
         val raw = VlmEngine.inferImage(rgb, rgbW, rgbH, system, userText)
         if (raw.startsWith("ERR:")) {
             onProgress(ReverseProgress.Error(raw.removePrefix("ERR:")))
@@ -459,7 +482,11 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
                 onProgress(ReverseProgress.Error("端侧推理返回为空，请重试"))
                 return
             }
-            onProgress(ReverseProgress.Success(natural))
+            onProgress(
+                ReverseProgress.Success(
+                    if (style == ReverseOutputStyle.PURE_TAGS) normalizePureTags(natural) else natural
+                )
+            )
         }
     }
 

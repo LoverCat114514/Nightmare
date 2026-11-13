@@ -25,8 +25,15 @@ plugins {
  * build can update an installed copy. `facefusion-mobile` lost one already.
  * The README beside the keystore says what to do about it.
  */
+// Keystore location: default is the repo convention (../.secrets/nightmare-keystore,
+// relative to the root project). NIGHTMARE_KEYSTORE_DIR (env var or Gradle property)
+// overrides the DIRECTORY only — for on-device builds whose key lives in phone
+// storage; the .properties/.keystore files themselves are never copied around.
+val keystoreDir = System.getenv("NIGHTMARE_KEYSTORE_DIR")
+    ?: System.getProperty("nightmare.keystore.dir")
+    ?: "../.secrets/nightmare-keystore"
 val keystoreProps = Properties().apply {
-    val f = rootProject.file("../.secrets/nightmare-keystore/keystore.properties")
+    val f = rootProject.file("$keystoreDir/keystore.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
 
@@ -51,8 +58,8 @@ android {
         // a minor bump per push, which is what the rule exists to stop. The
         // minor moves only when a release is called a release. ⚠ versionCode
         // stays a plain incrementing integer; Android requires that.
-        versionCode = 670
-        versionName = "1.6.363"
+        versionCode = 672
+        versionName = "1.6.365"
         // ⭐ fix31 (friend's audit P1-1): the touch/frame probe is a diagnostic
         // tool, not a product feature — release builds must not write to
         // external storage from every touch. dev keeps it (this push build is
@@ -87,7 +94,7 @@ android {
         if (keystoreProps.isNotEmpty()) {
             create("release") {
                 storeFile = rootProject.file(
-                    "../.secrets/nightmare-keystore/" + keystoreProps.getProperty("storeFile")
+                    "$keystoreDir/" + keystoreProps.getProperty("storeFile")
                 )
                 storePassword = keystoreProps.getProperty("storePassword")
                 keyAlias = keystoreProps.getProperty("keyAlias")

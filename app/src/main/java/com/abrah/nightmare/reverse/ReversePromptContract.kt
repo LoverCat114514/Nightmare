@@ -14,13 +14,14 @@ import kotlinx.coroutines.flow.Flow
 enum class ReverseEngineMode { LOCAL, API }
 
 /**
- * Three reverse-output styles:
+ * Reverse-output styles:
  * - MOSS_LAYOUT: layout JSON draft for the MOSS layout compiler (sanitized).
  * - ANIMA:       Anima-style prompt — line 1 Danbooru tags, then three
  *                spatial-nesting prose paragraphs (reverse template v2).
  * - NATURAL:     generic SD/NAI-style tag prose.
+ * - PURE_TAGS:   one self-contained Danbooru tag line, no prose.
  */
-enum class ReverseOutputStyle { MOSS_LAYOUT, ANIMA, NATURAL }
+enum class ReverseOutputStyle { MOSS_LAYOUT, ANIMA, NATURAL, PURE_TAGS }
 
 /**
  * One entry of the on-device model chooser. [mainInstalled]/[mmprojInstalled]
