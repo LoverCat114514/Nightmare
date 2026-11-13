@@ -17,31 +17,29 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * ⭐⭐⭐ Module 1 — flagship Qwen3-VL-4B GGUF storage & download management.
+ * ⭐⭐⭐ Module 1 — flagship VLM GGUF storage & download management.
  *
  * Models live in `<modelsDir>/vlm/` (a sibling of every other model family,
  * same [BackendProcess.modelsDir] root). Downloads use the same `.part` +
  * resume + rename discipline as Upscalers/DitEngine, and go through
  * [Prefs.apply] so the user's HF mirror setting covers them too.
  *
- * Sources verified 2026-11: prithivMLmods' Unredacted-MAX quants of
- * Qwen3-VL-4B-Instruct (main Q8_0 = 4,280,406,240 B; mmproj f16 =
- * 839,326,048 B). The repo publishes no Q4_K_M, so Q8_0 is the flagship
- * main model per the reverse-backend checklist ("Q4_K_M or Q8_0"); the
- * mmproj stays at f16 — the vision tower is quantization-sensitive and
- * the user explicitly rejected q8_0 for it (hallucination risk).
+ * Flagship switched 2026-11-13 to Sakura721's DeepSeek-V4-Pro-Qwen3.5-9B
+ * (qwen35 hybrid linear-attention arch, qwen3vl_merger projector — verified
+ * end-to-end on-device with the standalone harness). The previous flagship
+ * (prithivMLmods Qwen3-VL-4B-Instruct-Unredacted-MAX) remains loadable via
+ * import if the user keeps the files. mmproj stays f16 — the vision tower is
+ * quantization-sensitive and the user explicitly rejected q8_0 for it
+ * (hallucination risk).
  */
 object VlmModelManager {
-
     private const val TAG = "VlmModelManager"
-
     private const val HF_BASE =
-        "https://huggingface.co/prithivMLmods/Qwen3-VL-4B-Instruct-Unredacted-MAX-GGUF/resolve/main/"
-
-    const val MAIN_FILE = "Qwen3-VL-4B-Instruct-Unredacted-MAX.Q8_0.gguf"
-    const val MMPROJ_FILE = "Qwen3-VL-4B-Instruct-Unredacted-MAX.mmproj-f16.gguf"
-    const val MAIN_BYTES = 4_280_406_240L
-    const val MMPROJ_BYTES = 839_326_048L
+        "https://huggingface.co/Sakura721/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-GGUF/resolve/main/"
+    const val MAIN_FILE = "DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-Q4_K_M.gguf"
+    const val MMPROJ_FILE = "mmproj-DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-f16.gguf"
+    const val MAIN_BYTES = 5_629_111_968L
+    const val MMPROJ_BYTES = 918_167_360L
 
     /** Set by [cancelDownload]; every download chunk checks it. */
     @Volatile

@@ -73,7 +73,7 @@ object VlmEngine {
         lastLoad?.let { prev ->
             if (runCatching { prev.await() }.getOrDefault(-1) == 0 && nativeIsLoaded()) return 0
         }
-        // Serialize actual loads (4.3 GB mmap + ctx alloc must never overlap).
+        // Serialize actual loads (5.6 GB mmap + ctx alloc must never overlap).
         loadMutex.withLock {
             // Re-check under the lock: another caller may have just succeeded.
             lastLoad?.let { prev ->

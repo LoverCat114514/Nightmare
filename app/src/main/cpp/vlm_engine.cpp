@@ -154,7 +154,13 @@ Java_com_abrah_nightmare_reverse_VlmEngine_nativeInferImage(
     const std::string prompt =
         "<|im_start|>system\n" + sys + "<|im_end|>\n"
         "<|im_start|>user\n" + marker + usr + "<|im_end|>\n"
-        "<|im_start|>assistant\n";
+        "<|im_start|>assistant\n"
+        // DeepSeek-V4-Pro-Qwen3.5 chat template, enable_thinking=false branch:
+        // prefill an EMPTY think block so the model answers directly. Without
+        // it this reasoning model burns the whole token budget on <think>…
+        // (CPU speed makes that unusable here). Qwen3-VL-4B tolerates it as
+        // ordinary whitespace tokens.
+        "<think>\n\n</think>\n\n";
 
     mtmd_input_chunks * chunks = mtmd_input_chunks_init();
     mtmd_input_text text { prompt.c_str(), prompt.size(), /*add_special*/false, /*parse_special*/true };
@@ -187,41 +193,66 @@ Java_com_abrah_nightmare_reverse_VlmEngine_nativeInferImage(
             "ERR:推理失败（eval 阶段，代码 " + std::to_string(eres) + "）";
         return env->NewStringUTF(emsg.c_str());
     }
-// ---- generation: temp 0.7 / top-k 20 / top-p 0.8 (Qwen recommended) ----
+    // ---- generation: temp 0.7 / top-k 20 / top-p 0.8 (Qwen recommended) ----
+    // Every early-exit path carries its reason into the returned error — the
+    // app surfaces it verbatim; silent breaks cost a whole debug round-trip.
     std::string out;
+    std::string halt; // non-empty => abnormal stop, reported via ERR:
     const int max_new = maxTokens > 0 ? maxTokens : 512;
     const llama_token eos = llama_vocab_eos(g_eng.vocab);
     const llama_token eot = llama_vocab_eot(g_eng.vocab);
-
     llama_sampler * chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(chain, llama_sampler_init_top_k(20));
     llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.8f, 1));
     llama_sampler_chain_add(chain, llama_sampler_init_temp(0.7f));
     llama_sampler_chain_add(chain, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
-
     llama_token cur = llama_sampler_sample(chain, g_eng.lctx, -1);
     for (int g = 0; g < max_new; ++g) {
-        if (cur == eos || (eot >= 0 && cur == eot)) break;
+        // is_eog covers the model's full end-of-generation set (im_end,
+        // endoftext, ...); eos/eot alone can miss members of that set.
+        if (llama_vocab_is_eog(g_eng.vocab, cur) || cur == eos || (eot >= 0 && cur == eot)) {
+            LOGI("gen: eog at step %d (token %d)", g, (int) cur);
+            break;
+        }
         char piece[256];
         const int n = llama_token_to_piece(g_eng.vocab, cur, piece, (int32_t) sizeof(piece) - 1, 0, true);
-        if (n <= 0) break;
+        if (n <= 0) {
+            halt = "生成中断：token 无法解码（token " + std::to_string((int) cur) + "，步 " + std::to_string(g) + "）";
+            break;
+        }
         out.append(piece, (size_t) n);
         if (out.size() > 16384) break;
-
         llama_batch b = llama_batch_init(1, 0, 1);
+        // CRITICAL: llama_batch_init only pre-allocates; n_tokens stays 0.
+        // Decoding an EMPTY batch fails outright (llama-batch.cpp rejects
+        // n_tokens==0) — this was the root cause of the "one token then stop"
+        // bug: the first sampled token rendered fine, then every subsequent
+        // decode returned -1 and the loop broke silently.
+        b.n_tokens    = 1;
         b.token[0]     = cur;
         b.pos[0]       = n_past++;
         b.n_seq_id[0]  = 1;
         b.seq_id[0][0] = 0;
         b.logits[0]    = 1;
-        if (llama_decode(g_eng.lctx, b) != 0) { llama_batch_free(b); break; }
+        const int dres = llama_decode(g_eng.lctx, b);
         llama_batch_free(b);
+        if (dres != 0) {
+            LOGE("gen: decode failed at step %d (token %d, pos %d): %d", g, (int) cur, (int) n_past, dres);
+            halt = "生成中断：解码失败（步 " + std::to_string(g) +
+                   "，位置 " + std::to_string((int) n_past) + "/" + std::to_string(g_eng.n_ctx) +
+                   "，代码 " + std::to_string(dres) + "）——上下文溢出或内存不足";
+            break;
+        }
         cur = llama_sampler_sample(chain, g_eng.lctx, -1);
     }
     llama_sampler_free(chain);
     llama_memory_clear(llama_get_memory(g_eng.lctx), 0); // KV freed immediately
-
     LOGI("infer done: %zu bytes", out.size());
+    if (!halt.empty()) {
+        // partial output preserved for diagnostics (Kotlin shows it verbatim)
+        const std::string emsg = "ERR:" + halt + "\n已生成片段：" + trim_ws(out).substr(0, 200);
+        return env->NewStringUTF(emsg.c_str());
+    }
     return env->NewStringUTF(trim_ws(out).c_str());
 }
 

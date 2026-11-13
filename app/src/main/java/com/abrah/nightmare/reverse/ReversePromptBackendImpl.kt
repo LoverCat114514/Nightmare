@@ -350,7 +350,7 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
         val mmprojPath = File(dir, st.mmprojName!!).absolutePath
 
         if (!VlmEngine.isLoaded) {
-            onProgress(ReverseProgress.Loading("正在加载端侧模型（Q8_0 约 4.3 GB，首次约 10-30 秒）..."))
+            onProgress(ReverseProgress.Loading("正在加载端侧模型（Q4_K_M 约 5.6 GB，首次约 10-30 秒）..."))
             val code = VlmEngine.ensureLoaded(mainPath, mmprojPath)
             if (code != 0) {
                 val why = when (code) {
