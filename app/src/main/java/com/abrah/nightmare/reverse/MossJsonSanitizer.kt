@@ -48,37 +48,49 @@ object MossJsonSanitizer {
         }
 
         // ---- width/height: positive multiples of 16 ----
-        // ⭐ New MOSS template (2026-11-13) picks the canvas from its size
-        // cheat-sheet. When the model omitted width/height we must NOT inject
-        // an arbitrary default: the watermark/photo_background bboxes encode
-        // the intended canvas, so infer it from their extent. Only when no
-        // items exist either do we leave the fields absent — the compiler then
-        // centres the draft on the sampler's current width/height widgets.
+        // ⭐ v2 normalized draft (2026-11-13): no width/height of its own plus
+        // the mandatory [0,0,1000,1000] photo_background marker. Its bboxes
+        // live on a [0,1000] SCALE, not a canvas — repair on a virtual
+        // 1000×1000 canvas, then strip width/height so the compiler detects
+        // the marker and rescales onto the sampler's real canvas. Never infer
+        // a 1008×1008 canvas from the extent here: the extent IS the scale.
         var w = obj.optInt("width", 0)
         var h = obj.optInt("height", 0)
         val itemsIn0 = obj.optJSONArray("items") ?: JSONArray()
         var maxX2 = 0
         var maxY2 = 0
+        var normMarker = false
         for (i in 0 until itemsIn0.length()) {
-            val b = itemsIn0.optJSONObject(i)?.optJSONArray("bbox") ?: continue
+            val it0 = itemsIn0.optJSONObject(i) ?: continue
+            val b = it0.optJSONArray("bbox") ?: continue
             if (b.length() != 4) continue
+            val bx1 = (b.opt(0) as? Number)?.toInt() ?: continue
+            val by1 = (b.opt(1) as? Number)?.toInt() ?: continue
             val bx2 = (b.opt(2) as? Number)?.toInt() ?: continue
             val by2 = (b.opt(3) as? Number)?.toInt() ?: continue
             if (bx2 > maxX2) maxX2 = bx2
             if (by2 > maxY2) maxY2 = by2
+            if (bx1 == 0 && by1 == 0 && bx2 == 1000 && by2 == 1000 &&
+                it0.optString("caption", "").trim().startsWith("photo_background")
+            ) normMarker = true
         }
-        if (w <= 0 && maxX2 > 0) w = maxX2
-        if (h <= 0 && maxY2 > 0) h = maxY2
-        if (w > 0 || h > 0) {
-            if (w <= 0) w = h
-            if (h <= 0) h = w
-            obj.put("width", snap16(w)).put("height", snap16(h))
+        val normalized = w <= 0 && h <= 0 && normMarker
+        if (normalized) {
+            w = 1000; h = 1000 // virtual canvas for repair only
         } else {
-            obj.remove("width")
-            obj.remove("height")
+            if (w <= 0 && maxX2 > 0) w = maxX2
+            if (h <= 0 && maxY2 > 0) h = maxY2
+            if (w > 0 || h > 0) {
+                if (w <= 0) w = h
+                if (h <= 0) h = w
+                obj.put("width", snap16(w)).put("height", snap16(h))
+            } else {
+                obj.remove("width")
+                obj.remove("height")
+            }
+            w = obj.optInt("width", 0)
+            h = obj.optInt("height", 0)
         }
-        w = obj.optInt("width", 0)
-        h = obj.optInt("height", 0)
 
         // ---- coord space / format: the compiler only accepts the draft form ----
         obj.put("bbox_coord_space", "abs").put("bbox_format", "xyxy")

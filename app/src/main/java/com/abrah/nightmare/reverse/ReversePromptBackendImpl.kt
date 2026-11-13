@@ -131,10 +131,10 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
             return
         }
 
-        val system = if (style == ReverseOutputStyle.MOSS_LAYOUT) {
-            ReversePromptTemplates.MOSS_LAYOUT
-        } else {
-            ReversePromptTemplates.NATURAL
+        val system = when (style) {
+            ReverseOutputStyle.MOSS_LAYOUT -> ReversePromptTemplates.MOSS_LAYOUT
+            ReverseOutputStyle.ANIMA -> ReversePromptTemplates.ANIMA
+            ReverseOutputStyle.NATURAL -> ReversePromptTemplates.NATURAL
         }
         val userText = if (style == ReverseOutputStyle.MOSS_LAYOUT) {
             "Analyse this image and output the layout JSON now."
@@ -160,15 +160,25 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
             .put("model", config.modelId)
             .put("messages", messages)
             .put("stream", true)
-            .put("max_tokens", 2048)
-
+            .put("max_tokens", 4096)
         onProgress(ReverseProgress.Loading("正在请求 ${config.providerName}（${config.modelId}）..."))
         val full = StringBuilder()
         try {
             streamChatCompletion(config, payload) { delta ->
                 if (delta.isNotEmpty()) {
                     full.append(delta)
-                    onProgress(ReverseProgress.Streaming(full.toString()))
+                    val text = full.toString()
+                    // Reasoning models (DeepSeek 9B etc.) draft inside
+                    // <think>…</think> before the final answer. Never flush the
+                    // think draft into the result box: while unterminated, show
+                    // a "thinking" hint instead; once </think> arrives, strip
+                    // the block so only the body streams live. The final value
+                    // is stripThinking-ed again below — this is display-only.
+                    if (text.contains("<think>") && !text.contains("</think>")) {
+                        onProgress(ReverseProgress.Loading("模型正在思考..."))
+                    } else {
+                        onProgress(ReverseProgress.Streaming(MossJsonSanitizer.stripThinking(text)))
+                    }
                 }
             }
         } catch (t: Throwable) {
@@ -182,7 +192,18 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
             onProgress(ReverseProgress.Error("API 返回为空（模型可能拒绝了请求，请检查 Key 额度/模型权限）"))
             return
         }
-
+        // Reasoning model hit the token cap mid-think: raw is non-empty but
+        // everything lives in an unterminated <think> block, so stripping it
+        // would yield an empty body. Report that distinctly from "empty
+        // response" (rejection) so users adjust max_tokens instead of keys.
+        if (raw.contains("<think>") && !raw.contains("</think>")) {
+            onProgress(
+                ReverseProgress.Error(
+                    "模型思考过程过长被截断（未闭合的 <think> 块），未能输出最终结果。请调大 max_tokens 或切换非思考模型。"
+                )
+            )
+            return
+        }
         if (style == ReverseOutputStyle.MOSS_LAYOUT) {
             onProgress(ReverseProgress.Loading("正在校验/修复布局 JSON..."))
             val cleaned = MossJsonSanitizer.stripThinking(raw)
@@ -390,10 +411,10 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
         }
         val (rgb, rgbW, rgbH) = prepared
 
-        val system = if (style == ReverseOutputStyle.MOSS_LAYOUT) {
-            ReversePromptTemplates.MOSS_LAYOUT
-        } else {
-            ReversePromptTemplates.NATURAL
+        val system = when (style) {
+            ReverseOutputStyle.MOSS_LAYOUT -> ReversePromptTemplates.MOSS_LAYOUT
+            ReverseOutputStyle.ANIMA -> ReversePromptTemplates.ANIMA
+            ReverseOutputStyle.NATURAL -> ReversePromptTemplates.NATURAL
         }
         val userText = if (style == ReverseOutputStyle.MOSS_LAYOUT) {
             "Analyse this image and output the layout JSON now."

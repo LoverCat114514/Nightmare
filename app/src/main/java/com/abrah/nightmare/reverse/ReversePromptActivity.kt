@@ -706,7 +706,8 @@ private fun ReversePromptScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             listOf(
-                                ReverseOutputStyle.MOSS_LAYOUT to "MOSS 结构化布局 (JSON)",
+                                ReverseOutputStyle.MOSS_LAYOUT to "Moss反推模板",
+                                ReverseOutputStyle.ANIMA to "Anima反推模板",
                                 ReverseOutputStyle.NATURAL to "常规自然语言描述",
                             ).forEach { (style, title) ->
                                 val selected = outputStyle == style

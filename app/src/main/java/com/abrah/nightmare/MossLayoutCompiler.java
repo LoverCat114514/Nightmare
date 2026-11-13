@@ -56,6 +56,48 @@ public final class MossLayoutCompiler {
 
             int cw = d.optInt("width", w), ch = d.optInt("height", h);
             if (cw <= 0 || ch <= 0 || cw % 16 != 0 || ch % 16 != 0) return null;
+
+            // ⭐ v2 normalized draft (2026-11-13): the reverse template emits
+            // bboxes on a [0,1000] SCALE with NO width/height and a mandatory
+            // [0,0,1000,1000] photo_background marker. The scale is decoupled
+            // from the canvas on purpose — rescale every bbox onto the target
+            // canvas (the sampler's current widgets) before centering, so the
+            // reverse-computed composition adapts to whatever size the user
+            // generates at. Detection requires BOTH the missing canvas and the
+            // marker: an absolute-pixel draft on a ≤1000px canvas would
+            // otherwise be misjudged and double-scaled.
+            if (!d.has("width") && !d.has("height")) {
+                JSONArray probe = d.optJSONArray("items");
+                boolean marker = false;
+                boolean within = probe != null && probe.length() > 0;
+                for (int i = 0; probe != null && i < probe.length(); i++) {
+                    JSONObject pit = probe.optJSONObject(i);
+                    if (pit == null) continue;
+                    JSONArray pb = pit.optJSONArray("bbox");
+                    if (pb == null || pb.length() != 4) { within = false; break; }
+                    double px1 = pb.optDouble(0), py1 = pb.optDouble(1);
+                    double px2 = pb.optDouble(2), py2 = pb.optDouble(3);
+                    if (px1 == 0 && py1 == 0 && px2 == 1000 && py2 == 1000 &&
+                        pit.optString("caption", "").trim().startsWith("photo_background")) marker = true;
+                    if (px1 < 0 || py1 < 0 || px2 > 1000 || py2 > 1000) { within = false; break; }
+                }
+                if (marker && within) {
+                    for (int i = 0; i < probe.length(); i++) {
+                        JSONObject pit = probe.optJSONObject(i);
+                        if (pit == null) continue;
+                        JSONArray pb = pit.optJSONArray("bbox");
+                        if (pb == null || pb.length() != 4) continue;
+                        JSONArray scaled = new JSONArray()
+                                .put(pb.optDouble(0) * cw / 1000.0)
+                                .put(pb.optDouble(1) * ch / 1000.0)
+                                .put(pb.optDouble(2) * cw / 1000.0)
+                                .put(pb.optDouble(3) * ch / 1000.0);
+                        pit.put("bbox", scaled);
+                    }
+                    d.put("width", cw).put("height", ch);
+                }
+            }
+
             String cs = d.optString("bbox_coord_space", "abs"), bf = d.optString("bbox_format", "xyxy");
             if (!"abs".equals(cs) || !"xyxy".equals(bf)) return null; // looks already-compiled / alien
 
