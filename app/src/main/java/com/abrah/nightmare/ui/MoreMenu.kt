@@ -43,7 +43,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -100,15 +103,18 @@ private val IconEye: ImageVector by lazy {
 internal fun MoreMenu(
     open: Boolean,
     onDismiss: () -> Unit,
-    onOpenGallery: () -> Unit,
-    onOpenScramble: (() -> Unit)? = null,
-    onOpenReversePrompt: (() -> Unit)? = null,
+    onOpenGallery: (Rect?) -> Unit,
+    onOpenScramble: ((Rect?) -> Unit)? = null,
+    onOpenReversePrompt: ((Rect?) -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
     onResults: (() -> Unit)? = null,
     onToast: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var shown by remember { mutableStateOf(open) }
+    var galleryBounds by remember { mutableStateOf<Rect?>(null) }
+    var scrambleBounds by remember { mutableStateOf<Rect?>(null) }
+    var reverseBounds by remember { mutableStateOf<Rect?>(null) }
     val p = remember { Animatable(0f) }
 
     LaunchedEffect(open) {
@@ -192,8 +198,9 @@ internal fun MoreMenu(
                         border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .onGloballyPositioned { galleryBounds = it.boundsInRoot() }
                             .clip(RoundedCornerShape(20.dp))
-                            .clickable(onClick = onOpenGallery),
+                            .clickable { onOpenGallery(galleryBounds) },
                     ) {
                         Row(
                             modifier = Modifier
@@ -271,8 +278,9 @@ internal fun MoreMenu(
                         border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .onGloballyPositioned { scrambleBounds = it.boundsInRoot() }
                             .clip(RoundedCornerShape(20.dp))
-                            .clickable(onClick = onOpenScramble),
+                            .clickable { onOpenScramble(scrambleBounds) },
                     ) {
                         Row(
                             modifier = Modifier
@@ -351,8 +359,9 @@ internal fun MoreMenu(
                         border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .onGloballyPositioned { reverseBounds = it.boundsInRoot() }
                             .clip(RoundedCornerShape(20.dp))
-                            .clickable(onClick = onOpenReversePrompt),
+                            .clickable { onOpenReversePrompt(reverseBounds) },
                     ) {
                         Row(
                             modifier = Modifier

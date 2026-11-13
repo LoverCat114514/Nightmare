@@ -932,26 +932,27 @@ fun HarnessScreen(
         // ⚠ HarnessScreen is a top-level composable — `this@MainActivity` does not
         // resolve here; capture the context from the CompositionLocal instead.
         val galleryCtx = androidx.compose.ui.platform.LocalContext.current
+        val popOpts = androidx.core.app.ActivityOptionsCompat.makeCustomAnimation(galleryCtx, 0, 0)
         com.abrah.nightmare.ui.MoreMenu(
             open = vm.moreMenuOpen,
             onDismiss = { vm.closeMoreMenu() },
-            onOpenGallery = {
+            onOpenGallery = { rect ->
                 vm.closeMoreMenu()
-                galleryLauncher.launch(
-                    android.content.Intent(galleryCtx, com.abrah.nightmare.gallery.OnlineGalleryActivity::class.java)
-                )
+                val intent = android.content.Intent(galleryCtx, com.abrah.nightmare.gallery.OnlineGalleryActivity::class.java)
+                with(com.abrah.nightmare.ui.PopOrigin) { intent.putOrigin(rect) }
+                galleryLauncher.launch(intent, popOpts)
             },
-            onOpenScramble = {
+            onOpenScramble = { rect ->
                 vm.closeMoreMenu()
-                scrambleLauncher.launch(
-                    android.content.Intent(galleryCtx, com.abrah.nightmare.scramble.ImageScrambleActivity::class.java)
-                )
+                val intent = android.content.Intent(galleryCtx, com.abrah.nightmare.scramble.ImageScrambleActivity::class.java)
+                with(com.abrah.nightmare.ui.PopOrigin) { intent.putOrigin(rect) }
+                scrambleLauncher.launch(intent, popOpts)
             },
-            onOpenReversePrompt = {
+            onOpenReversePrompt = { rect ->
                 vm.closeMoreMenu()
-                reversePromptLauncher.launch(
-                    android.content.Intent(galleryCtx, com.abrah.nightmare.reverse.ReversePromptActivity::class.java)
-                )
+                val intent = android.content.Intent(galleryCtx, com.abrah.nightmare.reverse.ReversePromptActivity::class.java)
+                with(com.abrah.nightmare.ui.PopOrigin) { intent.putOrigin(rect) }
+                reversePromptLauncher.launch(intent, popOpts)
             },
         )
     }

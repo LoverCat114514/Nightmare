@@ -166,7 +166,7 @@
             android:name=".gallery.OnlineGalleryActivity"
             android:exported="false"
             android:label="在线画廊"
-            android:theme="@style/Theme.Nightmare"
+            android:theme="@style/Theme.Nightmare.PopContainer"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
 
         <!-- Image Scramble Activity -->
@@ -174,7 +174,7 @@
             android:name=".scramble.ImageScrambleActivity"
             android:exported="false"
             android:label="图片混淆"
-            android:theme="@style/Theme.Nightmare"
+            android:theme="@style/Theme.Nightmare.PopContainer"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
 
         <!-- Reverse Prompt Activity -->
@@ -182,7 +182,7 @@
             android:name=".reverse.ReversePromptActivity"
             android:exported="false"
             android:label="反推"
-            android:theme="@style/Theme.Nightmare"
+            android:theme="@style/Theme.Nightmare.PopContainer"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
 
         <!-- The FOREGROUND harness entry: the same activity, reached with the same

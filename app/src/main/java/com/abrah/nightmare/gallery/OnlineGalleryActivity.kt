@@ -176,21 +176,30 @@ class OnlineGalleryActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        with(com.abrah.nightmare.ui.PopOrigin) { disableWindowTransitions() }
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         setContent {
-            GalleryContainer(
-                onClose = { finish() },
-                onApplyPrompt = { prompt ->
-                    val intent = Intent().apply {
-                        putExtra(EXTRA_PROMPT, prompt)
-                    }
-                    setResult(Activity.RESULT_OK, intent)
+            com.abrah.nightmare.ui.PopExpandContainer(
+                intent = intent,
+                onFinish = {
                     finish()
+                    with(com.abrah.nightmare.ui.PopOrigin) { disableWindowTransitions() }
                 },
-                onRegisterBackHandler = { onBackPressAction = it },
-                onRegisterWebView = { webView = it },
-            )
+            ) { requestClose ->
+                GalleryContainer(
+                    onClose = requestClose,
+                    onApplyPrompt = { prompt ->
+                        val resIntent = Intent().apply {
+                            putExtra(EXTRA_PROMPT, prompt)
+                        }
+                        setResult(Activity.RESULT_OK, resIntent)
+                        requestClose()
+                    },
+                    onRegisterBackHandler = { onBackPressAction = it },
+                    onRegisterWebView = { webView = it },
+                )
+            }
         }
     }
 

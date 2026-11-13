@@ -168,22 +168,31 @@ class ReversePromptActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        with(com.abrah.nightmare.ui.PopOrigin) { disableWindowTransitions() }
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         val backend: ReversePromptBackend = ReversePromptBackendImpl(applicationContext)
 
         setContent {
-            ReversePromptScreen(
-                backend = backend,
-                onClose = { finish() },
-                onApplyPrompt = { prompt ->
-                    val intent = Intent().apply {
-                        putExtra(EXTRA_PROMPT, prompt)
-                    }
-                    setResult(Activity.RESULT_OK, intent)
+            com.abrah.nightmare.ui.PopExpandContainer(
+                intent = intent,
+                onFinish = {
                     finish()
+                    with(com.abrah.nightmare.ui.PopOrigin) { disableWindowTransitions() }
                 },
-            )
+            ) { requestClose ->
+                ReversePromptScreen(
+                    backend = backend,
+                    onClose = requestClose,
+                    onApplyPrompt = { prompt ->
+                        val resIntent = Intent().apply {
+                            putExtra(EXTRA_PROMPT, prompt)
+                        }
+                        setResult(Activity.RESULT_OK, resIntent)
+                        requestClose()
+                    },
+                )
+            }
         }
     }
 }

@@ -106,10 +106,19 @@ class ImageScrambleActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        with(com.abrah.nightmare.ui.PopOrigin) { disableWindowTransitions() }
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         setContent {
-            ScrambleScreen(onClose = { finish() })
+            com.abrah.nightmare.ui.PopExpandContainer(
+                intent = intent,
+                onFinish = {
+                    finish()
+                    with(com.abrah.nightmare.ui.PopOrigin) { disableWindowTransitions() }
+                },
+            ) { requestClose ->
+                ScrambleScreen(onClose = requestClose)
+            }
         }
     }
 }
