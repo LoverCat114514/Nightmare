@@ -114,7 +114,7 @@ jobs:
               test -f "$SYSROOT/usr/include/jni.h" || { echo "FATAL: jni.h missing at $SYSROOT"; ls "$SYSROOT/usr/include" | head; exit 1; }
               "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" \
                 --target=aarch64-linux-android31 --sysroot="$SYSROOT" \
-                -std=c++17 -O2 -DVLM_ENABLE_HEXAGON -fPIC -shared \
+                -std=c++17 -O2 -DVLM_ENABLE_HEXAGON -fPIC -shared -static-libstdc++ \
                 -I include -I ggml/include -I tools/mtmd -I vendor/stb \
                 /workspace/nightmare/app/src/main/cpp/vlm_engine.cpp \
                 -L /workspace/pkg/llama.cpp/lib \
