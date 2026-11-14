@@ -170,17 +170,12 @@ jobs:
       - name: Collect and package
         run: |
           set -euo pipefail
-          # The container tarred the .so set into a single file at the workspace
-          # root; extract it here and zip. If the tar is missing, the workspace
-          # layout goes into the failure message.
-          mkdir -p out pkg
-          if [ ! -f vlm-engine-libs.tar ]; then
-            echo "::error::vlm-engine-libs.tar missing — workspace layout:"
-            ls -la . || true
-            exit 1
-          fi
-          tar -xf vlm-engine-libs.tar -C out
-          test -f out/libvlm_engine.so || { echo "::error::libvlm_engine.so missing from tar"; ls -la out/ || true; exit 1; }
+          # /workspace in the container IS the runner workspace (bind mount):
+          # the .so set is already here in out/, written by the container as
+          # root. Don't extract the tar over it — the runner user cannot
+          # overwrite root-owned files ("File exists" trap from run 8). Zip
+          # the existing files directly; world-readable is all zip needs.
+          test -f out/libvlm_engine.so || { echo "::error::libvlm_engine.so missing"; ls -la out/ || true; exit 1; }
           ls -la out/
           cd out
           zip -j -X vlm-engine-llama${LLAMA_SHA:0:7}.zip *.so
