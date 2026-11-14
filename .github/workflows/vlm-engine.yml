@@ -67,6 +67,19 @@ jobs:
           echo "LLAMA_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "llama.cpp $(git rev-parse HEAD)"
 
+      # Pull retries: the registry flakes sometimes (a pull death before the
+      # tee pipeline meant no build.log at all — annotation step "succeeded"
+      # on a nonexistent file and we flew blind for a round).
+      - name: Pull toolchain image
+        run: |
+          set -o pipefail
+          for i in 1 2 3; do
+            echo "=== pull attempt $i ==="
+            docker pull ghcr.io/snapdragon-toolchain/arm64-android:${{ inputs.hexagon_tag }} && { echo "PULL_OK"; break; }
+            [ "$i" = 3 ] && { echo "::error::docker pull failed 3x"; exit 1; }
+            sleep 30
+          done
+
       # llama.cpp's own snapdragon flow: copy the preset, configure, build
       # (skels are part of the default build — the README's log shows
       # "Performing build step for 'htp-v73'" among normal targets), install,
