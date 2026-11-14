@@ -94,7 +94,7 @@ jobs:
               cmake --install build-snapdragon --prefix /workspace/pkg/llama.cpp
               mkdir -p /workspace/pkg/llama.cpp/lib /workspace/out
               MTMD=$(find build-snapdragon -name "libmtmd.so" | head -1)
-              if [ -n "$MTMD" ]; then cp "$MTMD" /workspace/pkg/llama.cpp/lib/; else echo "::error::libmtmd.so not found in build tree"; fi
+              if [ -n "$MTMD" ]; then cp "$MTMD" /workspace/pkg/llama.cpp/lib/; else echo "WARN: libmtmd.so not found in build tree"; fi
               NDK=$(ls -d /opt/android-ndk-* | head -1)
               "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" \
                 --target=aarch64-linux-android31 --sysroot="$NDK/sysroot" \
@@ -104,6 +104,13 @@ jobs:
                 -L /workspace/pkg/llama.cpp/lib \
                 -lllama -lmtmd -lggml -lggml-base -lggml-hexagon -llog \
                 -o /workspace/out/libvlm_engine.so
+              # Collect INSIDE the container: it sees its own outputs. The host
+              # step only zips. Unconditional layout dump lands in build.log's
+              # tail, so a failure shows exactly what got produced.
+              echo "--- installed libs ---"
+              find /workspace/pkg -type f -name "*.so" | while read -r f; do cp "$f" /workspace/out/; done
+              echo "--- out/ ---"
+              ls -la /workspace/out/
             ' 2>&1 | tee build.log
 
       - name: Annotate failure tail
@@ -114,13 +121,10 @@ jobs:
       - name: Collect and package
         run: |
           set -euo pipefail
-          # Everything cmake --install put in lib/ (ggml, cpu, hexagon, opencl,
-          # skels, llama) + libmtmd.so copied out of the build tree. The bridge
-          # was written into /workspace/out inside the container = $PWD/out
-          # here already.
+          # The container already gathered every .so into out/ (root-owned but
+          # world-readable; ownership is irrelevant for zipping).
           mkdir -p out
-          cp pkg/llama.cpp/lib/*.so out/
-          test -f out/libvlm_engine.so || { echo "::error::libvlm_engine.so missing"; exit 1; }
+          test -f out/libvlm_engine.so || { echo "::error::libvlm_engine.so missing"; ls -la out/ || true; exit 1; }
           ls -la out/
           cd out
           zip -j -X vlm-engine-llama${LLAMA_SHA:0:7}.zip *.so
