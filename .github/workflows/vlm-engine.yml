@@ -172,12 +172,13 @@ jobs:
           set -euo pipefail
           # /workspace in the container IS the runner workspace (bind mount):
           # the .so set is already here in out/, written by the container as
-          # root. Don't extract the tar over it — the runner user cannot
-          # overwrite root-owned files ("File exists" trap from run 8). Zip
-          # the existing files directly; world-readable is all zip needs.
-          test -f out/libvlm_engine.so || { echo "::error::libvlm_engine.so missing"; ls -la out/ || true; exit 1; }
-          ls -la out/
-          cd out
+          # ROOT — readable by everyone but out/ itself is not writable by the
+          # runner user, so the zip goes through a runner-owned dist/ copy.
+          mkdir -p dist
+          cp out/*.so dist/
+          test -f dist/libvlm_engine.so || { echo "::error::libvlm_engine.so missing"; ls -la dist/ || true; exit 1; }
+          ls -la dist/
+          cd dist
           zip -j -X vlm-engine-llama${LLAMA_SHA:0:7}.zip *.so
 
       - name: Constants for the graft
@@ -202,5 +203,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vlm-engine-hexagon-${{ env.LLAMA_SHA }}
-          path: out/
+          path: dist/
           if-no-files-found: error
