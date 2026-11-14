@@ -122,9 +122,16 @@ jobs:
                 -o /workspace/out/libvlm_engine.so
               # Collect INSIDE the container: it sees its own outputs. Only the
               # runtime set ships — the install also drops libllama-*-impl.so
-              # test helpers we do not want in the APK. The layout dump lands
-              # in build.log's tail, so a failure shows exactly what exists.
-              echo "--- installed libs ---"
+              # test helpers we do not want in the APK. Diagnostics first: an
+              # earlier run saw install succeed and then /workspace/out vanish,
+              # so df/mount/ls go to build.log verbatim.
+              echo "=== DIAG ==="
+              df -h /workspace || true
+              mount | grep -E "workspace" | head -3 || true
+              ls -la /workspace/ | head -20 || true
+              find /workspace/pkg -maxdepth 3 -name "*.so" 2>/dev/null | head -30 || true
+              echo "=== COLLECT ==="
+              mkdir -p /workspace/out
               for f in libllama.so libmtmd.so libggml.so libggml-base.so libggml-cpu.so libggml-hexagon.so libggml-opencl.so; do
                 S=/workspace/pkg/llama.cpp/lib/$f
                 if [ -f "$S" ]; then cp "$S" /workspace/out/; else echo "WARN: $f not installed"; fi
@@ -133,8 +140,11 @@ jobs:
                 S=/workspace/pkg/llama.cpp/lib/libggml-htp-$V.so
                 if [ -f "$S" ]; then cp "$S" /workspace/out/; else echo "WARN: skel $V missing"; fi
               done
-              echo "--- out/ ---"
               ls -la /workspace/out/
+              # Single tar file: one write, no directory-level surprises on the
+              # host side.
+              tar -C /workspace/out -cf /workspace/vlm-engine-libs.tar .
+              ls -la /workspace/vlm-engine-libs.tar
             ' 2>&1 | tee build.log
 
       - name: Annotate failure tail
@@ -160,10 +170,17 @@ jobs:
       - name: Collect and package
         run: |
           set -euo pipefail
-          # The container already gathered every .so into out/ (root-owned but
-          # world-readable; ownership is irrelevant for zipping).
-          mkdir -p out
-          test -f out/libvlm_engine.so || { echo "::error::libvlm_engine.so missing"; ls -la out/ || true; exit 1; }
+          # The container tarred the .so set into a single file at the workspace
+          # root; extract it here and zip. If the tar is missing, the workspace
+          # layout goes into the failure message.
+          mkdir -p out pkg
+          if [ ! -f vlm-engine-libs.tar ]; then
+            echo "::error::vlm-engine-libs.tar missing — workspace layout:"
+            ls -la . || true
+            exit 1
+          fi
+          tar -xf vlm-engine-libs.tar -C out
+          test -f out/libvlm_engine.so || { echo "::error::libvlm_engine.so missing from tar"; ls -la out/ || true; exit 1; }
           ls -la out/
           cd out
           zip -j -X vlm-engine-llama${LLAMA_SHA:0:7}.zip *.so
