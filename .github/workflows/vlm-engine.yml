@@ -116,7 +116,22 @@ jobs:
       - name: Annotate failure tail
         if: failure()
         run: |
-          tail -n 60 build.log | sed 's/^/::error::/'
+          # docker's progress bars embed \r and control sequences that GitHub
+          # drops when turning output into annotations — strip them and emit
+          # only non-empty lines, or the tail never registers.
+          tail -c 30000 build.log \
+            | tr -d '\000-\010\013\014\016-\037\177' \
+            | tr '\r' '\n' \
+            | grep -a . | tail -n 40 \
+            | sed 's/^/::error::/'
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_id }}
+          path: build.log
+          if-no-files-found: warn
 
       - name: Collect and package
         run: |
