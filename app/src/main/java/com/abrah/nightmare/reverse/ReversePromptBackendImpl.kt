@@ -443,13 +443,14 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
             else -> "Reverse-engineer the full drawing prompt for this image now."
         }
 
-        // Model-aware runtime estimate: measured on-device 2026-11-14 — the 9B
-        // flagship takes ~5-10 min, the 4B ~1-3 min (8 threads, CPU). Imported
-        // models fall back to a size-agnostic hint.
+        // Model-aware runtime estimate. Measured on SM8750 (8 Elite, hexagon
+        // build 674, 2026-11-14): 9B Q4_K_M reverse ≈ 160 s on the NPU vs
+        // ~10 min on the CPU fallback. One string covers both paths — which
+        // one applies is decided by the device at engine load time.
         val estimate = when (selectedModelId) {
-            VlmModelManager.DEEPSEEK_9B.id -> "9B 模型约 5-10 分钟"
-            VlmModelManager.QWEN_4B.id -> "4B 模型约 1-3 分钟"
-            else -> "用时视模型大小 1-10 分钟"
+            VlmModelManager.DEEPSEEK_9B.id -> "9B 模型 NPU 约 3 分钟（CPU 回退约 10 分钟）"
+            VlmModelManager.QWEN_4B.id -> "4B 模型 NPU 通常 1 分钟内（CPU 回退 1-3 分钟）"
+            else -> "用时视模型大小与 NPU 可用性而定"
         }
         onProgress(ReverseProgress.Loading("端侧推理中（8 线程 CPU，$estimate）..."))
         val raw = VlmEngine.inferImage(rgb, rgbW, rgbH, system, userText)

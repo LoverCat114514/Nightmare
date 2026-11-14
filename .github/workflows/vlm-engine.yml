@@ -21,6 +21,10 @@
 # Upstream K-quant support (Q4_K_M via repack, PR #28994, merged 2026-09-16)
 # ships in master, so the existing Q4_K_M GGUFs run as-is — accuracy trade-off
 # (~27% PPL vs a native Q4_0 path) documented in that PR's discussions.
+#
+# VALIDATED 2026-11-14 (run 43588630436, GGML_OPENCL=OFF build 674): 9B
+# Q4_K_M reverse on SM8750 (8 Elite, Hexagon v79) completes in ~160 s end to
+# end vs ~10 min on the CPU-only engine. Load time includes the Q4_K repack.
 name: vlm-engine
 
 on:
