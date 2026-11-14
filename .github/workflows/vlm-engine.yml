@@ -99,7 +99,13 @@ jobs:
             bash -c '
               set -euxo pipefail
               cp docs/backend/snapdragon/CMakeUserPresets.json .
-              cmake --preset arm64-android-snapdragon-release -B build-snapdragon
+              # ⚠ GGML_OPENCL=OFF overrides the preset: libggml-opencl.so hard-
+              # links libOpenCL.so, which the app linker namespace cannot always
+              # resolve (vendor public lib on some ROMs, not on others) — and
+              # one missing dep fails the WHOLE System.loadLibrary chain. The
+              # NPU is the accelerator here; the Adreno OpenCL device is dead
+              # weight that also muddies layer allocation.
+              cmake --preset arm64-android-snapdragon-release -B build-snapdragon -DGGML_OPENCL=OFF
               cmake --build build-snapdragon -j "$(nproc)"
               for V in v79 ${{ inputs.skels }}; do
                 cmake --build build-snapdragon --target "htp-$V" -j "$(nproc)"
