@@ -106,22 +106,33 @@ jobs:
               done
               cmake --install build-snapdragon --prefix /workspace/pkg/llama.cpp
               mkdir -p /workspace/pkg/llama.cpp/lib /workspace/out
-              MTMD=$(find build-snapdragon -name "libmtmd.so" | head -1)
-              if [ -n "$MTMD" ]; then cp "$MTMD" /workspace/pkg/llama.cpp/lib/; else echo "WARN: libmtmd.so not found in build tree"; fi
-              NDK=$(ls -d /opt/android-ndk-* | head -1)
+              # ⚠ Modern NDKs keep the sysroot under the prebuilt toolchain dir
+              # (top-level $NDK/sysroot is gone in r29) — the libOpenCL probe in
+              # the configure log confirms the real location.
+              SYSROOT=/opt/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/sysroot
+              NDK=/opt/android-ndk-r29
+              test -f "$SYSROOT/usr/include/jni.h" || { echo "FATAL: jni.h missing at $SYSROOT"; ls "$SYSROOT/usr/include" | head; exit 1; }
               "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" \
-                --target=aarch64-linux-android31 --sysroot="$NDK/sysroot" \
+                --target=aarch64-linux-android31 --sysroot="$SYSROOT" \
                 -std=c++17 -O2 -DVLM_ENABLE_HEXAGON -fPIC -shared \
                 -I include -I ggml/include -I tools/mtmd -I vendor/stb \
                 /workspace/nightmare/app/src/main/cpp/vlm_engine.cpp \
                 -L /workspace/pkg/llama.cpp/lib \
                 -lllama -lmtmd -lggml -lggml-base -lggml-hexagon -llog \
                 -o /workspace/out/libvlm_engine.so
-              # Collect INSIDE the container: it sees its own outputs. The host
-              # step only zips. Unconditional layout dump lands in build.log's
-              # tail, so a failure shows exactly what got produced.
+              # Collect INSIDE the container: it sees its own outputs. Only the
+              # runtime set ships — the install also drops libllama-*-impl.so
+              # test helpers we do not want in the APK. The layout dump lands
+              # in build.log's tail, so a failure shows exactly what exists.
               echo "--- installed libs ---"
-              find /workspace/pkg -type f -name "*.so" | while read -r f; do cp "$f" /workspace/out/; done
+              for f in libllama.so libmtmd.so libggml.so libggml-base.so libggml-cpu.so libggml-hexagon.so libggml-opencl.so; do
+                S=/workspace/pkg/llama.cpp/lib/$f
+                if [ -f "$S" ]; then cp "$S" /workspace/out/; else echo "WARN: $f not installed"; fi
+              done
+              for V in v79 ${{ inputs.skels }}; do
+                S=/workspace/pkg/llama.cpp/lib/libggml-htp-$V.so
+                if [ -f "$S" ]; then cp "$S" /workspace/out/; else echo "WARN: skel $V missing"; fi
+              done
               echo "--- out/ ---"
               ls -la /workspace/out/
             ' 2>&1 | tee build.log
