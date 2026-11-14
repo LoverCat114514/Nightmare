@@ -1,7 +1,16 @@
 // vlm_engine.cpp — on-device VLM (Qwen3-VL) inference engine for Nightmare's
 // reverse-prompt module. JNI bridge over llama.cpp (libllama + mtmd).
-// Built by tools/build_vlm.sh: system clang (aarch64 host) + NDK sysroot +
-// GNU ld — no cmake required (cmake is unavailable in the proot env).
+// Two build flavors:
+//   - tools/build_vlm.sh (proot, CPU-only): system clang (aarch64 host) + NDK
+//     sysroot + GNU ld — no cmake required (cmake is unavailable in the proot
+//     env). The engine runs entirely on CPU.
+//   - .github/workflows/vlm-engine.yml (CI, hexagon): cmake against llama.cpp
+//     master with GGML_HEXAGON=ON, producing libggml-hexagon.so + the
+//     libggml-htp-v79.so skel; defines VLM_ENABLE_HEXAGON so this bridge
+//     registers dynamic backends and offloads decoder layers onto the NPU
+//     (mtmd's vision encoder stays on CPU). GGML_HEXAGON_OPPOLL enables the
+//     batch-completion polling mode (upstream knob; +67% tg vs interrupt wait
+//     per community measurements on 8 Elite).
 //
 // Memory contract: exactly one model resident; inferImage() frees the KV cache
 // when done; unloadModel() frees everything. Kotlin registers trim() into
@@ -15,6 +24,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "llama.h"
@@ -79,7 +89,18 @@ Java_com_abrah_nightmare_reverse_VlmEngine_nativeLoadModel(
     llama_backend_init();
 
     llama_model_params mp = llama_model_default_params();
+#ifdef VLM_ENABLE_HEXAGON
+    // CI hexagon build: libggml discovers libggml-hexagon.so (and the CPU
+    // backend) side by side in nativeLibraryDir via dynamic backend loading.
+    // n_gpu_layers=99 hands decoder layers to the hexagon device through the
+    // standard backend sched; on a device without a usable NPU the layers
+    // simply stay on CPU, so the same binary degrades gracefully.
+    ggml_backend_load_all();
+    mp.n_gpu_layers = 99;
+    LOGI("hexagon backend enabled (n_gpu_layers=99)");
+#else
     mp.n_gpu_layers = 0; // CPU only — the DiT engine owns the NPU
+#endif
     g_eng.model = llama_model_load_from_file(main.c_str(), mp);
     if (!g_eng.model) { llama_backend_free(); LOGE("model load failed"); return -2; }
     g_eng.vocab = llama_model_get_vocab(g_eng.model);
@@ -259,6 +280,24 @@ Java_com_abrah_nightmare_reverse_VlmEngine_nativeInferImage(
 JNIEXPORT jboolean JNICALL
 Java_com_abrah_nightmare_reverse_VlmEngine_nativeIsLoaded(JNIEnv *, jobject) {
     return g_loaded ? JNI_TRUE : JNI_FALSE;
+}
+
+// Runtime knobs for the hexagon build, set by Kotlin before nativeLoadModel.
+//   - ADSP_LIBRARY_PATH: where FastRPC's DSP loader finds the libggml-htp-v79
+//     skel; nativeLibraryDir is where the CI build ships it. Harmless no-op on
+//     the CPU-only proot build (nothing reads it).
+//   - GGML_HEXAGON_OPPOLL: upstream's batch-completion polling knob (any
+//     nonzero = poll instead of DSP interrupt wait; ~+67% tg on 8 Elite).
+// Both are plain setenv calls, so this function is safe to call on any build.
+JNIEXPORT void JNICALL
+Java_com_abrah_nightmare_reverse_VlmEngine_nativeConfigureRuntime(
+        JNIEnv * env, jobject, jstring nativeLibDir, jstring opPoll) {
+    const std::string libDir = jstr(env, nativeLibDir);
+    const std::string poll   = jstr(env, opPoll);
+    if (!libDir.empty()) setenv("ADSP_LIBRARY_PATH", libDir.c_str(), 1);
+    if (!poll.empty())   setenv("GGML_HEXAGON_OPPOLL", poll.c_str(), 1);
+    LOGI("runtime env set: ADSP_LIBRARY_PATH=%s GGML_HEXAGON_OPPOLL=%s",
+         libDir.c_str(), poll.c_str());
 }
 
 JNIEXPORT void JNICALL

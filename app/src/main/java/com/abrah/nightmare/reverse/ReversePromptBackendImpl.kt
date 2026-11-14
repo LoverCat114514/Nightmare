@@ -397,6 +397,12 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
             VlmEngine.trim()
         }
 
+        // ⭐ Hexagon era (2026-11-14): hand the native runtime its environment
+        // (ADSP_LIBRARY_PATH → nativeLibraryDir for the htp skel loader, plus
+        // GGML_HEXAGON_OPPOLL) before any model load. A no-op for the CPU-only
+        // proot build, essential for the CI hexagon build.
+        VlmEngine.configureRuntime(context.applicationInfo.nativeLibraryDir)
+
         if (!VlmEngine.isLoaded) {
             onProgress(ReverseProgress.Loading("正在加载端侧模型（${def.displayName}，首次约 10-30 秒）..."))
             val code = VlmEngine.ensureLoaded(mainPath, mmprojPath)

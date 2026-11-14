@@ -42,6 +42,27 @@ object VlmEngine {
     private const val N_THREADS = 8
     /** Generation cap: layout JSON / natural prompts fit easily. */
     private const val MAX_TOKENS = 1024
+    /**
+     * Hexagon batch-completion polling knob (GGML_HEXAGON_OPPOLL; nonzero =
+     * poll instead of DSP interrupt wait). Only read by the CI hexagon build;
+     * the CPU-only proot build ignores it. Upstream uses it as a boolean-style
+     * value, so "1" = poll.
+     */
+    const val OP_POLL = "1"
+
+    /**
+     * Sets native runtime env (ADSP_LIBRARY_PATH → nativeLibraryDir,
+     * GGML_HEXAGON_OPPOLL). Call once before [ensureLoaded]; idempotent and
+     * a no-op for the CPU-only build.
+     */
+    fun configureRuntime(nativeLibDir: String) {
+        if (!libLoaded) return
+        try {
+            nativeConfigureRuntime(nativeLibDir, OP_POLL)
+        } catch (t: Throwable) {
+            Log.w(TAG, "configureRuntime failed", t)
+        }
+    }
 
     /**
      * ⭐ Multi-model era: absolute path of the resident main GGUF ("" when
@@ -141,6 +162,7 @@ object VlmEngine {
         }
     }
 
+    private external fun nativeConfigureRuntime(nativeLibDir: String, opPoll: String)
     private external fun nativeLoadModel(mainPath: String, mmprojPath: String, nThreads: Int, nCtx: Int): Int
     private external fun nativeInferImage(rgb: ByteArray, width: Int, height: Int, systemPrompt: String, userPrompt: String, maxTokens: Int): String
     private external fun nativeIsLoaded(): Boolean
