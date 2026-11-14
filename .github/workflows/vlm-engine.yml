@@ -1,31 +1,26 @@
 # Builds the hexagon flavor of libvlm_engine.so (+ llama.cpp runtime libs and
-# the libggml-htp-v79 skel) for the reverse-prompt module's NPU path.
+# the libggml-htp skels) for the reverse-prompt module's NPU path.
 #
-# WHY THIS EXISTS
-# tools/build_vlm.sh (proot, CPU-only) cannot build the hexagon backend: it
-# needs the Hexagon SDK (skels compile with hexagon-clang for the DSP target)
-# and cmake. Both live in the snapdragon-toolchain image, the same route the
-# dit-engine workflow already uses for the DiT engine's skels.
+# WHY THE WHOLE BUILD RUNS INSIDE THE TOOLCHAIN CONTAINER
+# The snapdragon build needs the Hexagon SDK env (setup vars, hexagon-clang
+# for the DSP skels) AND a pinned NDK. The snapdragon-toolchain image carries
+# all of it prewired; upstream's own README builds via presets inside that
+# image, and scripts/snapdragon/build.py is just that flow wrapped in docker
+# run. Extracting the SDK to the runner instead (dit-engine's way) broke at
+# include(hexagon_fun.cmake) with an empty-variable string(FIND) — the env the
+# SDK's setup script exports is part of that wiring, so we run inside.
 #
-# WHAT THE ARTIFACT IS
-# A zip of shared libraries to drop into `app/src/main/jniLibs/arm64-v8a/`
-# (replacing the CPU-only libvlm_engine.so; the CPU .so set the app grafts
-# from the installed APK stays for everything else):
+# ARTIFACT: a zip of shared libraries to drop into
+# `app/src/main/jniLibs/arm64-v8a/` (replacing the CPU-only libvlm_engine.so):
 #   libvlm_engine.so   — this repo's JNI bridge, built with -DVLM_ENABLE_HEXAGON
-#   libllama.so libmtmd.so libggml.so libggml-base.so libggml-cpu.so
-#   libggml-hexagon.so — llama.cpp runtime (shared; mtmd vision stays on CPU)
-#   libggml-htp-v79.so — the Hexagon v79 skel (FastRPC loads it from
+#   libllama.so libmtmd.so libggml*.so — llama.cpp runtime (mtmd vision stays CPU)
+#   libggml-htp-v79.so — Hexagon v79 skel; FastRPC finds it via
 #                        ADSP_LIBRARY_PATH, which the app points at
-#                        nativeLibraryDir via VlmEngine.configureRuntime)
+#                        nativeLibraryDir through VlmEngine.configureRuntime
 #
-# GGML_HEXAGON_OPPOLL is set at runtime by VlmEngine.configureRuntime (poll
-# instead of DSP interrupt wait; community-measured ~+67% tg on 8 Elite).
-#
-# FIRST RUN SHOULD BE A BASELINE: confirm the artifact loads and runs on the
-# phone (4B first) before trusting it. Upstream K-quant support (Q4_K_M via
-# repack, PR #28994, merged 2026-09-16) ships in master, so the user's
-# existing Q4_K_M GGUFs run as-is — accuracy trade-off documented in that PR's
-# discussions (~27% PPL vs a native Q4_0 path).
+# Upstream K-quant support (Q4_K_M via repack, PR #28994, merged 2026-09-16)
+# ships in master, so the existing Q4_K_M GGUFs run as-is — accuracy trade-off
+# (~27% PPL vs a native Q4_0 path) documented in that PR's discussions.
 name: vlm-engine
 
 on:
@@ -34,12 +29,9 @@ on:
       llama_ref:
         description: "ggml-org/llama.cpp ref to build (tag/branch/sha)"
         default: "master"
-      ndk_version:
-        description: "NDK version"
-        default: "29.0.14206865"
       hexagon_tag:
-        description: "Tag of ghcr.io/snapdragon-toolchain/arm64-android holding the Hexagon SDK"
-        default: "v0.7"
+        description: "Tag of ghcr.io/snapdragon-toolchain/arm64-android"
+        default: "v0.8"
       skels:
         description: "Extra htp skels to build beside v79, space-separated (v73/v75/v81/v85; blank = none)"
         default: ""
@@ -50,11 +42,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
 
     steps:
-      # Same reclaim as dit-engine: the image ships ~30 GB this build never
-      # touches, and llama.cpp + the Hexagon SDK are not small either.
       - name: Reclaim disk
         run: |
           df -h /
@@ -69,7 +59,6 @@ jobs:
         with:
           path: nightmare
 
-      # Shallow: a build input, not something we develop here.
       - name: Clone llama.cpp
         run: |
           git clone --depth 1 ${{ inputs.llama_ref && format('--branch {0}', inputs.llama_ref) || '' }} \
@@ -78,100 +67,63 @@ jobs:
           echo "LLAMA_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "llama.cpp $(git rev-parse HEAD)"
 
-      - name: Install NDK ${{ inputs.ndk_version }}
+      # llama.cpp's own snapdragon flow: copy the preset, configure, build
+      # (skels are part of the default build — the README's log shows
+      # "Performing build step for 'htp-v73'" among normal targets), install,
+      # then compile our JNI bridge against the installed libs. One container
+      # session so the build tree survives for anything install misses
+      # (libmtmd.so has no install rule on master).
+      # Output always tees to build.log; on failure the tail is emitted as
+      # ::error annotations (the run-logs API demands admin rights a
+      # fine-grained token cannot carry).
+      - name: Build inside the snapdragon toolchain container
         run: |
-          SDK="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDK" --licenses >/dev/null 2>&1 || true
-          "$SDK" "ndk;${{ inputs.ndk_version }}" || "$SDK" --channel=3 "ndk;${{ inputs.ndk_version }}"
-          NDK="$ANDROID_HOME/ndk/${{ inputs.ndk_version }}"
-          if [ ! -d "$NDK" ]; then
-            echo "::error::NDK ${{ inputs.ndk_version }} did not install"; ls "$ANDROID_HOME/ndk" || true; exit 1
-          fi
-          echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
-
-      # Verbatim dit-engine's extraction: docker cp replays the image's own
-      # modes, so stream the tar and re-chmod afterwards instead.
-      - name: Extract the Hexagon SDK
-        run: |
-          set -euo pipefail
-          docker create --name hexsdk ghcr.io/snapdragon-toolchain/arm64-android:${{ inputs.hexagon_tag }}
-          DEST="$RUNNER_TEMP/hexsdk"
-          mkdir -p "$DEST"
-          docker cp hexsdk:/opt/hexagon - | tar -x -C "$DEST" --no-same-permissions --no-same-owner
-          docker rm hexsdk
-          chmod -R u+rwX "$DEST"
-          MARK=$(find "$DEST" -maxdepth 3 -name setup_sdk_env.source | sort -V | tail -1)
-          if [ -n "$MARK" ]; then
-            ROOT=$(dirname "$MARK")
-          else
-            ROOT=$(find "$DEST" -mindepth 2 -maxdepth 2 -type d -name '[0-9]*' | sort -V | tail -1)
-          fi
-          if [ -z "$ROOT" ]; then
-            echo "::error::no Hexagon SDK root under $DEST"; find "$DEST" -maxdepth 3 | head -40; exit 1
-          fi
-          echo "HEXAGON_SDK_ROOT=$ROOT" >> "$GITHUB_ENV"
-          echo "found SDK at $ROOT"
-
-      # GGML_HEXAGON=ON pulls in ggml-hexagon (host side); its CMakeLists reads
-      # HEXAGON_SDK_ROOT to drive the ExternalProject skel builds. The htp-*
-      # targets are EXCLUDE_FROM_ALL, so the skels are built by name below —
-      # same convention as the dit-engine workflow's ggml.
-      # Build output always tees to build.log; on failure the tail is emitted
-      # as ::error annotations (readable via the check-runs API without the
-      # admin rights that the log-download endpoint demands).
-      - name: Configure and build llama.cpp (hexagon + cpu, shared)
-        run: |
-          set -o pipefail
-          cmake -S llama.cpp -B llama.cpp/build-android \
-            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-31 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
-            -DGGML_HEXAGON=ON \
-            -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" \
-            -DLLAMA_CURL=OFF \
-            -DLLAMA_BUILD_TESTS=OFF -DGGML_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF -DGGML_BUILD_EXAMPLES=OFF \
-            -DLLAMA_BUILD_SERVER=OFF 2>&1 | tee build.log
-          cmake --build llama.cpp/build-android -j "$(nproc)" 2>&1 | tee -a build.log
-          for V in v79 ${{ inputs.skels }}; do
-            cmake --build llama.cpp/build-android --target "htp-$V" -j "$(nproc)" 2>&1 | tee -a build.log
-          done
-          df -h /
+          GWS="$PWD"
+          docker pull ghcr.io/snapdragon-toolchain/arm64-android:${{ inputs.hexagon_tag }}
+          docker run --rm \
+            -v "$GWS":/workspace -w /workspace/llama.cpp \
+            ghcr.io/snapdragon-toolchain/arm64-android:${{ inputs.hexagon_tag }} \
+            bash -c '
+              set -euxo pipefail
+              cp docs/backend/snapdragon/CMakeUserPresets.json .
+              cmake --preset arm64-android-snapdragon-release -B build-snapdragon
+              cmake --build build-snapdragon -j "$(nproc)"
+              for V in v79 ${{ inputs.skels }}; do
+                cmake --build build-snapdragon --target "htp-$V" -j "$(nproc)"
+              done
+              cmake --install build-snapdragon --prefix /workspace/pkg/llama.cpp
+              mkdir -p /workspace/pkg/llama.cpp/lib /workspace/out
+              MTMD=$(find build-snapdragon -name "libmtmd.so" | head -1)
+              if [ -n "$MTMD" ]; then cp "$MTMD" /workspace/pkg/llama.cpp/lib/; else echo "::error::libmtmd.so not found in build tree"; fi
+              NDK=$(ls -d /opt/android-ndk-* | head -1)
+              "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" \
+                --target=aarch64-linux-android31 --sysroot="$NDK/sysroot" \
+                -std=c++17 -O2 -DVLM_ENABLE_HEXAGON -fPIC -shared \
+                -I include -I ggml/include -I tools/mtmd -I vendor/stb \
+                /workspace/nightmare/app/src/main/cpp/vlm_engine.cpp \
+                -L /workspace/pkg/llama.cpp/lib \
+                -lllama -lmtmd -lggml -lggml-base -lggml-hexagon -llog \
+                -o /workspace/out/libvlm_engine.so
+            ' 2>&1 | tee build.log
 
       - name: Annotate failure tail
         if: failure()
         run: |
           tail -n 60 build.log | sed 's/^/::error::/'
 
-      # Raw clang like the proot build, but against the shared llama/mtmd/ggml
-      # libs from the cmake build. -DVLM_ENABLE_HEXAGON flips the bridge's
-      # backend registration (ggml_backend_load_all + n_gpu_layers=99); the
-      # proot CPU build of the same file never defines it.
-      - name: Build the JNI bridge
+      - name: Collect and package
         run: |
           set -euo pipefail
-          NDK="$ANDROID_NDK_ROOT"
-          BIN="llama.cpp/build-android/bin"
-          CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+          # Everything cmake --install put in lib/ (ggml, cpu, hexagon, opencl,
+          # skels, llama) + libmtmd.so copied out of the build tree. The bridge
+          # was written into /workspace/out inside the container = $PWD/out
+          # here already.
           mkdir -p out
-          "$CLANG" --target=aarch64-linux-android31 --sysroot="$NDK/sysroot" \
-            -std=c++17 -O2 -DVLM_ENABLE_HEXAGON -fPIC -shared \
-            -I llama.cpp/include -I llama.cpp/ggml/include -I llama.cpp/tools/mtmd \
-            -I llama.cpp/vendor/stb \
-            nightmare/app/src/main/cpp/vlm_engine.cpp \
-            -L "$BIN" -lllama -lmtmd -lggml -lggml-base -lggml-hexagon -llog \
-            -o out/libvlm_engine.so
-          # Everything the bridge's DT_NEEDED entries resolve at runtime; the
-          # app loads these beside libvlm_engine.so in nativeLibraryDir.
-          for f in libllama.so libmtmd.so libggml.so libggml-base.so libggml-cpu.so libggml-hexagon.so; do
-            cp "$BIN/$f" out/
-          done
-          for V in v79 ${{ inputs.skels }}; do
-            S=llama.cpp/build-android/ggml/src/ggml-hexagon/libggml-htp-$V.so
-            if [ -f "$S" ]; then cp "$S" out/; else echo "::error::skel $S missing"; exit 1; fi
-          done
+          cp pkg/llama.cpp/lib/*.so out/
+          test -f out/libvlm_engine.so || { echo "::error::libvlm_engine.so missing"; exit 1; }
           ls -la out/
+          cd out
+          zip -j -X vlm-engine-llama${LLAMA_SHA:0:7}.zip *.so
 
       - name: Constants for the graft
         run: |
@@ -182,14 +134,11 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| llama.cpp | \`$LLAMA_SHA\` |"
-            echo "| hexagon tag | \`${{ inputs.hexagon_tag }}\` |"
-            echo "| skels | \`v79 ${{ inputs.skels }}\` |"
+            echo "| toolchain image | \`v${{ inputs.hexagon_tag }}\` |"
             echo
             echo '```'
-            echo "libvlm_engine.so  $(stat -c%s libvlm_engine.so) bytes  sha256 $(sha256sum libvlm_engine.so | cut -c1-16)…"
             for S in *.so; do
-              [ "$S" = "libvlm_engine.so" ] && continue
-              echo "$S  $(stat -c%s "$S") bytes"
+              echo "$S  $(stat -c%s "$S") bytes  sha256 $(sha256sum "$S" | cut -c1-16)…"
             done
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
