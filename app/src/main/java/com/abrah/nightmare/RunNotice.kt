@@ -100,4 +100,71 @@ object RunNotice {
             ctx.getSystemService(NotificationManager::class.java)?.notify(ID, n)
         }
     }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // ⭐ THE PROGRESS BAR (upstream 1.6.300, the user 2026-11-14): a long run
+    // shows a downloading-style bar in the shade, updated at most once a
+    // second ([HarnessViewModel]'s one-second tick calls [progress]). ⚠ Cost:
+    // one `notify()` (a binder call, well under a millisecond) per second at
+    // most, against seconds of NPU or GPU work a step. A LOW channel: no
+    // sound, no pop-up, no buzz on update.
+    // ═════════════════════════════════════════════════════════════════════
+
+    private const val CHANNEL_PROGRESS = "run_progress"
+    private const val PROGRESS_ID = 4301
+
+    /** ⚠ Quick renders never flash a bar: only a run past this shows one. */
+    const val SHOW_AFTER_MS = 10_000L
+
+    @Volatile private var progressShown = false
+    private var lastProgressText: String? = null
+
+    /** ⭐ The shade's line for a run: what runs, its step label and the time so far. Pure, for the tests. */
+    internal fun textFor(step: String?, elapsedMs: Long): String =
+        listOfNotNull(step, com.abrah.nightmare.canvas.formatMs(elapsedMs)).joinToString(" · ")
+
+    /**
+     * Show or update the bar. [fraction] 0..1, or null while nothing is counted (loading, a phase with no total): the
+     * bar then moves without a number rather than sitting at zero, which reads as stalled.
+     */
+    fun progress(ctx: Context, title: String, text: String, fraction: Float?) {
+        if (progressShown && text == lastProgressText) return
+        val nm = progressManager(ctx) ?: return
+        val pct = fraction?.let { (it * 100).toInt().coerceIn(0, 100) }
+        val open = PendingIntent.getActivity(
+            ctx, 1,
+            Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val n = Notification.Builder(ctx, CHANNEL_PROGRESS)
+            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setProgress(100, pct ?: 0, pct == null)
+            .setContentIntent(open)
+            .build()
+        if (runCatching { nm.notify(PROGRESS_ID, n) }.isSuccess) { progressShown = true; lastProgressText = text }
+    }
+
+    /** ⭐ The run ended (or was cancelled): the bar goes. */
+    fun clear(ctx: Context) {
+        if (!progressShown) return
+        runCatching { ctx.getSystemService(NotificationManager::class.java)?.cancel(PROGRESS_ID) }
+        progressShown = false
+        lastProgressText = null
+    }
+
+    private fun progressManager(ctx: Context): NotificationManager? = runCatching {
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm.getNotificationChannel(CHANNEL_PROGRESS) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_PROGRESS, ctx.getString(R.string.run_notice_channel), NotificationManager.IMPORTANCE_LOW)
+                    .apply { setShowBadge(false) },
+            )
+        }
+        nm
+    }.getOrNull()
 }

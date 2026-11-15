@@ -139,7 +139,7 @@ internal fun NewUiLoraPicker(
         val entry = chosen.firstOrNull { it.name == name }
         if (entry == null) typing = null
         else MaterialTheme(
-            colorScheme = nmScheme(androidx.compose.foundation.isSystemInDarkTheme()),
+            colorScheme = nmScheme(com.abrah.nightmare.newui.theme.Nm.dark), // ⭐ follow the APP theme, not the system (the picker floats over the themed app)
             shapes = NmSheetShapes,
         ) {
             com.abrah.nightmare.canvas.LoraWeightDialog(
@@ -175,7 +175,7 @@ internal fun NewUiLoraPicker(
     }
     deleting?.let { name ->
         MaterialTheme(
-            colorScheme = nmScheme(androidx.compose.foundation.isSystemInDarkTheme()),
+            colorScheme = nmScheme(com.abrah.nightmare.newui.theme.Nm.dark), // ⭐ follow the APP theme, not the system (the picker floats over the themed app)
             shapes = NmSheetShapes,
         ) {
             com.abrah.nightmare.canvas.ConfirmDeleteLora(
@@ -713,7 +713,7 @@ internal fun NewUiLoraPicker(
                                     style = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Nm.sub),
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.6f) else Color(0xFFF2F0F7))
+                                        .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.6f) else Nm.bg) // ⭐ dark-aware
                                         .border(1.dp, Color(0xFFE2E0E8), RoundedCornerShape(12.dp))
                                         .clickable { act() }
                                         .padding(horizontal = 12.dp, vertical = 9.dp),
@@ -1381,7 +1381,7 @@ private fun NewUiLoraNoteDialog(
                         Row(
                             Modifier
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.6f) else Color(0xFFF2F0F7))
+                                .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.6f) else Nm.bg) // ⭐ dark-aware
                                 .border(1.dp, Color(0xFFE2E0E8), RoundedCornerShape(10.dp))
                                 .clickable(enabled = text.isNotBlank()) {
                                     clipboard.setText(androidx.compose.ui.text.AnnotatedString(text.trim()))

@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
@@ -46,7 +47,12 @@ fun StudioCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(16.dp)
-    val color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else Color.White
+    // ⭐ (the user, 2026-11-15: the settings sheet's module cards stayed WHITE in the dark
+    // and black themes) — the card follows the theme now: light keeps the exact white it
+    // always had, dark/black take the scheme's own card step.
+    val color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+        else if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) MaterialTheme.colorScheme.surfaceContainerLow
+        else Color.White
     val border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) MaterialTheme.studio.accentText else MaterialTheme.colorScheme.outline)
     val inner: @Composable () -> Unit = { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content) }
     if (onClick != null) {

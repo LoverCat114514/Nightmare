@@ -1,6 +1,7 @@
 package com.abrah.nightmare
 
 import androidx.test.core.app.ApplicationProvider
+import java.io.File
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,6 +27,24 @@ class DitGpuTest {
         DitGpu.openClForTest = null
         Prefs.setLowRam(ctx, Prefs.KEY_DIT_GPU, false)
         Prefs.setLowRam(ctx, Prefs.KEY_DIT_TAESD, true)
+        DeviceProbe.measuredForTest(null)
+        ModelCatalog.root(ctx).deleteRecursively()
+        DitEngine.dir(ctx).deleteRecursively()
+    }
+
+    /** ⭐ Item 46: a Klein edit with references leaves the GPU route for the NPU where the NPU runs Klein; text to image stays. */
+    @Test
+    fun aKleinEditWithReferencesGoesToTheNpu() {
+        DitGpu.openClForTest = true
+        Prefs.setLowRam(ctx, Prefs.KEY_DIT_GPU, true)
+        val s25 = DeviceProbe.Caps(arch = 79, vtcmMb = 8, measured = true, soc = "SM8750")
+        assertTrue(SdSampler.editOnNpu(Family.FLUX2, 2, klein, s25))
+        assertTrue(SdSampler.editOnNpu(Family.FLUX2, 1, klein, s25))
+        assertFalse("text to image keeps the GPU", SdSampler.editOnNpu(Family.FLUX2, 0, klein, s25))
+        assertFalse("the 8 Gen 1: the GPU is its only fast route", SdSampler.editOnNpu(Family.FLUX2, 2, klein, caps(69)))
+        Prefs.setLowRam(ctx, Prefs.KEY_DIT_GPU, false)
+        assertFalse("no GPU route, nothing to leave", SdSampler.editOnNpu(Family.FLUX2, 2, klein, s25))
+        assertEquals("flux2/flux2_klein_4b/1024x1024 (NPU)", ContextKey("flux2", "flux2_klein_4b", 1024, 1024, npu = true).toString())
     }
 
     @Test
@@ -105,5 +124,60 @@ class DitGpuTest {
         assertFalse("the full VAE when the switch is off", "NM_DIT_TAESD" in DitGpu.launchEnv(ctx, klein, caps(79)))
         Prefs.setLowRam(ctx, Prefs.KEY_DIT_GPU, false)
         assertTrue("off the route: nothing changes", DitGpu.launchEnv(ctx, klein, caps(79)).isEmpty())
+    }
+
+    /** ⭐ The user, 2026-11-14: each flip of the GPU switch overwrote the other engine, and the next Run fetched it again. */
+    @Test
+    fun bothEnginesAreKeptSoTheSwitchDownloadsNothing() {
+        DitGpu.openClForTest = true
+        val dir = DitEngine.dir(ctx).apply { mkdirs() }
+        for (t in DitGpu.ALL) sparseFile(DitGpu.taeFile(ctx, t), t.bytes)
+        // The GPU engine is live (as on the S25 after the switch), the NPU one kept beside it from an earlier switch.
+        Prefs.setLowRam(ctx, Prefs.KEY_DIT_GPU, true)
+        val gpuUrl = DitEngine.URL
+        val gpuBytes = DitEngine.FILE_BYTES
+        sparseFile(DitEngine.file(ctx), gpuBytes)
+        File(dir, ".dit-engine").writeText(gpuUrl)
+        assertTrue(DitEngine.isInstalled(ctx))
+        Prefs.setLowRam(ctx, Prefs.KEY_DIT_GPU, false)
+        val npuUrl = DitEngine.URL
+        val npuBytes = DitEngine.FILE_BYTES
+        sparseFile(File(dir, DitEngine.FILE + ".npu"), npuBytes)
+        File(dir, ".dit-engine.npu").writeText(npuUrl)
+        // ⭐ Off: the live one is the GPU's, and asking swaps in the kept NPU one (the API asks before a run, 2026-11-15).
+        // ⚠ No network in a JVM test: a download would throw, so passing proves two renames did it.
+        assertTrue(DitEngine.isInstalled(ctx))
+        DitEngine.install(ctx, onProgress = {})
+        assertEquals(npuBytes, DitEngine.file(ctx).length())
+        assertEquals("the GPU engine kept", gpuBytes, File(dir, DitEngine.FILE + ".gpu").length())
+        // And back on.
+        Prefs.setLowRam(ctx, Prefs.KEY_DIT_GPU, true)
+        DitEngine.install(ctx, onProgress = {})
+        assertTrue(DitEngine.isInstalled(ctx))
+        assertEquals(gpuBytes, DitEngine.file(ctx).length())
+        assertEquals(npuBytes, File(dir, DitEngine.FILE + ".npu").length())
+        DitEngine.delete(ctx)
+        assertFalse("delete takes the spares too", File(dir, DitEngine.FILE + ".npu").exists())
+    }
+
+    /** ⭐ The user, 2026-11-14: Klein installed with the GPU switch on, then switched off, asked for a 4 GB Repair. */
+    @Test
+    fun aQ4LeftByTheGpuSwitchRunsOnTheNpuWithNoRepairAndIsNeverReclaimed() {
+        DitGpu.openClForTest = true
+        DeviceProbe.measuredForTest(caps(79).copy(soc = "SM8750"))
+        val d = klein.ownDir(ctx).apply { mkdirs() }
+        val q4 = klein.builds.first { b -> b.files.any { it.name == "dit.gguf" } && b.bytes == klein.builds.filter { x -> x.files.any { it.name == "dit.gguf" } }.minOf { it.bytes } }
+        for (f in q4.files) sparseFile(File(d, f.name), f.bytes)
+        // Off the route the S25's build is FP8, and only the Q4_0 is here: it stands in.
+        assertTrue("FP8 is the preferred build", klein.missingPreferred(ctx) == listOf("dit.safetensors"))
+        assertEquals("no Repair: the NPU runs the Q4_0", emptyList<String>(), klein.missing(ctx))
+        ModelCatalog.reclaimObsolete(ctx)
+        assertTrue("the stand-in is never reclaimed as the other build", File(d, "dit.gguf").length() == q4.files.first { it.name == "dit.gguf" }.bytes)
+        // ⚠ The reverse holds: on the route only a Q4_0 runs, so an FP8 alone is not installed.
+        File(d, "dit.gguf").delete()
+        sparseFile(File(d, "dit.safetensors"), klein.files.first { it.name == "dit.safetensors" }.bytes)
+        assertEquals(emptyList<String>(), klein.missing(ctx))
+        Prefs.setLowRam(ctx, Prefs.KEY_DIT_GPU, true)
+        assertEquals("the Adreno cannot run FP8", listOf("dit.gguf"), klein.missing(ctx))
     }
 }

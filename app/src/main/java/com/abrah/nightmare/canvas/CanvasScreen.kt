@@ -672,7 +672,10 @@ fun CanvasScreen(
         Box(
             Modifier.fillMaxSize()
                 // ⭐ Transparent when custom wallpaper is on, so wallpaper shines through!
-                .background(if (CanvasColors.customBackgroundActive) Color.Transparent else Color(0xFFF2F0F7))
+                // ⭐ (the user, 2026-11-15: the workbench's backmost strip — status bar +
+                // 12dp gap — stayed WHITE in the dark/black themes) — the fill is Nm.bg now,
+                // dark-aware like the workbench's own page colour.
+                .background(if (com.abrah.nightmare.canvas.CanvasColors.customBackgroundActive) Color.Transparent else com.abrah.nightmare.newui.theme.Nm.bg)
                 .statusBarsPadding()
                 .padding(top = 12.dp)
         ) {

@@ -184,6 +184,9 @@ fun SettingsScreen(
      */
     civitaiKey: String? = null,
     onCivitaiKey: (String) -> Unit = {},
+    /** ⭐ The name in a shared picture's credit strip ([com.abrah.nightmare.ShareCredit]); blank = the app alone. [1.6.299] */
+    shareName: String = "",
+    onShareName: (String) -> Unit = {},
     matureContent: Boolean = false,
     onMatureContent: (Boolean) -> Unit = {},
     /**
@@ -259,6 +262,9 @@ fun SettingsScreen(
     // (null hides a section, the same convention as every slot here).
     val pages = listOfNotNull(
         Page.APPEARANCE, Page.PROMPTS, Page.MODELS,
+        // ⭐ What a saved or shared picture carries (the user, 2026-11-14: "the share stuff belongs there, not in
+        // Performance"). ⚠ Hidden with no switches to draw, as Performance is.
+        Page.RESULTS.takeIf { lowRam != null },
         // ⚠ Hidden when it would be empty (a golden with no memory switches, an unrestricted battery).
         Page.PERFORMANCE.takeIf { lowRam != null || !batteryUnrestricted },
         Page.ADVANCED,
@@ -419,6 +425,14 @@ fun SettingsScreen(
                         stringResource(R.string.views_hide_chat), stringResource(R.string.views_hide_chat_hint),
                         hideChat, onHideChat,
                     )
+                    // ⭐ Saved #8050 (the user, 2026-11-14): the per-model flow drafts can be turned off ([Prefs.keepFlowEdits]). [1.6.297]
+                    if (lowRam != null) {
+                        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                        com.abrah.nightmare.canvas.BoolKnobRow(
+                            stringResource(R.string.views_keep_edits), stringResource(R.string.views_keep_edits_hint),
+                            lowRam.keepFlowEdits, { onLowRam(Prefs.KEY_KEEP_FLOW_EDITS, it) },
+                        )
+                    }
                 }
                 // ⏸ Device info moved into Settings (2026-11-04, the user's call:
                 // "侧边栏的设备信息放到设置里即可") — the side drawer is gone, so this
@@ -741,6 +755,21 @@ fun SettingsScreen(
                 }
             }
         }
+        Page.RESULTS -> Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (lowRam != null) {
+                // ⭐ What goes out with a shared picture (the user, 2026-11-14): the credit strip (on by default, a name
+                // optional) and its Info as the message text (off by default). ⚠ No png_info card here: this fork does
+                // not write PngInfo into saved pictures, so there is no such switch to draw.
+                StudioCard {
+                    SectionHeading(stringResource(R.string.share_title), stringResource(R.string.share_note))
+                    com.abrah.nightmare.canvas.BoolKnobRow(
+                        stringResource(R.string.share_credit), stringResource(R.string.share_credit_hint),
+                        lowRam.shareCredit, { onLowRam(Prefs.KEY_SHARE_CREDIT, it) },
+                    )
+                    if (lowRam.shareCredit) ShareNameField(shareName, onShareName)
+                }
+            }
+        }
         Page.PERFORMANCE -> Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 // ⭐ Upstream's low-RAM switches (`docs/UI.md` §8.9a's one bool control).
                 if (lowRam != null) {
@@ -991,6 +1020,7 @@ private enum class Page(val label: Int) {
     APPEARANCE(R.string.settings_appearance),
     PROMPTS(R.string.settings_prompts),
     MODELS(R.string.settings_models),
+    RESULTS(R.string.settings_results),
     PERFORMANCE(R.string.settings_performance),
     ADVANCED(R.string.settings_advanced),
 }
@@ -1539,4 +1569,24 @@ private fun CustomBackgroundCard(
             }
         }
     }
+}
+
+/**
+ * ⭐ The optional name in the share credit, [Prefs.SHARE_NAME_MAX] characters at most. ⚠ Saved on Done or focus loss,
+ * as the mirror address is, not per keystroke. [1.6.299]
+ */
+@Composable
+private fun ShareNameField(name: String, onSave: (String) -> Unit) {
+    var text by remember(name) { mutableStateOf(name) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { text = it.take(Prefs.SHARE_NAME_MAX) },
+        singleLine = true,
+        label = { Text(stringResource(R.string.share_credit_name)) },
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { onSave(text) }),
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { if (!it.isFocused && text != name) onSave(text) },
+    )
 }

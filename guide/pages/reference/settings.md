@@ -1,7 +1,7 @@
 # Settings
 
-Open Settings from the sidebar (☰ at the top left). It has five tabs: **Appearance**,
-**Prompts**, **Models**, **Performance** and **Advanced**.
+Open Settings from the sidebar (☰ at the top left). It has six tabs: **Appearance**,
+**Prompts**, **Models**, **Results**, **Performance** and **Advanced**.
 
 ## Appearance
 
@@ -29,6 +29,8 @@ reads the same on every phone.
 (on for new installs). It changes the Default view only; the Advanced view's node sheet always
 swipes side to side.
 **Hide chat view** takes Chat off the view button, leaving Default and Advanced.
+**Keep the edits of each flow** (on): opening another model or flow keeps the changes you made to the one you
+leave, and they come back when you open it again. Off: each opens fresh. A saved flow always opens as you saved it.
 
 ## Prompts
 
@@ -111,6 +113,16 @@ Used by **Search online** in a node's LoRA list ([LoRAs](../models/loras.md)):
 Import `.safetensors` adapters; the list shows each one's size, and Delete removes it.
 [LoRAs](../models/loras.md)
 
+## Results
+
+What goes out with a picture you share.
+
+### Sharing
+
+| switch | default | what it does |
+|---|---|---|
+| **Credit Nightmare on shared pictures** | on | Every picture you share gets a thin dark strip added under it (nothing in the picture is covered): the app icon and "Made with Nightmare Mobile". Fill in **Your name (optional)**, up to 30 characters, and it reads "Created by *your name* with Nightmare Mobile". Pictures saved to the gallery, clips and shared flows are left as they are |
+
 ## Performance
 
 ### Memory
@@ -148,7 +160,7 @@ at 1024 x 1024 takes about 4 minutes this way, slower than its NPU.
 
 | switch | default | what it does |
 |---|---|---|
-| **Use the GPU for DiT models** | off | FLUX.2 Klein 4B renders on the GPU. A second engine (23 MB) and the Q4_0 model download the first time |
+| **Use the GPU for DiT models** | off | FLUX.2 Klein 4B renders on the GPU. A second engine (23 MB) and the Q4_0 model download the first time. Turned off again, the NPU runs that Q4_0 as it is, with nothing to download or repair. For the NPU's own faster build, delete the model and download it again with the switch off. Both engines stay on the phone, so switching back and forth downloads nothing after the first time. A Klein edit with reference pictures still runs on the NPU, where the GPU ran out of memory at 1024x1024 |
 | **Fast decoder on the GPU** | on | Turns the finished picture into pixels with a tiny decoder (taef2, taef1) in under 30 seconds at 1024 x 1024. Off uses the full decoder, which takes minutes on the GPU |
 
 ### Keep rendering in the background
@@ -156,6 +168,10 @@ at 1024 x 1024 takes about 4 minutes this way, slower than its NPU.
 Shown only when your phone's battery manager may stop the app while it is not on screen. Tap
 **Allow in background** so a render in progress, or a loaded model, is not cut off when you
 switch apps.
+
+Any run that takes longer than 10 seconds also shows a progress bar in the notification shade,
+like a download: what is running, its step and the time so far. It goes when the run ends. The
+phone's notification settings for Nightmare (Generation progress) can hide it.
 
 ## Advanced
 

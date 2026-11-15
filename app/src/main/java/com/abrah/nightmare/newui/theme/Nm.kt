@@ -37,52 +37,72 @@ import androidx.compose.ui.unit.sp
  */
 object Nm {
 
+    // ── ⭐⭐ Dark / pure-black adaptation (the user, 2026-11-15: the workbench and the
+    // bottom bar's unfolded cards stayed white in the app's DARK and BLACK themes — Nm was
+    // light-only by design, which no longer holds now the app ships dark themes) ──
+
+    /** The app theme's dark state, kept in step by [com.abrah.nightmare.ui.NightmareTheme]. */
+    var dark by mutableStateOf(false)
+    /** BLACK (AMOLED) variant — surfaces collapse to true black, cards step up minimally. */
+    var black by mutableStateOf(false)
+
+    /**
+     * ⭐ The ACTIVE Material scheme, handed over by [com.abrah.nightmare.ui.NightmareTheme] —
+     * it already resolved the accent palette (violet/blue/teal/…) and the black variant, so
+     * the dark tokens below are the app's own exact surfaces and every accent keeps its own
+     * dark ramp. Null (pre-theme) falls back to the light values, as before.
+     */
+    var scheme: androidx.compose.material3.ColorScheme? = null
+    private val cs: androidx.compose.material3.ColorScheme
+        get() = scheme ?: lightColorScheme()
+
     // ── The page and its surfaces (dynamic for custom background) ─────────
 
     var customBgActive by mutableStateOf(false)
     var cardOpacity by mutableStateOf(0.85f)
 
     /** --bg, the page background: transparent when custom wallpaper is on! */
-    val bg: Color get() = if (customBgActive) Color.Transparent else Color(0xFFF2F0F7)
+    val bg: Color get() = if (customBgActive) Color.Transparent else if (dark) cs.background else Color(0xFFF2F0F7)
 
     /** --card: frosted semi-transparent when custom wallpaper is on! */
-    val card: Color get() = if (customBgActive) Color.White.copy(alpha = cardOpacity) else Color(0xFFFFFFFF)
+    val card: Color get() = if (customBgActive) Color.White.copy(alpha = cardOpacity) else if (dark) cs.surfaceContainer else Color(0xFFFFFFFF)
 
     /** --line, the hairline stroke. */
-    val line: Color get() = if (customBgActive) Color.White.copy(alpha = 0.60f) else customPri?.let { Color((0.92f + it.red * 0.08f).coerceIn(0f, 1f), (0.92f + it.green * 0.08f).coerceIn(0f, 1f), (0.92f + it.blue * 0.08f).coerceIn(0f, 1f)) } ?: Color(0xFFE5E1EF)
+    val line: Color get() = if (customBgActive) Color.White.copy(alpha = 0.60f) else if (dark) cs.outlineVariant else customPri?.let { Color((0.92f + it.red * 0.08f).coerceIn(0f, 1f), (0.92f + it.green * 0.08f).coerceIn(0f, 1f), (0.92f + it.blue * 0.08f).coerceIn(0f, 1f)) } ?: Color(0xFFE5E1EF)
 
     /** #canvasBox — the result frame's empty state: translucent on wallpaper! */
-    val canvas: Color get() = if (customBgActive) Color.White.copy(alpha = (cardOpacity * 0.45f).coerceAtLeast(0.08f)) else Color(0xFFFBFAFE)
+    val canvas: Color get() = if (customBgActive) Color.White.copy(alpha = (cardOpacity * 0.45f).coerceAtLeast(0.08f)) else if (dark) cs.surfaceContainerLow else Color(0xFFFBFAFE)
 
     /** The field stroke. */
-    val fld: Color get() = if (customBgActive) Color.White.copy(alpha = 0.70f) else customPri?.let { Color((0.88f + it.red * 0.12f).coerceIn(0f, 1f), (0.88f + it.green * 0.12f).coerceIn(0f, 1f), (0.88f + it.blue * 0.12f).coerceIn(0f, 1f)) } ?: Color(0xFFD9D4E8)
+    val fld: Color get() = if (customBgActive) Color.White.copy(alpha = 0.70f) else if (dark) cs.outline else customPri?.let { Color((0.88f + it.red * 0.12f).coerceIn(0f, 1f), (0.88f + it.green * 0.12f).coerceIn(0f, 1f), (0.88f + it.blue * 0.12f).coerceIn(0f, 1f)) } ?: Color(0xFFD9D4E8)
 
     // ── Text ───────────────────────────────────────────────────────────────
 
     /** --txt, the ink. */
-    val ink = Color(0xFF17151F)
+    val ink: Color get() = if (dark) cs.onBackground else Color(0xFF17151F)
 
     /** --sub, secondary text. */
-    val sub = Color(0xFF6E6A7A)
+    val sub: Color get() = if (dark) cs.onSurfaceVariant else Color(0xFF6E6A7A)
 
     // ── The primary theme color (dynamic from theme & palette!) ───────────
 
     var customPri by mutableStateOf<Color?>(null)
 
-    /** --pri, the brand color. CTAs and key indicators — the 10% of 60/30/10. */
-    val pri: Color get() = customPri ?: Color(0xFF6D4AE0)
+    /** --pri, the brand color. CTAs and key indicators — the 10% of 60/30/10. On dark the
+     *  app's accent fill is the readable violet; on light the HTML's own stays. */
+    val pri: Color get() = customPri ?: if (dark) cs.primary else Color(0xFF6D4AE0)
 
-    /** --pri-d, pressed/darker. */
-    val priD: Color get() = customPri?.let { Color((it.red * 0.85f).coerceIn(0f, 1f), (it.green * 0.85f).coerceIn(0f, 1f), (it.blue * 0.85f).coerceIn(0f, 1f)) } ?: Color(0xFF5B39CE)
+    /** --pri-d, pressed/darker. On dark a press goes BRIGHTER, not darker. */
+    val priD: Color get() = customPri?.let { if (dark) Color((it.red + (1f - it.red) * 0.2f).coerceAtMost(1f), (it.green + (1f - it.green) * 0.2f).coerceAtMost(1f), (it.blue + (1f - it.blue) * 0.2f).coerceAtMost(1f)) else Color((it.red * 0.85f).coerceIn(0f, 1f), (it.green * 0.85f).coerceIn(0f, 1f), (it.blue * 0.85f).coerceIn(0f, 1f)) } ?: if (dark) cs.secondary else Color(0xFF5B39CE)
 
     /** --pri-soft, selected chips. */
-    val priSoft: Color get() = customPri?.let { Color((0.92f + it.red * 0.08f).coerceIn(0f, 1f), (0.92f + it.green * 0.08f).coerceIn(0f, 1f), (0.92f + it.blue * 0.08f).coerceIn(0f, 1f)) } ?: Color(0xFFEFEAFB)
+    val priSoft: Color get() = if (dark) cs.secondaryContainer else customPri?.let { Color((0.92f + it.red * 0.08f).coerceIn(0f, 1f), (0.92f + it.green * 0.08f).coerceIn(0f, 1f), (0.92f + it.blue * 0.08f).coerceIn(0f, 1f)) } ?: Color(0xFFEFEAFB)
 
     /** --pri-soft2, tinted panels (the run strip). */
-    val soft2: Color get() = if (customBgActive) Color.White.copy(alpha = (cardOpacity * 0.50f).coerceAtLeast(0.10f)) else customPri?.let { Color((0.95f + it.red * 0.05f).coerceIn(0f, 1f), (0.95f + it.green * 0.05f).coerceIn(0f, 1f), (0.95f + it.blue * 0.05f).coerceIn(0f, 1f)) } ?: Color(0xFFF7F4FE)
+    val soft2: Color get() = if (customBgActive) Color.White.copy(alpha = (cardOpacity * 0.50f).coerceAtLeast(0.10f)) else if (dark) cs.surfaceContainerHigh else customPri?.let { Color((0.95f + it.red * 0.05f).coerceIn(0f, 1f), (0.95f + it.green * 0.05f).coerceIn(0f, 1f), (0.95f + it.blue * 0.05f).coerceIn(0f, 1f)) } ?: Color(0xFFF7F4FE)
 
     /** A SELECTED chip's edge (.chip.on border). */
-    val priLine: Color get() = customPri?.let { Color((0.85f + it.red * 0.15f).coerceIn(0f, 1f), (0.85f + it.green * 0.15f).coerceIn(0f, 1f), (0.85f + it.blue * 0.15f).coerceIn(0f, 1f)) } ?: Color(0xFFD8CCF5)
+    val priLine: Color get() = if (dark) cs.primary.copy(alpha = 0.55f) else customPri?.let { Color((0.85f + it.red * 0.15f).coerceIn(0f, 1f), (0.85f + it.green * 0.15f).coerceIn(0f, 1f), (0.85f + it.blue * 0.15f).coerceIn(0f, 1f)) } ?: Color(0xFFD8CCF5)
 
     // ── Status ─────────────────────────────────────────────────────────────
 
@@ -93,25 +113,25 @@ object Nm {
 /**
  * The Material colour scheme for the newui tree.
  *
- * ⚠ `dark` is accepted and IGNORED on purpose, exactly as the old `nmScheme`
- * did: the workbench is a light-only surface by design (its HTML pins
- * `color-scheme: light`), and a dark variant would be a redesign, not a
- * refactor. The parameter stays so callers do not have to change, and so a
- * future dark mode has a hook that is already wired.
+ * ⭐ The surfaces now come dark-aware through the [Nm] getters themselves ([Nm.dark] /
+ * [Nm.scheme], set by [com.abrah.nightmare.ui.NightmareTheme]); the `dark` parameter
+ * drives the container TEXT, which flips to the scheme's light ink when the app is dark.
+ * (Historical: this used to pin `lightColorScheme` values only — the workbench was a
+ * light-only surface by design, until the user asked for dark/black adaptation.)
  */
 @Composable
 fun nmScheme(dark: Boolean = false) = lightColorScheme(
     primary = Nm.pri,
     onPrimary = Color.White,
     primaryContainer = Nm.priSoft,
-    onPrimaryContainer = Nm.priD,
+    onPrimaryContainer = if (dark) MaterialTheme.colorScheme.onSecondaryContainer else Nm.priD,
     secondary = Nm.priD,
     onSecondary = Color.White,
     secondaryContainer = Nm.priSoft,
-    onSecondaryContainer = Nm.priD,
+    onSecondaryContainer = if (dark) MaterialTheme.colorScheme.onSecondaryContainer else Nm.priD,
     tertiary = Nm.pri,
     tertiaryContainer = Nm.priSoft,
-    onTertiaryContainer = Nm.priD,
+    onTertiaryContainer = if (dark) MaterialTheme.colorScheme.onSecondaryContainer else Nm.priD,
     background = Nm.bg,
     onBackground = Nm.ink,
     surface = Nm.card,

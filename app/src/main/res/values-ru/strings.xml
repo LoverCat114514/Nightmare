@@ -261,6 +261,7 @@
     <string name="ip_about_sdxl">IP-Adapter для моделей SDXL Swap: эталонное изображение направляет рендер. Работает только с конвертацией, где отмечен IP-Adapter: Illustrious XL Swap, скачанный начиная с 1.6.122, или ваша собственная из npuforge 1.0.12 и новее.</string>
     <string name="run_lora_tags_unused">Теги LoRA в промпте пропущены: эта модель не принимает LoRA</string>
     <string name="run_lora_tags_negative">Теги LoRA в негативном промпте пропущены. Чтобы их использовать, перенесите их в промпт</string>
+    <string name="run_lora_partial">LoRA «%1$s» подходит к этой модели лишь частично: использовано %2$d из %3$d её тензоров</string>
     <string name="run_lora_tag_missing">LoRA «%1$s» из промпта не установлена: пропущена</string>
     <string name="run_lora_motion_skipped">Перенос движения не принимает LoRA: «%1$s» из промпта пропущена</string>
     <string name="run_wan_ram_warning">%1$s на %2$s с требует около %3$s ГБ на NPU, больше, чем спокойно вмещают %4$s ГБ памяти этого телефона. Приложение может остановиться или перезапуститься. 480p или меньше секунд надёжнее</string>
@@ -268,6 +269,7 @@
     <string name="run_wan_streams_anyway">Этот клип читает модель из памяти устройства при любом положении переключателя потоковой модели: NPU этого телефона не может удержать её целиком.</string>
     <!-- ⭐ 2026-11-10 port (upstream 1.6.288-292) -->
     <string name="run_sdxl_lowram_anyway">SDXL на этом телефоне работает в режиме экономии памяти при любом положении переключателя: без него SDXL заполняет память телефона с объёмом меньше 16 ГБ, и Android закрывает приложения.</string>
+    <string name="run_moss_few_steps">Эта модель MOSS рассчитана на %1$d шагов: при меньшем числе тёмные и ровные области получаются блоками. Для 4 шагов есть 4-шаговая модель.</string>
     <string name="run_ref_fit_warning">%1$s с референсом: %2$s, скорее всего, слишком много для этого телефона и может не получиться. Подойдёт %3$s. Пробуем</string>
     <string name="feature_missing_convert">В этой конвертации нет %1$s. Сконвертируйте снова в npuforge, отметив %1$s.</string>
     <string name="feature_missing_builtin">В этой загрузке модели нет %1$s. Удалите её и скачайте снова, чтобы получить версию с ним.</string>
@@ -1063,6 +1065,16 @@
     <string name="views_nodes_vertical_hint">Все шаги один под другим, без пролистывания</string>
     <string name="views_hide_chat">Скрыть чат</string>
     <string name="views_hide_chat_hint">Кнопка вида предлагает только «Обычный» и «Расширенный»</string>
+    <string name="views_keep_edits">Сохранять правки каждой схемы</string>
+    <string name="views_keep_edits_hint">При переходе к другой модели или схеме правки в той, что вы покидаете, сохраняются и возвращаются, когда вы снова её откроете. Выключено: каждая открывается заново. Сохранённая схема всегда открывается такой, какой вы её сохранили.</string>
+    <string name="share_credit">Подпись Nightmare на картинках, которыми вы делитесь</string>
+    <string name="share_credit_hint">Тонкая полоса под каждой картинкой, которой вы делитесь: «Сделано в Nightmare Mobile» или «Автор: ваше имя, сделано в Nightmare Mobile». Картинки, сохранённые в галерею, и клипы не меняются.</string>
+    <string name="share_credit_name">Ваше имя (необязательно)</string>
+    <string name="share_credit_plain">Сделано в %1$s</string>
+    <string name="share_credit_named">Автор: %1$s, сделано в %2$s</string>
+    <string name="run_notice_channel">Ход генерации</string>
+    <string name="run_notice_title">Идёт: %1$s</string>
+    <string name="run_notice_running">Генерация</string>
     <string name="agent_clear_chat">Очистить чат</string>
     <string name="agent_attach">Прикрепить картинку</string>
     <string name="agent_detach">Убрать картинку</string>
@@ -1196,6 +1208,9 @@
     <string name="settings_appearance">Внешний вид</string>
     <string name="settings_prompts">Промпты</string>
     <string name="settings_models">Модели</string>
+    <string name="settings_results">Результаты</string>
+    <string name="share_title">Отправка</string>
+    <string name="share_note">Что уходит вместе с картинкой, которой вы делитесь.</string>
     <string name="settings_performance">Производительность</string>
     <string name="settings_advanced">Дополнительно</string>
     <string name="tag_autocomplete">Автодополнение тегов</string>
@@ -1290,6 +1305,7 @@
     <string name="schedule_beta">Beta</string>
     <string name="schedule_beta57">Beta 57</string>
     <string name="schedule_radiance_shift">Radiance Shift</string>
+    <string name="schedule_linear_quadratic">Linear Quadratic</string>
 
     <string name="schedule_unavailable">У LCM своё расписание</string>
     <string name="drawer_support">Поддержка</string>
@@ -1331,6 +1347,12 @@
     <string name="face_edit_group_head">Голова</string>
     <string name="face_edit_not_clip">Правка лица работает с картинками, не с клипами.</string>
     <string name="face_edit_loading">Картинка ещё загружается. Попробуйте через секунду.</string>
+
+    <string name="prompt_expand">Редактировать на весь экран</string>
+    <string name="prompt_expand_done">Готово</string>
+    <string name="cutout_save">Сохранить вырезку</string>
+    <string name="cutout_saved">Сохранено в галерею с прозрачным фоном</string>
+    <string name="cutout_empty">Пока ничего не выбрано</string>
     <string name="face_edit_working">Правим лицо…</string>
     <string name="face_edit_kept">Изменённое лицо сохранено в Результатах.</string>
     <string name="face_edit_failed">Правка лица не удалась. %1$s</string>

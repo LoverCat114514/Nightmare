@@ -155,10 +155,11 @@ internal fun MoreMenu(
         ) {
             Surface(
                 shape = RoundedCornerShape(26.dp),
-                color = Color.White.copy(alpha = 0.98f),
+                // ⭐ (the user, 2026-11-15: the unfolded card stayed white in dark/black)
+                color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.98f),
                 tonalElevation = 0.dp,
                 shadowElevation = (8.dp * v).coerceAtLeast(0.dp),
-                border = BorderStroke(1.2.dp, Color(0xFFEDE9FE).copy(alpha = v)),
+                border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = v)),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(
@@ -194,8 +195,8 @@ internal fun MoreMenu(
                     // ── 1. Online Gallery Card ──
                     Surface(
                         shape = RoundedCornerShape(20.dp),
-                        color = Color(0xFFF9F8FD),
-                        border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
+                        color = com.abrah.nightmare.newui.theme.Nm.card,
+                        border = BorderStroke(1.dp, com.abrah.nightmare.newui.theme.Nm.line),
                         modifier = Modifier
                             .fillMaxWidth()
                             .onGloballyPositioned { galleryBounds = it.boundsInRoot() }
@@ -262,7 +263,7 @@ internal fun MoreMenu(
                                 "›",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF7C3AED),
+                                color = MaterialTheme.colorScheme.primary,
                             )
                         }
                     }
@@ -274,8 +275,8 @@ internal fun MoreMenu(
                     // ── 2. Image Scramble Card ──
                     Surface(
                         shape = RoundedCornerShape(20.dp),
-                        color = Color(0xFFF9F8FD),
-                        border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
+                        color = com.abrah.nightmare.newui.theme.Nm.card,
+                        border = BorderStroke(1.dp, com.abrah.nightmare.newui.theme.Nm.line),
                         modifier = Modifier
                             .fillMaxWidth()
                             .onGloballyPositioned { scrambleBounds = it.boundsInRoot() }
@@ -335,14 +336,14 @@ internal fun MoreMenu(
                                 modifier = Modifier
                                     .size(28.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFFFEE2E2).copy(alpha = 0.7f)),
+                                    .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
                                     "›",
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFBE123C),
+                                    color = MaterialTheme.colorScheme.error,
                                 )
                             }
                         }
@@ -355,8 +356,8 @@ internal fun MoreMenu(
                     // ── 3. Reverse Prompt (反推) Card ──
                     Surface(
                         shape = RoundedCornerShape(20.dp),
-                        color = Color(0xFFF9F8FD),
-                        border = BorderStroke(1.dp, Color(0xFFE9E4F5)),
+                        color = com.abrah.nightmare.newui.theme.Nm.card,
+                        border = BorderStroke(1.dp, com.abrah.nightmare.newui.theme.Nm.line),
                         modifier = Modifier
                             .fillMaxWidth()
                             .onGloballyPositioned { reverseBounds = it.boundsInRoot() }

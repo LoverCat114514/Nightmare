@@ -64,7 +64,9 @@ claude-yolo.bat
 # them will recur. Don't.
 app/src/main/jniLibs/
 app/src/main/assets/qnnlibs/
-app/src/main/assets/ditlibs/
+# ditlibs: this fork DOES commit the 6 ggml-hexagon skels (assets/ditlibs/) —
+# container builds (aarch64, no Windows stage_backend step) rely on them being
+# in-tree; vc676+ APKs bundle them so a fresh install gets working skels.
 # Foxlet (prompt translation) — built from source by tools/build_foxlet.sh, never committed.
 app/libs/*.aar
 

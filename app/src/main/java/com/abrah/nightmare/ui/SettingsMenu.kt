@@ -186,12 +186,13 @@ private fun MenuCapsule(
 
     Surface(
         shape = RoundedCornerShape(percent = 50),
-        color = Color.White.copy(alpha = 0.90f),
+        // ⭐ (the user, 2026-11-15: white-only in the dark/black themes) theme-following glass.
+        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.90f),
         tonalElevation = 0.dp,
         shadowElevation = 0.dp, // No drop shadow that creates dark smudges
         border = BorderStroke(
             1.dp,
-            Color.White.copy(alpha = 0.85f),
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.85f),
         ),
         modifier = Modifier
             .onGloballyPositioned { coords.value = it }
@@ -340,12 +341,13 @@ internal fun SettingsCardSheet(
             // No main thread layout thrashing, zero frame drop!
             Surface(
                 shape = RoundedCornerShape(20.dp),
-                color = Color.White.copy(alpha = 0.95f),
+                // ⭐ dark/black adaptation, same call as the capsule above.
+                color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.95f),
                 tonalElevation = 0.dp,
                 shadowElevation = (8.dp * v).coerceAtLeast(0.dp),
                 border = BorderStroke(
                     1.2.dp,
-                    Color.White.copy(alpha = 0.90f * v),
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.90f * v),
                 ),
                 modifier = Modifier
                     .offset(x = targetLeft, y = targetTop)

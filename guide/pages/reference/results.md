@@ -28,8 +28,8 @@ always get back to exactly how it was made.
 | 🗑 **Delete** | Removes it (asks first) |
 | ★ **Favourite** | Stars it; starred pictures appear under **Favourites** |
 | ⬇ **Save to gallery** | Writes a copy to your phone's gallery |
-| **Share** | Shares the picture with another app |
-| **Send to a flow** | Offers the flows that take a photo: Image to image, Inpaint, Image edit, Upscale, Image to video, and opens the one you pick with this picture in it |
+| **Share** | Shares the picture with another app, with a thin "Made with Nightmare Mobile" strip under it (Settings switch, on by default; your name optional) |
+| **Send to a flow** | Offers the flows that take a photo: Image to image, Inpaint, Image edit, Upscale, Image to video, and opens the one you pick with this picture in it. A built-in flow also takes the picture's prompt, negative and LoRAs (the LoRAs only when the flow's model is the same kind as the one that made it) |
 | **Upscale** | Enlarges it with an upscaler; the bigger copy is kept as a new item. The same window offers **UltraFix**: see below |
 | ⓘ **What made this** | The prompt, model, seed and settings, and a way to use them on the open flow; on a DiT picture, **Diagnose**: see below |
 | **Open flow** / share the flow | Reopens the flow that made it on the canvas, or shares that flow as a file |

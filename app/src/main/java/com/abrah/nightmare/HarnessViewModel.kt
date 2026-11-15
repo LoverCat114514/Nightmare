@@ -71,6 +71,39 @@ private const val DRAFT_KEY_PREF = "flow_draft_key"
 /** ⭐⭐ What the Results filter reads — see `HarnessViewModel.resultTags`. */
 data class ResultTags(val models: Set<String>, val text: String)
 
+/**
+ * ⭐ Pure: whether the flow under [key] keeps a draft ([HarnessViewModel] per-flow autosave): a recipe's, while
+ * [keep] ([Prefs.keepFlowEdits]); a saved flow's never (Saved #8050: it opens as saved); no key, none. [1.6.297]
+ */
+internal fun keepsDraft(key: String?, keep: Boolean): Boolean = keep && key != null && !key.startsWith("saved:")
+
+/**
+ * ⚠ Pure: whether [draft] can be the draft of the flow [fresh] builds: what feeds its Output is the same node, of the
+ * same kind (a video node or not). Saved #8046 (a nubia Z80 Ultra, 1.6.284, a screen recording): Use on MiniMax H3,
+ * Text to video, and the canvas stayed on the SD 1.5 Text to image flow. The Text to video draft HELD that flow (a
+ * draft written under a key that was no longer the canvas's), so opening Text to video restored it. ⚠ Both ends ask
+ * this: a draft that does not fit is neither written ([HarnessViewModel.keepDraft]) nor restored (`openRecipeNow`).
+ */
+internal fun draftFits(fresh: Graph, draft: Graph): Boolean {
+    fun fed(g: Graph) = g.nodes.firstOrNull { it.type == "core.output" }?.inputs?.get("media")?.node
+    val main = fed(fresh) ?: return true
+    val got = draft.byId[main] ?: return false
+    val want = fresh.byId[main] ?: return true
+    if ((got.type in VIDEO_MODEL_TYPES) != (want.type in VIDEO_MODEL_TYPES)) return false
+    if (want.type in VIDEO_MODEL_TYPES) return true
+    // ⭐ A picture flow's draft renders the model it is filed under: the same generator type and the same model.
+    // ⚠ Saved #8080 (1.6.293, a screen recording): Use on FLUX.3, Text to image, and the canvas stayed on Fibo 2.0 Edit's
+    // Text to image, its current model unchanged. Both flows feed Output from a `generate` node that is not a video one,
+    // so the check above let Fibo's canvas through as FLUX.3's draft.
+    if (got.type != want.type) return false
+    val m = want.params["model"]
+    return m.isNullOrBlank() || got.params["model"].isNullOrBlank() || got.params["model"] == m
+}
+
+/** ⚠ Pure: the recipe id in a draft key (`recipe:<id>` or `recipe:<id>:<model>`), or null for any other key. */
+internal fun draftRecipeId(key: String?): String? =
+    key?.takeIf { it.startsWith("recipe:") }?.removePrefix("recipe:")?.substringBefore(':')?.takeIf { it.isNotBlank() }
+
 class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     private val clock = SimpleDateFormat("HH:mm:ss", Locale.US)
@@ -470,6 +503,9 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         if (key == Prefs.KEY_DIT_GPU || key == Prefs.KEY_V69_NPU) {
             DitEngine.refresh(app)
             refreshModels()
+            // ⭐ The other engine, fetched now rather than at the next Run's popup: two renames when it is kept
+            // ([DitEngine.restoreSpare]), else its 23 MB in the background, as after an app update.
+            if (key == Prefs.KEY_DIT_GPU) updateDitEngineQuietly()
         }
         val resident = BackendProcess.launchedKey?.model?.let { ModelCatalog.byId(it) }
         if (resident != null && governs(resident)) {
@@ -763,7 +799,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         if (refuseWhileRendering(label)) return
         // ⭐ No question any more (testers, Saved #7281-7284: "unnecessary", one tap more to open a model): unsaved
         // work is kept as that flow's DRAFT and comes back when the flow is opened again, Local Dream's way.
-        if (activeFlow.dirty) keepDraft()
+        if (activeFlow.dirty && keepsDraft(draftKey, Prefs.keepFlowEdits)) keepDraft()
         open()
     }
 
@@ -789,6 +825,13 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     /** ⚠ On the caller's thread, once per switch (a few KB): reopening the SAME flow reads it straight back. */
     private fun keepDraft() {
         val key = draftKey ?: return
+        // ⚠ Saved #8046: never a draft of another flow under this flow's key ([draftFits]).
+        val recipe = draftRecipeId(key)?.let { id -> com.abrah.nightmare.canvas.RECIPES.firstOrNull { it.id == id } }
+        if (recipe != null && !runCatching { draftFits(recipe.build().graph, canvas.workflow.graph) }.getOrDefault(true)) {
+            android.util.Log.w("Harness", "draft: the canvas is not a ${recipe.id} flow; not kept under $key")
+            draftKey = null
+            return
+        }
         runCatching { drafts.save(draftName(key), canvas.workflow, nodeTypes, canvas.savedView) }
             .onFailure { say("could not keep this flow's edits. ${it.message}", bad = true) }
     }
@@ -840,6 +883,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val current: List<String>,
         val recipes: List<com.abrah.nightmare.canvas.Recipe>,
         val saved: List<String>,
+        /** ⭐ The kept result the picture came from (GitHub #119): a built-in flow it opens takes its prompt and LoRAs. */
+        val fromResult: String? = null,
     )
 
     var pendingSend by mutableStateOf<SendChoices?>(null)
@@ -855,9 +900,9 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     /** ⭐ From Results: the kept PNG. */
     fun offerSendResult(resultId: String) =
-        offerSend { f -> results.pngFile(resultId)?.let { it.copyTo(f, overwrite = true); true } ?: false }
+        offerSend(fromResult = resultId) { f -> results.pngFile(resultId)?.let { it.copyTo(f, overwrite = true); true } ?: false }
 
-    private fun offerSend(write: (java.io.File) -> Boolean) {
+    private fun offerSend(fromResult: String? = null, write: (java.io.File) -> Boolean) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val dir = java.io.File(getApplication<Application>().filesDir, "sent").apply { mkdirs() }
             val file = java.io.File(dir, "sent_${System.currentTimeMillis()}.png")
@@ -877,6 +922,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     current = canvas.workflow.graph.nodes.filter { it.type == "core.image" }.map { it.id },
                     recipes = recipes,
                     saved = saved,
+                    fromResult = fromResult,
                 )
             }
         }
@@ -906,6 +952,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             openRecipeNow(r)
             closeLibrary()
             placeSent(s.file)
+            s.fromResult?.let(::carryFromResult)
         }
     }
 
@@ -928,6 +975,47 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val target = canvas.workflow.graph.nodes.firstOrNull { it.type == "core.image" } ?: return
         editCanvas { it.setParam(target.id, "uri", file.absolutePath) }
         say("sent the picture to ${target.id}")
+    }
+
+    /**
+     * ⭐⭐ GitHub #119 ("the used LoRAs and the prompts should carry over to the image to image flow instead of users
+     * having to copy and paste them from the gallery"): a kept picture sent into a BUILT-IN flow brings the prompt and
+     * negative of the sampler that made it, and its LoRAs. ⚠ The LoRAs only onto a model of the same family: a SDXL
+     * LoRA on a Klein does nothing but fail, and the flow opens with the selected model, not the picture's. ⚠ Not into a
+     * saved flow or the open one: their prompts are the user's own.
+     */
+    private fun carryFromResult(resultId: String) {
+        val g = results.flow(resultId)?.workflow?.graph ?: return
+        val src = ((topoSort(g) as? Order.Ok)?.nodes ?: g.nodes).lastOrNull { isSampler(it.type) } ?: return
+        val pp = src.inputs["prompt"]?.node?.let { g.byId[it] }?.takeIf { it.type == "core.prompt" }?.params.orEmpty()
+        val loras = src.params[SdSampler.LORAS].orEmpty().trim()
+        val srcFamily = ModelCatalog.byId(src.params["model"].orEmpty())?.family
+        val carried = mutableListOf<String>()
+        editCanvas { st ->
+            var s = st
+            val cg = s.workflow.graph
+            val types = typesFor(cg)
+            // ⚠ The sampler the sent picture feeds: the one whose image port is wired, else the first.
+            val samplers = cg.nodes.filter { isSampler(it.type) }
+            val dst = samplers.firstOrNull { it.inputs["image"] != null } ?: samplers.firstOrNull() ?: return@editCanvas s
+            val promptId = dst.inputs["prompt"]?.node?.takeIf { cg.byId[it]?.type == "core.prompt" }
+                ?: cg.nodes.firstOrNull { it.type == "core.prompt" }?.id
+            if (promptId != null) {
+                pp["prompt"]?.takeIf { it.isNotBlank() }?.let { s = s.setParam(promptId, "prompt", it); carried += "prompt" }
+                pp["negative"]?.takeIf { it.isNotBlank() }?.let { s = s.setParam(promptId, "negative", it); carried += "negative" }
+            }
+            if (loras.isNotEmpty() && types[dst.type]?.widgets?.any { it.name == SdSampler.LORAS } == true) {
+                val dstFamily = ModelCatalog.byId(dst.params["model"].orEmpty())?.family
+                if (srcFamily != null && srcFamily == dstFamily) {
+                    s = s.setParam(dst.id, SdSampler.LORAS, loras)
+                    carried += "LoRAs"
+                } else {
+                    say("the picture's LoRAs were made for ${srcFamily?.label ?: "another model"}; not carried")
+                }
+            }
+            s
+        }
+        if (carried.isNotEmpty()) say("from the picture: " + carried.joinToString())
     }
 
     // ---- what the device is carrying -------------------------------------
@@ -1181,10 +1269,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             }
             guardedOpen(name) {
                 val key = "saved:$name"
-                val kept = loadDraft(key)
-                openWorkflow(kept?.workflow ?: loaded.workflow, kept?.view ?: loaded.view)
-                // ⚠ Against the SAVED file, so edits kept since the last Save still show as unsaved.
-                if (kept != null) savedBaseline = loaded.workflow
+                // ⭐ Saved #8050 (the user, 2026-11-14): a saved flow opens as SAVED. Unsaved edits made to it are not
+                // brought back here (a draft left by an older version is dropped). [1.6.297]
+                dropDraft(key)
+                openWorkflow(loaded.workflow, loaded.view)
                 draftKey = key
                 currentWorkflowName = name
                 say("opened \"$name\"")
@@ -3138,7 +3226,37 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** ⭐ A Results picture waiting on the face model ([askFaceModel]); opened when the download lands. */
+    private var pendingFaceEdit: com.abrah.nightmare.canvas.Result? = null
+
+    /** ⭐ The picture whose face editor opens now (the download popup's OK); MainActivity draws it. */
+    var faceEditReady by mutableStateOf<com.abrah.nightmare.canvas.Result?>(null)
+        private set
+
+    fun faceEditShown() { faceEditReady = null }
+
+    /**
+     * ⭐ Saved #8051 (the user, 2026-11-14: "load, ask to download"): Edit face on a Results picture with the face
+     * model not on the phone asks for it here, rather than opening an editor that says "not installed" and sending
+     * the person to Models, Tools. Installed, it loads by itself ([com.abrah.nightmare.portrait.LivePortrait.using]).
+     * False: nothing to ask, open the editor.
+     */
+    fun askFaceModel(r: com.abrah.nightmare.canvas.Result): Boolean {
+        if (com.abrah.nightmare.portrait.LivePortrait.isInstalled(getApplication())) return false
+        pendingFaceEdit = r
+        missingModel = toolMissing(com.abrah.nightmare.NeedsDownload.LIVEPORTRAIT)
+        missingForKnob = text(R.string.face_edit_open)
+        return true
+    }
+
     fun dismissMissingModel() {
+        // ⭐ The face model landed for a Results picture: its editor opens now ([askFaceModel]). Hidden mid-download,
+        // it still waits; Not now forgets it.
+        pendingFaceEdit?.let { r ->
+            val tool = toolMissing(com.abrah.nightmare.NeedsDownload.LIVEPORTRAIT).installId
+            if (com.abrah.nightmare.portrait.LivePortrait.isInstalled(getApplication())) { faceEditReady = r; pendingFaceEdit = null }
+            else if (installing != tool) pendingFaceEdit = null
+        }
         // ⚠ A describe waiting on this popup will never run: say so, or the
         // prompt box's dialog spins on "Describing…" forever. ⚠ Not on Hide —
         // the download goes on and the describe still happens when it lands.
@@ -4645,22 +4763,22 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      * node's film is longer than its own part ([com.abrah.nightmare.npu.FilmJoin]).
      * ⚠ A poster the bounded store dropped during a long chain is read back off its clip.
      */
-    private fun keepChainParts(r: GraphRun) {
-        val order = (topoSort(canvas.workflow.graph) as? Order.Ok)?.nodes ?: canvas.workflow.graph.nodes
+    private fun keepChainParts(r: GraphRun, ran: com.abrah.nightmare.canvas.Workflow) {
+        val order = (topoSort(ran.graph) as? Order.Ok)?.nodes ?: ran.graph.nodes
         val parts = order.mapNotNull { n -> (r.outputs[n.id] as? Value.Video)?.takeIf { it.part != null }?.let { n.id to it } }
         if (parts.none { (_, v) -> v.path != v.part }) return
         val batchId = "c" + System.currentTimeMillis()
         for ((id, v) in parts) {
             val part = java.io.File(v.part!!).takeIf { it.isFile } ?: continue
             v.startId?.takeIf { s -> ops.images.get(s) != null && kept.none { it.imageId == s } }?.let { s ->
-                keepResult(s, canvas.workflow, batchId = batchId, batchLabel = "$id start", auto = true, from = id)
+                keepResult(s, ran, batchId = batchId, batchLabel = "$id start", auto = true, from = id)
             }
             val posterId = com.abrah.nightmare.npu.VideoWriter.posterIdFor(part)
             if (ops.images.get(posterId) == null) {
                 com.abrah.nightmare.npu.FilmJoin.firstFrame(part)?.let { ops.images.put(it, id = posterId) }
             }
             if (kept.none { it.imageId == posterId }) {
-                keepResult(posterId, canvas.workflow, batchId = batchId, batchLabel = "$id clip", auto = true, from = id, video = part)
+                keepResult(posterId, ran, batchId = batchId, batchLabel = "$id clip", auto = true, from = id, video = part)
             }
         }
     }
@@ -4936,7 +5054,16 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             if (SelectedModel.id == spec.id) {
                 val next = ModelCatalog.installed(ctx).firstOrNull { it.id != spec.id }
                     ?: ModelCatalog.byId(V1_MODEL)
-                if (next != null) selectModel(next)
+                // ⭐ Saved #8050 (b): a saved flow that never named the deleted model is left as saved. [selectModel]
+                // retargets every node on the canvas, so the open flow read as edited ("ruined, as if never saved").
+                // Only a canvas that runs the deleted model is moved to the next one.
+                val canvasUses = canvas.workflow.graph.nodes.any { it.params["model"] == spec.id }
+                if (next != null && canvasUses) selectModel(next)
+                else if (next != null) {
+                    SelectedModel.set(ctx, next.id)
+                    say("model set to ${next.label}")
+                    if (BackendProcess.launchedKey?.model == spec.id) stopBackend()
+                }
             }
         } catch (e: Exception) {
             modelError = e.message
@@ -7170,7 +7297,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         openedRecipeId = r.id
         val key = "recipe:" + r.id + if (r.usesCheckpoint) ":" + SelectedModel.id else ""
         val fresh = r.build()
-        val kept = if (draft) loadDraft(key) else null
+        val kept = (if (draft && keepsDraft(key, Prefs.keepFlowEdits)) loadDraft(key) else null)?.let { d ->
+            // ⚠ Saved #8046: a draft of another flow kept under this key is dropped, and the flow opens fresh.
+            if (draftFits(fresh.graph, d.workflow.graph)) d
+            else { android.util.Log.w("Harness", "draft: $key held another flow; dropped"); dropDraft(key); null }
+        }
         openWorkflow(kept?.workflow ?: fresh, kept?.view)
         // ⚠ The baseline stays the FRESH build, so a restored draft still reads as edited and is kept again on leaving.
         if (kept != null) { savedBaseline = fresh; sayNotes(kept) }
@@ -7221,6 +7352,20 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     /** ⚠ Image ids whose keep is still being written. See [keepResult]. */
     private val keeping = mutableSetOf<String>()
 
+    /**
+     * ⭐⭐ The flow each recent picture was rendered from, by image id ([runCanvas], GitHub #119), so a keep after the
+     * canvas moved on still files the prompt, seed and LoRAs that made it. ⚠ Bounded: the image store forgets old
+     * pictures too, and a keep of one it forgot is refused before this is read.
+     */
+    private val ranFlows = object : LinkedHashMap<String, com.abrah.nightmare.canvas.Workflow>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, com.abrah.nightmare.canvas.Workflow>?) = size > 64
+    }
+
+    /** ⭐ Every picture [r] made, poster or output, filed against [ran] for a later keep ([ranFlows]). */
+    private fun rememberRanFlow(r: GraphRun, ran: com.abrah.nightmare.canvas.Workflow) {
+        for (v in r.outputs.values) v.previewImage()?.id?.let { ranFlows[it] = ran }
+    }
+
     fun keepResult(
         imageId: String,
         flow: com.abrah.nightmare.canvas.Workflow? = null,
@@ -7244,7 +7389,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // ⚠ Synchronous, on Main: [kept] only learns of a keep after the IO write, so a
         // double tap (or autosave plus a tap) stored the same picture twice.
         if (!keeping.add(imageId)) return
-        val kept = flow ?: canvas.workflow
+        // ⭐ GitHub #119: a picture kept by hand after the canvas was edited keeps the flow that MADE it ([ranFlows]).
+        val kept = flow ?: ranFlows[imageId] ?: canvas.workflow
         val graph = kept.graph
         // ⭐⭐ The sampler UPSTREAM OF THIS PICTURE, through [samplerFor] — the
         // same nearest-first walk the canvas viewer's seed uses, so the two
@@ -7546,8 +7692,26 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             return@shareOffMain null
         }
         val png = results.fullBytes(id) ?: return@shareOffMain text(R.string.share_picture_missing)
-        Share.image(getApplication(), png, "nightmare-" + id)
+        // ⭐ The credit strip ([ShareCredit], on by default): re-encoded only when it is on. [1.6.299]
+        val credited = creditedOrNull(png)
+        if (credited != null) Share.image(getApplication(), credited, "nightmare-" + id)
+        else Share.image(getApplication(), png, "nightmare-" + id)
         null
+    }
+
+    /** ⭐ [png] decoded with [ShareCredit]'s strip under it, or null when the switch is off (or it will not decode). [1.6.299] */
+    private fun creditedOrNull(png: ByteArray): android.graphics.Bitmap? {
+        if (!Prefs.shareCredit) return null
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size) ?: return null
+        return ShareCredit.apply(getApplication(), bmp, Prefs.shareName)
+    }
+
+    var shareName by mutableStateOf(Prefs.shareName)
+        private set
+
+    fun chooseShareName(value: String) {
+        Prefs.setShareName(getApplication(), value)
+        shareName = Prefs.shareName
     }
 
     /**
@@ -7618,7 +7782,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             when {
                 clip != null -> Share.video(getApplication(), clip, name)
                 bmp == null -> return@shareOffMain text(R.string.run_picture_not_in_memory)
-                else -> Share.image(getApplication(), bmp, name)
+                // ⭐ The credit strip ([ShareCredit], on by default). [1.6.299]
+                else -> Share.image(
+                    getApplication(),
+                    if (Prefs.shareCredit) ShareCredit.apply(getApplication(), bmp, Prefs.shareName) else bmp,
+                    name,
+                )
             }
             null
         }
@@ -8022,6 +8191,21 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 obj.optString("steps").takeIf { it.isNotBlank() }?.let { out += "Steps" to it }
                 obj.optString("cfg").takeIf { it.isNotBlank() }?.let { out += "CFG" to it }
                 obj.optString("scheduler").takeIf { it.isNotBlank() }?.let { out += "Scheduler" to it }
+                // ⭐ (the user, 2026-11-15: "只显示提示词…反正是缺东西") the PNG's own JSON carries MORE than
+                // the rows above read — LoRAs and denoise shipped in [buildMetaJson] but were never shown.
+                // Same labels the canvas's info uses ([String.knobLabel]).
+                obj.optString("denoise").takeIf { it.isNotBlank() }?.let {
+                    out += "denoise".knobLabel(getApplication()) to it
+                }
+                obj.optString("loras").takeIf { it.isNotBlank() }?.let { loras ->
+                    // "name:weight,name:weight" — the compact form [buildMetaJson] writes.
+                    val pretty = loras.split(',').mapNotNull { e ->
+                        val n = e.trim().substringBefore(':').trim()
+                        val w = e.trim().substringAfter(':', "").trim()
+                        if (n.isBlank()) null else if (w.isBlank()) n else "$n ($w)"
+                    }.joinToString(", ")
+                    if (pretty.isNotBlank()) out += "LoRA" to pretty
+                }
             }
             r.prompt?.takeIf { it.isNotBlank() && obj?.optString("positive").isNullOrBlank() }
                 ?.let { out += "Prompt" to it }
@@ -8210,7 +8394,16 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                         return@mapNotNull ("nightmare-$id.mp4") to { f: java.io.File -> clip.copyTo(f, overwrite = true); Unit }
                     }
                     val png = results.imageFile(id).takeIf { it.isFile } ?: return@mapNotNull null
-                    ("nightmare-$id.png") to { f: java.io.File -> png.copyTo(f, overwrite = true); Unit }
+                    // ⭐ The credit strip ([ShareCredit], 1.6.299): re-encoded only when it is on.
+                    ("nightmare-$id.png") to { f: java.io.File ->
+                        val credited = creditedOrNull(png.readBytes())
+                        if (credited != null) {
+                            f.outputStream().use { out ->
+                                credited.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                            }
+                        } else png.copyTo(f, overwrite = true)
+                        Unit
+                    }
                 }
                 val mime = when {
                     entries.all { it.first.endsWith(".png") } -> "image/png"
@@ -9110,6 +9303,25 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     var runLog by mutableStateOf(com.abrah.nightmare.canvas.RunLogState())
         private set
 
+    // ⭐ A long run's progress bar in the notification shade ([RunNotice], the user 2026-11-14), like a download's.
+    // ⚠ A one-second tick rather than a hook in every place [runLog] changes: the elapsed time moves on its own, and
+    // a step that takes a minute must still show the clock moving. One notify() a second at most; nothing measurable.
+    init {
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(1000)
+                val app = getApplication<Application>()
+                val log = runLog
+                if (!log.running) { RunNotice.clear(app); continue }
+                val ms = android.os.SystemClock.elapsedRealtime() - log.startedAtMs
+                if (ms < RunNotice.SHOW_AFTER_MS) continue
+                val frac = log.step?.takeIf { it.second > 0 }?.let { (s, t) -> s.toFloat() / t }
+                val title = log.now?.let { app.getString(R.string.run_notice_title, it) } ?: app.getString(R.string.run_notice_running)
+                RunNotice.progress(app, title, RunNotice.textFor(log.stepLabel, ms), frac)
+            }
+        }
+    }
+
     /**
      * Forget the last run.
      *
@@ -9347,6 +9559,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             // outputs map" — map order is not graph order, and a sweep that
             // collected the crop instead of the render would look like the
             // sampler doing nothing.
+            rememberRanFlow(r, canvas.workflow.copy(graph = graph))
             (r.outputs[terminal]?.previewImage())?.let { img ->
                 keepResult(
                     img.id,
@@ -9579,10 +9792,14 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
         val pinned = runPinned.also { runPinned = emptyMap() }
         val overrides = runOverrides.also { runOverrides = emptyMap() }
+        // ⭐⭐ The flow AS IT RAN, which is what its pictures are kept with ([ranFlows]). ⚠ GitHub #119: autosave read the
+        // canvas when the render ENDED, so a prompt typed for the next run while this one rendered was filed with this
+        // picture ("output A has output B's prompts in the info page").
+        val ran = if (overrides.isEmpty()) canvas.workflow else canvas.workflow.copy(
+            graph = Graph(canvas.workflow.graph.nodes.map { n -> overrides[n.id]?.let { n.copy(params = n.params + it) } ?: n }),
+        )
         val r = ops.runWorkflow(
-            if (overrides.isEmpty()) canvas.workflow else canvas.workflow.copy(
-                graph = Graph(canvas.workflow.graph.nodes.map { n -> overrides[n.id]?.let { n.copy(params = n.params + it) } ?: n }),
-            ),
+            ran,
             pinned = pinned,
             // ⭐ Named before it runs, so a 24 s sampler is a node with a name
             // rather than a frozen screen.
@@ -9680,6 +9897,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             (v as? Value.Video)?.let { id to it.path }
         }.toMap()
         if (clips.isNotEmpty()) canvas = canvas.copy(videos = canvas.videos + clips)
+        rememberRanFlow(r, ran)
 
         // ⭐⭐⭐ **Autosave**: the output node says every Run is worth keeping,
         // so it is kept here — with the flow, the seed and the prompt, exactly
@@ -9695,8 +9913,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // the viewer walks them together, each labelled with the output node it
         // came from. The user's call, 2026-09-19. ⚠ A single output keeps no
         // batch, so an ordinary Run reads exactly as it always did.
-        if (MediaOutputNode.autosaves(canvas.workflow.graph)) {
-            val outs = canvas.workflow.graph.nodes
+        if (MediaOutputNode.autosaves(ran.graph)) {
+            val outs = ran.graph.nodes
                 .filter { it.type == MediaOutputNode.name }
                 .mapNotNull { n -> r.outputs[n.id]?.previewImage()?.id?.let { n.id to it } }
                 // ⚠ Two outputs wired to ONE picture keep it once. `kept` below
@@ -9708,14 +9926,14 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             val batchId = if (outs.size > 1) "b" + System.currentTimeMillis() else null
             outs.forEach { (node, id) ->
                 keepResult(
-                    id, canvas.workflow,
+                    id, ran,
                     batchId = batchId,
                     batchLabel = if (batchId != null) node else "",
                     auto = true,
                     from = node,
                 )
             }
-            keepChainParts(r)
+            keepChainParts(r, ran)
         }
 
         afterCanvasRun(r)

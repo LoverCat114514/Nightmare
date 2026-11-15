@@ -1,4 +1,4 @@
-﻿# Stage the built backend and the QNN runtime into the app.
+# Stage the built backend and the QNN runtime into the app.
 #
 # Both destinations are GITIGNORED and must stay that way: the executable is
 # built from backend-src/ (CC BY-NC lineage) and the QNN libs come from the
@@ -106,6 +106,7 @@ Write-Output ("qnnlibs {0,9:N0} bytes across {1} files ({2} arches)" -f $total, 
 # It was left pointing at alpha.2 after the ABI 105 engine shipped (1.6.046),
 # and a plain run on 2026-09-28 put alpha.2 skels beside the ABI 105 engine:
 # FLUX.2 Klein 9B's first DiT graph died `dsp-rsp INVAL-PARAMS` + SIGABRT.
+# ../LocalDream/dit-engine-skel098: skel091 with v69 from dit/098 (256 KB DSP stacks, GitHub #104; every other skel byte-identical). [1.6.296]
 # ../LocalDream/dit-engine-abi110-h3enc (CI 40950650774: abi110 + dit/079, H3's one-frame encode, ABI 110, wrapper only; skels are abi110's) is the CI build's layout: the
 # engine, its release zip and the v73-v81 skels built with it. ⚠ Until 1.6.202 this was dit-engine-abi105-a4, whose
 # skels were patched by hand as engines moved; dit/031 changes the skel side, so the folder moves with each engine now.

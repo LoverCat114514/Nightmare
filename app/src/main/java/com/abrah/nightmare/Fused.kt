@@ -665,6 +665,17 @@ class SdSampler(
                     ramBytes in 1 until Prefs.LOWRAM_BELOW_BYTES && arch !in 1..78
             }
 
+        /**
+         * ⭐⭐ A Klein edit with reference pictures leaves the GPU route for the NPU, where this phone's NPU runs the model
+         * (item 46). On the Adreno 2 or 3 references at 1024² failed (`failed to allocate 1152.00 MiB (err=-61)`: one
+         * buffer past the GPU's largest, the S25, 1.6.294) and 1 took 639 s; on the NPU 2 references rendered in 182 s
+         * (demo night 3, 2026-11-11). ⚠ Not where the GPU is the only route ([BackendProcess.ditOnCpu]: the CPU is slower).
+         */
+        internal fun editOnNpu(family: Family, pictures: Int, spec: ModelSpec?, caps: DeviceProbe.Caps): Boolean =
+            family == Family.FLUX2 && pictures > 0 && spec != null && DitGpu.runs(spec, caps) &&
+                !BackendProcess.ditOnCpu(caps) && !spec.chipBlocked(caps) &&
+                spec.builds.any { it.files.isNotEmpty() && it.runsOn(caps) }
+
         /** ⚠ The largest Klein edit measured to fit resident on a 12 GB phone ([kleinEditBudget]). */
         const val KLEIN_RESIDENT_EDIT_PX = 512L * 512L
 
@@ -1214,7 +1225,8 @@ class SdSampler(
         )
         // ⭐ What this phone's NPU taught us (GitHub #97): a changed budget in the key is what relaunches the backend.
         val capped = if (family.dit) BackendProcess.cappedDitBudget(budget, DeviceProbe.ditMapCap) else budget
-        return if (capped == null) key else key.copy(memoryBudget = capped)
+        val withBudget = if (capped == null) key else key.copy(memoryBudget = capped)
+        return if (editOnNpu(family, pictures, ModelCatalog.byId(key.model), DeviceProbe.caps())) withBudget.copy(npu = true) else withBudget
     }
 
     /** ⚠ The size a fixed-canvas family renders, not a stray one the node holds ([canvasOf], GitHub #60). */
@@ -1261,6 +1273,19 @@ class SdSampler(
             p["w"]?.toFloatOrNull() ?: 1f, p["h"]?.toFloatOrNull() ?: 1f,
         )
 
+    /**
+     * ⭐ A MOSS model made for a few steps (8: Turbo, the SFT with its speed LoRA, a few-step import) run with fewer: its
+     * own step count, else null. ⚠ Saved #7949 (item 62): an 8-step import at 4 steps with Bong Tangent came back in
+     * blocks across every dark area; the built-in Turbo at those settings did the same on the S25, and the 4-step model
+     * at them was clean (2026-11-15).
+     */
+    internal fun fewMossSteps(p: Map<String, String>): Int? {
+        if (family != Family.MOSS) return null
+        val own = p["model"]?.let { ModelCatalog.byId(it) }?.steps ?: return null
+        val asked = p["steps"]?.toIntOrNull() ?: return null
+        return own.takeIf { it in 6..10 && asked < it }
+    }
+
     /** ⭐ Where [HIRES] is offered: SD 1.5 / SDXL text- and image-to-image. Everywhere else, [ENLARGE]. */
     private val hasHires: Boolean get() = !inpaint && UltraFix.tileFor(family) != null
 
@@ -1271,6 +1296,10 @@ class SdSampler(
         if ((family == Family.SDXL || family == Family.SDXL_SWAP) && ctx.android?.let { Prefs.sdxlLowRamOverridden(it) } == true) {
             ctx.say(ctx.text(R.string.run_sdxl_lowram_anyway,
                 "SDXL runs in low RAM mode on this phone whichever way the switch is set: without it SDXL fills a phone under 16 GB and Android closes apps."))
+        }
+        fewMossSteps(effectiveParams(node))?.let { own ->
+            ctx.warn(ctx.text(R.string.run_moss_few_steps,
+                "This MOSS model is made for %1\$d steps: with fewer, dark and flat areas come out in blocks. The 4-step model is the one for 4 steps.", own))
         }
         // ⭐⭐ The picture under the fix, remembered without the fix's own params ([com.abrah.nightmare.detail.Detailer.PARAMS]): Fix faces
         // switched on, or a new Fix strength or Fix seed, redraws the faces on the picture already made (Saved #7072,
@@ -1984,6 +2013,7 @@ class SdSampler(
             onProgress = ctx.onProgress,
             scheduler = p["scheduler"]?.takeIf { it in ModelCatalog.schedulersFor(family) },
         )
+        warnPartialLoras(ctx, p[LORAS])
         val out = when (r) {
             is Ops.Result.Ok -> r.value
             is Ops.Result.Err -> throw OpFailure("generate", r.code, r.body)
@@ -2026,12 +2056,26 @@ class SdSampler(
             // an SD id from an old flow is Euler at the backend.
             scheduler = p["scheduler"]?.takeIf { it in ModelCatalog.schedulersFor(family) },
         )
+        warnPartialLoras(ctx, p[LORAS])
         val out = when (r) {
             is Ops.Result.Ok -> r.value
             is Ops.Result.Err -> throw OpFailure("generate", r.code, r.body)
         }
         return android.graphics.BitmapFactory.decodeByteArray(out.png, 0, out.png.size)
             ?: throw IllegalStateException("node \"${node.id}\": the engine's picture would not decode")
+    }
+
+    /**
+     * ⭐ A LoRA the engine applied only in part, as a warning (Saved #8071: an Anima LoRA applied 840 of 1092 tensors,
+     * its `adaln.modulation` ones unused, and nobody was told). The engine says so per file in THIS request's lines
+     * ([LoraPartial]); a render whose weights were kept may not repeat it, so it shows on the render that applied it.
+     */
+    private fun warnPartialLoras(ctx: NodeCtx, spec: String?) {
+        if (spec.isNullOrBlank()) return
+        val lines = runCatching { BackendProcess.newestLaunch() }.getOrDefault(emptyList())
+        for (p in LoraPartial.of(lines)) {
+            ctx.warn(ctx.text(R.string.run_lora_partial, "LoRA \"%1\$s\" fits this model only in part: %2\$d of its %3\$d tensors were used", p.name, p.applied, p.total))
+        }
     }
 
     /**

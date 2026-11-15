@@ -266,6 +266,12 @@ fun NightmareTheme(
     com.abrah.nightmare.canvas.CanvasColors.light = !darkTheme
     com.abrah.nightmare.canvas.CanvasColors.black = black && darkTheme
     com.abrah.nightmare.canvas.CanvasColors.customBackgroundActive = customBackgroundActive
+    // ⭐ (the user, 2026-11-15: the workbench and the bottom bar's unfolded cards stayed
+    // white in the dark and black themes) — the newui tokens now follow the app theme:
+    // the exact resolved scheme goes over, so every accent's dark ramp carries through.
+    com.abrah.nightmare.newui.theme.Nm.dark = darkTheme
+    com.abrah.nightmare.newui.theme.Nm.black = black && darkTheme
+    com.abrah.nightmare.newui.theme.Nm.scheme = scheme
     com.abrah.nightmare.newui.theme.Nm.customBgActive = customBackgroundActive
     com.abrah.nightmare.newui.theme.Nm.cardOpacity = cardOpacity
     com.abrah.nightmare.newui.theme.Nm.customPri = p.fill

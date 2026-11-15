@@ -102,6 +102,9 @@ object Prefs {
         v69Npu = p.getBoolean(KEY_V69_NPU, false)
         ditTaesd = p.getBoolean(KEY_DIT_TAESD, true)
         ditSpectrum = p.getBoolean(KEY_DIT_SPECTRUM, false)
+        keepFlowEdits = p.getBoolean(KEY_KEEP_FLOW_EDITS, true)
+        shareCredit = p.getBoolean(KEY_SHARE_CREDIT, true)
+        shareName = p.getString(KEY_SHARE_NAME, null).orEmpty().take(SHARE_NAME_MAX)
         notifRun = p.getBoolean(KEY_NOTIF_RUN, false)
     }
 
@@ -449,6 +452,39 @@ object Prefs {
     @Volatile var ditSpectrum: Boolean = false
         private set
 
+    /**
+     * ⭐ Each model's flow keeps its edits when another is opened, and gets them back when it is opened again (the
+     * per-flow drafts, the user's call 2026-10-29). Off: every flow opens fresh. ⚠ A SAVED flow never has a draft
+     * either way (the user, 2026-11-14, Saved #8050): opened from Flows, it is what was saved. [1.6.297]
+     */
+    const val KEY_KEEP_FLOW_EDITS = "keep_flow_edits"
+
+    /** ⚠ [KEY_KEEP_FLOW_EDITS] held in memory, as [ditSpectrum]: a launch reads it with no Context. */
+    @Volatile var keepFlowEdits: Boolean = true
+        private set
+
+    /**
+     * ⭐ A thin credit strip under every SHARED picture ([ShareCredit]; the user, 2026-11-14: on by default, so shares
+     * carry the app's name). Not on a gallery save, a clip or a shared flow. [1.6.299]
+     */
+    const val KEY_SHARE_CREDIT = "share_credit"
+
+    /** ⚠ [KEY_SHARE_CREDIT] held in memory, as [ditSpectrum]: a launch reads it with no Context. */
+    @Volatile var shareCredit: Boolean = true
+        private set
+
+    /** ⭐ The optional name in that strip: blank says "Made with Nightmare Mobile". [1.6.299] */
+    const val KEY_SHARE_NAME = "share_name"
+    const val SHARE_NAME_MAX = 30
+
+    @Volatile var shareName: String = ""
+        private set
+
+    fun setShareName(context: Context, value: String) {
+        shareName = value.trim().take(SHARE_NAME_MAX)
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(KEY_SHARE_NAME, shareName).apply()
+    }
+
     /** ⭐ The end-of-run notification, done/failed each with its own channel ([RunNotice], upstream issue #79). */
     const val KEY_NOTIF_RUN = "notif_run"
 
@@ -490,6 +526,8 @@ object Prefs {
         val v69Npu: Boolean = false,
         val ditTaesd: Boolean = true,
         val ditSpectrum: Boolean = false,
+        val keepFlowEdits: Boolean = true,
+        val shareCredit: Boolean = true,
     )
 
     /** ⚠ Unknown RAM (0) answers ON — the safe side is the slow mode, never the kill. */
@@ -519,6 +557,8 @@ object Prefs {
             v69Npu = read(KEY_V69_NPU, false),
             ditTaesd = read(KEY_DIT_TAESD, true),
             ditSpectrum = read(KEY_DIT_SPECTRUM, false),
+            keepFlowEdits = read(KEY_KEEP_FLOW_EDITS, true),
+            shareCredit = read(KEY_SHARE_CREDIT, true),
         )
     }
 
@@ -531,6 +571,8 @@ object Prefs {
         if (key == KEY_V69_NPU) v69Npu = on
         if (key == KEY_DIT_TAESD) ditTaesd = on
         if (key == KEY_DIT_SPECTRUM) ditSpectrum = on
+        if (key == KEY_KEEP_FLOW_EDITS) keepFlowEdits = on
+        if (key == KEY_SHARE_CREDIT) shareCredit = on
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(key, on).apply()
     }
 

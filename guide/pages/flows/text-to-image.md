@@ -29,6 +29,8 @@ The model families read prompts differently:
 - A prompt in **Russian or Chinese** can be translated to English on the phone with the
   **文A** button on the prompt box (SD 1.5 and SDXL only read English). See
   [Settings → Prompts → Translation](../reference/settings.md#translation).
+- A long prompt? The **⤢** button on the prompt box's top edge opens it in the whole screen;
+  **Done** puts it back, **Cancel** leaves the box as it was.
 - No words for it? The **picture button** on the prompt box describes a picture you already
   have, either a render on the canvas or a photo from your gallery, as sentences or, for anime
   models, Danbooru tags, and writes that into the prompt ([Prompt node](../reference/nodes.md#prompt)).
@@ -47,7 +49,7 @@ Tap the **Text to image** node:
 | **Steps** | How many refinement passes | More is slower; each model opens on the number its author recommends |
 | **CFG** | How strictly the prompt is followed | Too high burns colours; turbo/distilled models want ~1–2 |
 | **Seed** | The starting noise | `0` = a new picture every Run. Type a seed shown on a node to get that picture back |
-| **Scheduler** | The sampling method. SD 1.5 and SDXL: DPM++ 2M, DPM++ 2M SDE, DPM++ 3M, DPM++ 3M SDE, Euler, Euler A, LCM. FLUX.2, Z-Image, Qwen Image, Krea 2, Iris and Anima DiT: Euler, Euler A, Heun, DPM++ 2M, DPM++ 2M SDE, ER-SDE, Res Multistep, iPNDM, LCM | Use what the model's author recommends; turbo models usually want Euler (DiT) or LCM |
+| **Scheduler** | The sampling method. SD 1.5 and SDXL: DPM++ 2M, DPM++ 2M SDE, DPM++ 3M, DPM++ 3M SDE, DPM++ SDE (two model runs a step, so twice as slow), Euler, Euler A, LCM. FLUX.2, Z-Image, Qwen Image, Krea 2, Iris and Anima DiT: Euler, Euler A, Heun, DPM++ 2M, DPM++ 2M SDE, ER-SDE, Res Multistep, iPNDM, LCM | Use what the model's author recommends; turbo models usually want Euler (DiT) or LCM |
 | **Schedule** | How the noise steps are spaced: **Normal**, **Karras** or **Exponential** (SD 1.5, SDXL and the DiT models but Wan and Iris; not with LCM), and on the DiT models also **SGM Uniform**, **Bong Tangent**, **Simple** and **Beta**. Normal is each model's own. On a 4- or 8-step DiT model Karras and Exponential come out murky at those steps: give them about 12 | Many turbo and hyper SDXL models recommend Exponential |
 | **Resolution** / **Aspect** / **Width, Height** | The picture's size | Depends on the family. Below |
 

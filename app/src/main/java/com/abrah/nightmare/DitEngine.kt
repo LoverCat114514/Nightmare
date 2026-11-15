@@ -182,21 +182,25 @@ object DitEngine {
      */
     // ⭐ Current since 1.6.352: the adjudicated 102-patch chain — keep095's line (094 Spectrum, 095 keep-runners,
     // both off unless [BackendProcess.ditSpeedEnv] sets them) + `dit/096`: the `beta57` and `radiance_shift`
-    // schedulers, picked through `NM_DIT_SCHEDULE_FILE` ([BackendProcess.launchedScheduleFile]). NPU = CI
-    // 42886948210 (`opencl=false`), GPU = CI 42897054638 (`opencl=true`), branch `dit-088-engine` on
-    // LoverCat114514/Nightmare. Still ABI 111; the wrapper only, skels are `dit/091`'s.
+    // ⭐ The user's call (2026-11-15): upstream's released engine replaces the beta57 one, so
+    // `linear_quadratic` ships without a hand build and the three schedules are native (dit/097 +
+    // `058` dpmpp_sde). Current since 1.6.295 upstream: keep095's line (`dit/094` Spectrum, `dit/095`
+    // kept runners, both off unless [BackendProcess.ditSpeedEnv] sets them) + `dit/097`, the schedules
+    // `linear_quadratic`, `beta57` and `radiance_shift` (GitHub #111). CI 43537069630 (NPU),
+    // 43537079267 (GPU), branch `dit-088-engine` on AbrahamPaulJ/nightmare-mobile. Still ABI 111; the
+    // wrapper only, skels are `dit/091`'s. ⚠ An older engine reads an unknown schedule as the model's
+    // own, so old and new mix safely.
     private const val NPU_URL =
-        "https://github.com/LoverCat114514/Nightmare/releases/download/dit-engine-abi111-beta57/dit-engine-abi111-beta57.zip"
+        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-sched097/dit-engine-abi111-sched097.zip"
 
     /**
      * ⭐⭐ The GPU variant ([DitGpu]): the same patch line + ggml's OpenCL backend with the Adreno kernels and `dit/067`
      * (old drivers, Mali), `080` (the screen's turns), `081` (PR #28446). ⚠ It NEEDS `libOpenCL.so`, so only a phone
      * that has one is ever given it ([DitGpu.hasOpenCl]); it keeps the Hexagon backend, so an NPU model still runs.
-     * Rebuilt on the 102-patch line at CI 42897054638 (branch `dit-088-engine`). Still ABI 111. Its own
-     * tag and file name, so the stamp tells the two apart and a switch re-fetches.
+     * Its own tag and file name, so the stamp tells the two apart and a switch re-fetches.
      */
     private const val GPU_URL =
-        "https://github.com/LoverCat114514/Nightmare/releases/download/dit-engine-abi111-beta57/dit-engine-abi111-beta57-gpu.zip"
+        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-sched097-gpu/dit-engine-abi111-sched097-gpu.zip"
 
     /** ⭐ Which of the two this phone runs: the GPU's wherever [DitGpu.wanted]. */
     private val gpu: Boolean get() = DitGpu.wanted()
@@ -222,11 +226,12 @@ object DitEngine {
         if (downloadBase != Prefs.HF_ORIGIN) listOf(HF_URL, URL) else listOf(URL, HF_URL)
 
     /** ⚠ The ARCHIVE's size, measured off the file that was uploaded. */
-    val BYTES: Long get() = if (gpu) GPU_BYTES else 23_347_294L
+    val BYTES: Long get() = if (gpu) GPU_BYTES else 23_324_021L
 
     /** The unpacked `.so`, checked after extraction. */
     /** ⚠ Public so a test can build an engine fixture without the network. */
-    val FILE_BYTES: Long get() = if (gpu) GPU_FILE_BYTES else 56_305_424L
+    val FILE_BYTES: Long get() = if (gpu) GPU_FILE_BYTES else NPU_FILE_BYTES
+    private const val NPU_FILE_BYTES = 56_243_224L
 
     /**
      * ⭐ The GPU variant: CI 41781422175 (branch `gpu-110`), the NPU list + 067 + 080 + 081 + `085`, `opencl=true`.
@@ -236,9 +241,9 @@ object DitEngine {
      * without the dense DP4A kernel (an 8 Gen 1, Saved #7647; the S25 with it off). Skels unchanged.
      * ⭐ 2026-11-05 port from upstream v1.6.280.
      */
-    private const val GPU_BYTES = 24_037_192L
-    private const val GPU_FILE_BYTES = 59_152_528L
-    private const val GPU_SHA256 = "dc6b3df07b2409a9292be4ba951a0114ee7027f48ec9cae56e1dd9ea30ec33e9"
+    private const val GPU_BYTES = 24_007_252L
+    private const val GPU_FILE_BYTES = 59_087_304L
+    private const val GPU_SHA256 = "c6c0664af34de001196a89f3510560afcc9b702d78e4ce7d27d4297d96959071"
 
     /**
      * ⚠ A deviation from [com.abrah.nightmare.segment.Segmenter], which checks
@@ -248,7 +253,7 @@ object DitEngine {
      * ⭐ It is the digest GitHub publishes for the release asset, so there is
      * no second place to keep it in step.
      */
-    private val SHA256: String get() = if (gpu) GPU_SHA256 else "5c91449f74a129df4063dc084b58807ba367a7742d0fd893661c20730a87c0d5"
+    private val SHA256: String get() = if (gpu) GPU_SHA256 else "91355de8de50304a67ed271964a86ebcf5ae8cc3f906d1df998a258037bcbe3d"
 
     fun dir(context: Context): File = BackendProcess.runtimeDir(context)
 
@@ -261,7 +266,20 @@ object DitEngine {
         runCatching { stamp(context).readText().trim() }.getOrNull()
 
     /** Present, the right size, AND from the URL this build names; on the GPU, with its tiny decoders ([DitGpu]). */
-    fun isInstalled(context: Context): Boolean =
+    /**
+     * ⭐ The engine this setting wants is the live one, or is made live from the one kept beside it ([restoreSpare]: two
+     * renames, nothing downloaded). ⚠ The switch flipped anywhere but Settings (the API's `dit_gpu`, a restored backup)
+     * left the other variant live, and `POST /run` refused "needs the DiT engine" with it on the phone (2026-11-15).
+     */
+    fun isInstalled(context: Context): Boolean {
+        if (liveIsWanted(context)) return true
+        if (!synchronized(this) { liveIsWanted(context) || restoreSpare(context) }) return false
+        Log.i(TAG, "switched to the kept ${variantOf(URL)} engine, nothing downloaded")
+        installed = true
+        return liveIsWanted(context)
+    }
+
+    private fun liveIsWanted(context: Context): Boolean =
         file(context).length() == FILE_BYTES && installedUrl(context) == URL && (!gpu || DitGpu.taesPresent(context))
 
     fun bytesOnDisk(context: Context): Long = file(context).length()
@@ -293,6 +311,14 @@ object DitEngine {
     ) = synchronized(installLock) {
         if (isInstalled(context)) {
             refresh(context)
+            return@synchronized
+        }
+        pruneSpares(context)
+        // ⭐ The GPU switch flipped back: the wanted variant is a spare beside the live one, two renames away.
+        if (restoreSpare(context)) {
+            if (gpu && !DitGpu.taesPresent(context)) DitGpu.installTaes(context, onProgress, isCancelled)
+            refresh(context)
+            Log.i(TAG, "$LABEL: switched to the kept ${variantOf(URL)} engine, nothing downloaded")
             return@synchronized
         }
         // ⚠ The engine right and only a tiny decoder missing: fetch that, not the 23 MB again.
@@ -401,6 +427,8 @@ object DitEngine {
         }
         tmp.setReadable(true, false)
         tmp.setExecutable(true, false)
+        // ⭐ The other variant, when it is the live one, is kept as a spare rather than overwritten ([restoreSpare]).
+        keepLiveAsSpare(context)
         // ⚠ Same directory, same filesystem, so this is `rename(2)`: atomic,
         // and it never truncates the file it replaces.
         if (!tmp.renameTo(file(context))) throw IOException("$LABEL: cannot replace ${file(context)}")
@@ -413,7 +441,61 @@ object DitEngine {
     fun delete(context: Context) {
         file(context).delete()
         stamp(context).delete()
+        for (v in listOf("npu", "gpu")) { spare(context, v).delete(); spareStamp(context, v).delete() }
         refresh(context)
+    }
+
+    // ⭐⭐ Both variants kept (the user, 2026-11-14: turning the GPU switch off asked for downloads). The GPU and NPU
+    // engines are one file name, so each switch overwrote the other and the next Run asked for 23 MB again. Now the
+    // live one is renamed to `libdit_engine.so.<variant>` when the other is installed, and renamed back when the
+    // switch flips back: ~57 MB more on disk, no download either way. ⚠ Renames only, never a write in place: a
+    // backend may hold the live file mapped ([unpack]'s note), and a rename leaves its inode alone.
+
+    internal fun variantOf(url: String?): String? = when (url) {
+        GPU_URL -> "gpu"
+        NPU_URL -> "npu"
+        else -> null
+    }
+
+    private fun spare(context: Context, variant: String) = File(dir(context), "$FILE.$variant")
+    private fun spareStamp(context: Context, variant: String) = File(dir(context), ".dit-engine.$variant")
+    private fun sizeOf(url: String) = if (url == GPU_URL) GPU_FILE_BYTES else NPU_FILE_BYTES
+
+    /** The live engine, when it is the OTHER current variant and whole, becomes that variant's spare. */
+    private fun keepLiveAsSpare(context: Context) {
+        val url = installedUrl(context) ?: return
+        if (url == URL) return
+        val v = variantOf(url) ?: return
+        val live = file(context)
+        if (live.length() != sizeOf(url)) return
+        if (live.renameTo(spare(context, v))) {
+            spareStamp(context, v).writeText(url)
+            stamp(context).delete()
+        }
+    }
+
+    /** ⭐ The wanted variant's spare made live: true when it was there, whole and current. */
+    private fun restoreSpare(context: Context): Boolean {
+        val v = variantOf(URL) ?: return false
+        val s = spare(context, v)
+        if (s.length() != FILE_BYTES) return false
+        if (runCatching { spareStamp(context, v).readText().trim() }.getOrNull() != URL) return false
+        keepLiveAsSpare(context)
+        if (!s.renameTo(file(context))) return false
+        spareStamp(context, v).delete()
+        stamp(context).writeText(URL)
+        return true
+    }
+
+    /** ⚠ A spare from an older engine (its URL is neither current one) is 57 MB nobody will run again. */
+    private fun pruneSpares(context: Context) {
+        for (v in listOf("npu", "gpu")) {
+            val url = runCatching { spareStamp(context, v).readText().trim() }.getOrNull()
+            if (url == null || variantOf(url) != v || spare(context, v).length() != sizeOf(url)) {
+                spare(context, v).delete()
+                spareStamp(context, v).delete()
+            }
+        }
     }
 
     private fun sha256(f: File): String {

@@ -281,6 +281,7 @@
     <string name="ip_about_sdxl">IP-Adapter for SDXL Swap models: a reference picture steers the render. Only a conversion made with IP-Adapter ticked can use it: Illustrious XL Swap downloaded since 1.6.122, or your own from npuforge 1.0.12 or newer.</string>
     <string name="run_lora_tags_unused">LoRA tags in the prompt were left out. This model takes no LoRAs</string>
     <string name="run_lora_tags_negative">LoRA tags in the negative prompt were left out. Put them in the prompt to use them</string>
+    <string name="run_lora_partial">LoRA "%1$s" fits this model only in part: %2$d of its %3$d tensors were used</string>
     <string name="run_lora_tag_missing">LoRA "%1$s" from the prompt is not installed. Skipped</string>
     <string name="run_lora_motion_skipped">Motion transfer takes no LoRAs: "%1$s" from the prompt was skipped</string>
     <string name="run_wan_ram_warning">%1$s for %2$s s needs about %3$s GB on the NPU, more than this phone\'s %4$s GB of RAM comfortably holds. It may stop or restart the app. 480p or fewer seconds is safer</string>
@@ -288,6 +289,7 @@
     <string name="run_wan_streams_anyway">This clip streams its model whichever way Video: stream the model is set: it cannot be held whole on this phone\'s NPU.</string>
     <!-- ⭐ 2026-11-10 port (upstream 1.6.288-292) -->
     <string name="run_sdxl_lowram_anyway">SDXL runs in low RAM mode on this phone whichever way the switch is set: without it SDXL fills a phone under 16 GB and Android closes apps.</string>
+    <string name="run_moss_few_steps">This MOSS model is made for %1$d steps: with fewer, dark and flat areas come out in blocks. The 4-step model is the one for 4 steps.</string>
     <string name="run_ref_fit_warning">%1$s with a reference: %2$s is probably too big for this phone and may fail. %3$s fits. Trying anyway</string>
     <string name="feature_missing_convert">This conversion has no %1$s. Convert it again in npuforge with %1$s ticked.</string>
     <string name="feature_missing_builtin">This download of the model has no %1$s. Delete it and download it again to get the version that has it.</string>
@@ -1071,6 +1073,16 @@
     <string name="views_nodes_vertical_hint">Every step one under another, instead of swiping between them</string>
     <string name="views_hide_chat">Hide chat view</string>
     <string name="views_hide_chat_hint">The view button offers Default and Advanced only</string>
+    <string name="views_keep_edits">Keep the edits of each flow</string>
+    <string name="views_keep_edits_hint">Opening another model or flow keeps the edits you made to the one you leave, and they come back when you open it again. Off: each opens fresh. A saved flow always opens as you saved it.</string>
+    <string name="share_credit">Credit Nightmare on shared pictures</string>
+    <string name="share_credit_hint">A thin strip under each picture you share: Made with Nightmare Mobile, or Created by your name with Nightmare Mobile. Pictures saved to the gallery and clips are left as they are.</string>
+    <string name="share_credit_name">Your name (optional)</string>
+    <string name="share_credit_plain">Made with %1$s</string>
+    <string name="share_credit_named">Created by %1$s with %2$s</string>
+    <string name="run_notice_channel">Generation progress</string>
+    <string name="run_notice_title">Running %1$s</string>
+    <string name="run_notice_running">Generating</string>
     <string name="agent_clear_chat">Clear chat</string>
     <string name="agent_attach">Attach a picture</string>
     <string name="agent_detach">Remove the picture</string>
@@ -1200,6 +1212,9 @@
     <string name="settings_appearance">Appearance</string>
     <string name="settings_prompts">Prompts</string>
     <string name="settings_models">Models</string>
+    <string name="settings_results">Results</string>
+    <string name="share_title">Sharing</string>
+    <string name="share_note">What goes out with a picture you share.</string>
     <string name="settings_performance">Performance</string>
     <string name="settings_advanced">Advanced</string>
     <string name="tag_autocomplete">Tag autocomplete</string>
@@ -1294,6 +1309,7 @@
     <string name="schedule_beta">Beta</string>
     <string name="schedule_beta57">Beta 57</string>
     <string name="schedule_radiance_shift">Radiance Shift</string>
+    <string name="schedule_linear_quadratic">Linear Quadratic</string>
     <string name="schedule_unavailable">LCM uses its own schedule</string>
     <string name="drawer_support">Support</string>
     <string name="support_coffee">Buy me a coffee</string>
@@ -1334,6 +1350,12 @@
     <string name="face_edit_group_head">Head</string>
     <string name="face_edit_not_clip">Edit face works on pictures, not clips.</string>
     <string name="face_edit_loading">The picture is still loading. Try again in a moment.</string>
+
+    <string name="prompt_expand">Edit in full screen</string>
+    <string name="prompt_expand_done">Done</string>
+    <string name="cutout_save">Save cut-out</string>
+    <string name="cutout_saved">Saved to the gallery with a transparent background</string>
+    <string name="cutout_empty">Nothing is selected yet</string>
     <string name="face_edit_working">Editing the face…</string>
     <string name="face_edit_kept">Edited face kept in Results.</string>
     <string name="face_edit_failed">Face edit failed. %1$s</string>

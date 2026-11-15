@@ -819,9 +819,9 @@ data class ModelSpec(
     fun dir(context: Context): File {
         home?.let { return File(it) }
         val own = ownDir(context)
-        if (missingIn(own).isEmpty()) return own
+        if (missingIn(own, active).isEmpty()) return own
         val ld = LocalDreamModels.dirFor(id) ?: return own
-        return if (missingIn(ld).isEmpty()) ld else own
+        return if (missingIn(ld, active).isEmpty()) ld else own
     }
 
     /** ⚠ This app's folder for the model, whether or not the files are there. */
@@ -831,13 +831,36 @@ data class ModelSpec(
     fun fromLocalDream(context: Context): Boolean = LocalDreamModels.owns(dir(context))
 
     /** Required files that are absent — i.e. why the backend cannot start. */
-    fun missing(context: Context): List<String> = missingIn(dir(context))
+    /**
+     * Required files that are absent — i.e. why the backend cannot start.
+     *
+     * ⭐⭐ …unless ANOTHER build this phone's NPU runs is whole in the folder (the user, 2026-11-14: "why is it asking
+     * for repair when I turn it off"). Klein 4B installed with the GPU switch on holds only the Q4_0 GGUF; switched off,
+     * the S25's build is the FP8 and Repair wanted 4 GB, while its NPU runs that Q4_0 as it is (the v73 build). The
+     * backend loads whichever DiT file is there (`dit.gguf` first). ⚠ Not on the GPU route: the Adreno runs Q4_0 only,
+     * so an FP8 left from the NPU is no stand-in there. ⚠ [reclaimObsolete] asks [missingPreferred], so a stand-in is
+     * never deleted as "the other build".
+     */
+    fun missing(context: Context): List<String> {
+        val d = dir(context)
+        val want = missingIn(d, active)
+        if (want.isEmpty() || !isDit || builds.size < 2 || DitGpu.runs(this)) return want
+        val caps = DeviceProbe.caps()
+        if (chipBlocked(caps)) return want
+        val standIn = builds.firstOrNull { b ->
+            b.files.isNotEmpty() && b.files != active && b.runsOn(caps) && missingIn(d, b.files).isEmpty()
+        }
+        return if (standIn != null) emptyList() else want
+    }
 
-    private fun missingIn(d: File): List<String> {
+    /** ⭐ What the build this phone PREFERS lacks, with no stand-in: what [reclaimObsolete] waits for. */
+    fun missingPreferred(context: Context): List<String> = missingIn(dir(context), active)
+
+    private fun missingIn(d: File, wanted: List<RemoteFile>): List<String> {
         // ⚠⚠ A plain-file package is downloaded IN PLACE, so an interrupted
         // download leaves a real file of the right name and the wrong size.
         // Existence alone would call a half-fetched 4 GB DiT installed.
-        if (active.isNotEmpty()) {
+        if (wanted.isNotEmpty()) {
             // ⭐⭐⭐ **…unless the user brought their own DiT weights.**
             //
             // ⭐⭐ A DiT family loads a plain `.safetensors` at run time — there
@@ -861,7 +884,7 @@ data class ModelSpec(
             // (Telegram #6290, #6310: a modified `llm.gguf` read "missing, repair 0 MB").
             // ⚠ The proof is the header, not the size: a half-download still ends short.
             val byo = File(d, BRING_YOUR_OWN).exists()
-            return active.filter {
+            return wanted.filter {
                 val f = File(d, it.name)
                 val len = f.length()
                 when {
@@ -1388,7 +1411,7 @@ object ModelCatalog {
         }
         for (id in SHARED_DIR_BUILDS) {
             val spec = byId(id) ?: continue
-            if (spec.dir(context) != spec.ownDir(context) || spec.missing(context).isNotEmpty()) continue
+            if (spec.dir(context) != spec.ownDir(context) || spec.missingPreferred(context).isNotEmpty()) continue
             for (other in obsoleteDits(spec)) {
                 val f = File(spec.ownDir(context), other.name)
                 if (f.isFile && f.length() == other.bytes && f.delete()) {
@@ -1541,6 +1564,9 @@ object ModelCatalog {
         "dpm_sde" to "DPM++ 2M SDE",
         "dpm3" to "DPM++ 3M",
         "dpm3_sde" to "DPM++ 3M SDE",
+        // ⭐ GitHub #121 (an SDXL model made for it): k-diffusion's single-step DPM++ SDE, backend 058. ⚠ Two model calls
+        // a step but the last, so twice the time of the others, said in its name like Heun's.
+        "dpmpp_sde" to "DPM++ SDE (2x slower)",
         "euler_a" to "Euler A",
         "euler" to "Euler",
         "lcm" to "LCM",
@@ -1574,6 +1600,10 @@ object ModelCatalog {
         // `euler` sampler and the real pick travels by file ([Backend.writeDitScheduleFile],
         // engine `NM_DIT_SCHEDULE_FILE`): the suffix keeps the sample-handle key
         // distinct while the engine resolves the schedule itself.
+        // ⭐ dit/097 (the `sched097` engine): Linear Quadratic is native, no file hop —
+        // its own direct scheduler, like SGM/Beta before it. (the user, 2026-11-15: it
+        // was missing from every UI's scheduler list.)
+        "_linear_quadratic" to "Linear Quadratic",
         "_beta57" to "Beta 57",
         "_radiance_shift" to "Radiance Shift",
     )
@@ -1588,6 +1618,10 @@ object ModelCatalog {
         "heun" to "Heun (2x slower)",
         "dpm++2m" to "DPM++ 2M",
         "dpm++2m_sde" to "DPM++ 2M SDE",
+        // ⭐ GitHub #121 on the engine line (backend-patches/058): the single-step SDE, native in
+        // `dit-engine-abi111-sched097`. An older engine renders it as plain DPM++ 2M (its
+        // createSchedulerBase falls back), so the name stays honest with the "(2x slower)" label.
+        "dpmpp_sde" to "DPM++ SDE (2x slower)",
         "er_sde" to "ER-SDE",
         "res_multistep" to "Res Multistep",
         "ipndm" to "iPNDM",

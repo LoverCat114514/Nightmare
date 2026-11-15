@@ -166,6 +166,8 @@ class ApiTest {
         assertEquals("dpm_karras", A1111.samplerFor(sdxl, "DPM++ 2M Karras", ""))
         assertEquals("euler_a", A1111.samplerFor(sdxl, "Euler a", "Automatic"))
         assertEquals(null, A1111.samplerFor(sdxl, "UniPC", ""))
+        // GitHub #121: A1111 calls it "DPM++ SDE Karras", with no cost note.
+        assertEquals("dpmpp_sde_karras", A1111.samplerFor(sdxl, "DPM++ SDE Karras", ""))
         assertEquals("16:9", A1111.nearestAspect(1920, 1080))
         assertEquals("1:1", A1111.nearestAspect(512, 512))
     }
@@ -218,6 +220,31 @@ class ApiTest {
         val g = applyOverrides(motion, NODE_TYPES, RunRequest.parse("""{"flow":"motion","videos":{"clip":"AAAA"}}"""), null) { node, b64 -> "/up/$node-$b64" }
         assertEquals("/up/clip-AAAA", g.byId["clip"]!!.params["uri"])
         assertTrue(refused("""{"flow":"x","videos":{"image":"AAAA"}}""").contains("not a video node"))
+    }
+
+    /** ⭐ The demo's MOSS outpaint (2026-11-15): a square frame on a node left at 896x1600 renders square, same pixel count. */
+    @Test
+    fun anOutpaintFrameSetAloneTakesTheRenderShapeWithIt() {
+        val moss = SdSampler.MOSS_INPAINT.name
+        val g0 = Graph(
+            listOf(
+                Node("prompt", "core.prompt", params = mapOf("prompt" to "a valley", "negative" to "")),
+                Node("image", "core.image", params = mapOf("uri" to "")),
+                Node("generate", moss, params = mapOf("width" to "896", "height" to "1600"), inputs = sources("prompt" to "prompt", "image" to "image")),
+                Node("output", "core.output", inputs = sources("media" to "generate")),
+            ),
+        )
+        val json = """{"flow":"x","images":{"image":"AAAA"},"params":{"generate":{"x":"-0.2","y":"-0.2","w":"1.4","h":"1.4"}}}"""
+        val req = RunRequest.parse(json)
+        val g = frameShaped(applyOverrides(g0, NODE_TYPES, req, null) { _, _ -> "/up/photo.png" }, NODE_TYPES, req) { 768 to 768 }
+        assertEquals("1200", g.byId["generate"]!!.params["width"])
+        assertEquals("1200", g.byId["generate"]!!.params["height"])
+        // A size the caller chose is kept, and an SD 1.5 node (fixed graph sizes) is never touched.
+        val sized = RunRequest.parse("""{"flow":"x","width":896,"images":{"image":"AAAA"},"params":{"generate":{"w":"1.4","h":"1.4"}}}""")
+        assertEquals(g0, frameShaped(g0, NODE_TYPES, sized) { 768 to 768 })
+        assertEquals(flow(), frameShaped(flow(), NODE_TYPES, req) { 768 to 768 })
+        assertEquals(1200 to 1200, shapeOf(1075.0, 1075.0, 896L * 1600))
+        assertEquals(null, shapeOf(0.0, 1.0, 100))
     }
 
     @Test

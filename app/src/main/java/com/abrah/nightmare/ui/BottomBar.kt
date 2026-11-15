@@ -170,12 +170,21 @@ fun NightmareBottomBar(
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
+        // ⭐ (the user, 2026-11-15: the capsule stayed WHITE in the dark and black themes)
+        // The glass now follows the theme: light keeps the white frosted capsule; dark takes
+        // the scheme's highest container at the same alpha; over a wallpaper the frosted
+        // white stays (readability over an arbitrary photo is the point there).
         Surface(
             shape = RoundedCornerShape(percent = 50),
-            color = if (com.abrah.nightmare.canvas.CanvasColors.customBackgroundActive) Color.White.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.95f),
+            color = if (com.abrah.nightmare.canvas.CanvasColors.customBackgroundActive) Color.White.copy(alpha = 0.72f)
+                else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.95f),
             tonalElevation = 0.dp,
             shadowElevation = 8.dp,
-            border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.75f)),
+            border = BorderStroke(
+                1.5.dp,
+                if (com.abrah.nightmare.canvas.CanvasColors.customBackgroundActive) Color.White.copy(alpha = 0.75f)
+                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f),
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(64.dp),
