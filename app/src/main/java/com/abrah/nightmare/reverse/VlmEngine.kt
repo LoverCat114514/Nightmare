@@ -80,8 +80,12 @@ object VlmEngine {
     /** Context window: covers prompt + image tokens + generation headroom. */
     private const val N_CTX = 7168
     private const val N_THREADS = 8
-    /** Generation cap: layout JSON / natural prompts fit easily. */
-    private const val MAX_TOKENS = 1024
+    /** Generation cap: a complete layout tag from a busy screenshot runs
+     * 1800–2100 tokens (25 items measured on a real sample) — 3072 gives ~50%
+     * headroom over that. EOG normally stops earlier; N_CTX 7168 fits
+     * prompt + image + 3072 with room, and KV RAM is fixed at load regardless
+     * of max_new, so the only cost is time when the cap is actually reached. */
+    private const val MAX_TOKENS = 3072
     /**
      * Hexagon batch-completion polling knob (GGML_HEXAGON_OPPOLL; nonzero =
      * poll instead of DSP interrupt wait). Only read by the CI hexagon build;

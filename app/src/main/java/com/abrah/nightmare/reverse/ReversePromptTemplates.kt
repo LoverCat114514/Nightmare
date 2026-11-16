@@ -78,10 +78,11 @@ Analyze the input image carefully and output ONLY a single valid JSON object. Do
    - Avoid empty quality buzzwords (`masterpiece`, `best quality`, `8k`, `unreal engine`, `cinematic`, `highly detailed`, `stunning`).
    - Describe emotions through visible physical cues (pose, expression, lighting) rather than abstract labels.
 
-4. **Length budget (hard cap)**:
-   - Output AT MOST 8 items total, background item included. Merge minor props into the background caption instead of listing them separately.
-   - Keep `summary.meta` entries under 6 words each and every `caption` under 45 words.
-   - Exceeding the budget truncates the JSON on-device and the run fails — brevity is a correctness requirement, not a style choice.
+4. **Coverage**:
+   - Enumerate EVERY legible text/UI element as its own `text` item (each danmaku
+     line, each button label, each overlay chip) — do NOT merge or summarize them.
+   - A busy screenshot legitimately yields 20+ items; output them all. Do not
+     truncate or shorten to save space — completeness is the requirement.
 """.trimIndent()
 
     val ANIMA: String = """

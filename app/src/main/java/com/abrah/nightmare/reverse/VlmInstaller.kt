@@ -56,6 +56,21 @@ object VlmInstaller {
     const val SHA256: String = "834f37d479949acf7a59e4d349a2bcf7d85b6be1066c80c1d72720b2f6f75a8f"
 
     /**
+     * ⭐ GitHub release assets are unreachable from some networks — the very
+     * reason [com.abrah.nightmare.Prefs.apply] exists for HF URLs. Each
+     * fallback here prefixes the FULL primary URL (the common gh-proxy
+     * convention). A mirror that serves wrong bytes fails the [SHA256] check
+     * and the next candidate is tried, so no mirror can inject code; a dead
+     * one just costs a connection error.
+     */
+    private val CANDIDATES: List<String> = listOf(
+        URL,
+        "https://ghfast.top/$URL",
+        "https://ghproxy.net/$URL",
+        "https://gh-proxy.com/$URL",
+    )
+
+    /**
      * ⭐ The seven libs `[VlmEngine.ensureEngine]` `System.load`s, in dependency
      * order. Linker-declared deps: ggml→(base,cpu,hexagon), llama→ggml*, mtmd→(llama,ggml*),
      * vlm_engine→(llama,mtmd,ggml*). Already-loaded sonames satisfy the loader, so
@@ -106,24 +121,39 @@ object VlmInstaller {
         if (isInstalled(context)) return@synchronized
         val d = dir(context).apply { mkdirs() }
         val zip = File(d, "vlm-engine.zip.part")
-        try {
-            UpscalerCatalog.download(URL, zip, BYTES, onProgress, isCancelled)
-            if (zip.length() != BYTES) {
-                val got = zip.length()
-                zip.delete()
-                throw IOException("downloaded $got bytes, expected $BYTES")
-            }
-            onProgress(ModelInstaller.Progress("verifying", 0, 0))
-            val got = LoraInstall.sha256(zip) { isCancelled() }
-            if (got != SHA256) {
-                zip.delete()
-                throw IOException("archive sha256 is $got, expected $SHA256. The download is corrupt")
-            }
-            unpack(context, zip, onProgress, isCancelled)
-        } finally {
+        var lastError: Exception? = null
+        for (candidate in CANDIDATES) {
+            // A partial from the previous candidate must never resume-mix
+            // into this one's bytes — start every attempt from zero.
             zip.delete()
+            try {
+                UpscalerCatalog.download(candidate, zip, BYTES, onProgress, isCancelled)
+                if (zip.length() != BYTES) {
+                    val got = zip.length()
+                    throw IOException("downloaded $got bytes, expected $BYTES")
+                }
+                onProgress(ModelInstaller.Progress("verifying", 0, 0))
+                val got = LoraInstall.sha256(zip) { isCancelled() }
+                if (got != SHA256) {
+                    throw IOException("archive sha256 is $got, expected $SHA256. The download is corrupt")
+                }
+                unpack(context, zip, onProgress, isCancelled)
+                zip.delete()
+                // ⭐ The install stamp — without this isInstalled() stayed
+                // false forever and every app restart re-downloaded 20 MB.
+                stamp(context).writeText(URL)
+                Log.i(TAG, "installed the VLM engine in ${d.absolutePath}")
+                return@synchronized
+            } catch (e: ModelInstaller.Cancelled) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "engine fetch failed from " +
+                    candidate.removePrefix("https://").substringBefore('/') + ": " + e.message)
+                lastError = e
+            }
         }
-        Log.i(TAG, "installed the VLM engine in ${d.absolutePath}")
+        zip.delete()
+        throw lastError ?: IOException("no download candidate succeeded")
     }
 
     /**
