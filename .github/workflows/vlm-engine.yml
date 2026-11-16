@@ -39,9 +39,12 @@ on:
       skels:
         description: "Extra htp skels to build beside v79, space-separated (v73/v75/v81/v85; blank = none)"
         default: ""
+      publish_release:
+        description: "After build, publish the zip as the vlm-engine release asset vlm-engine.zip (update reverse/VlmInstaller.kt BYTES/SHA256 first)"
+        default: "false"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -215,3 +218,22 @@ jobs:
           name: vlm-engine-hexagon-${{ env.LLAMA_SHA }}
           path: dist/
           if-no-files-found: error
+
+      # ⭐ Optional: publish straight to the rolling release the app downloads
+      # from (reverse/VlmInstaller.kt). Off by default — publishing new engine
+      # bytes without bumping VlmInstaller.BYTES/SHA256 would make phones
+      # reject the archive on the hash check, which is the intended tripwire:
+      # bump the constants in the same commit as the release upload.
+      - name: Publish to the rolling vlm-engine release
+        if: inputs.publish_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          cp -f vlm-engine-llama${LLAMA_SHA:0:7}.zip vlm-engine.zip
+          echo "asset: $(stat -c%s vlm-engine.zip) bytes, sha256 $(sha256sum vlm-engine.zip | cut -d' ' -f1)"
+          gh release view vlm-engine --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create vlm-engine --repo "$GITHUB_REPOSITORY" \
+                 --title "vlm-engine (rolling)" \
+                 --notes "Rolling asset consumed by reverse/VlmInstaller.kt (URL/BYTES/SHA256 constants)."
+          gh release upload vlm-engine vlm-engine.zip --repo "$GITHUB_REPOSITORY" --clobber

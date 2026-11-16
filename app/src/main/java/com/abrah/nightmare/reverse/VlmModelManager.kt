@@ -196,7 +196,20 @@ object VlmModelManager {
             if (cancelled) throw DownloadCancelled()
             step(File(dir, def.mmprojFile), def.hfBase + def.mmprojFile, def.mmprojBytes, "视觉投影")
             if (cancelled) throw DownloadCancelled()
-            emit(status(context, def.id).copy(downloadDetail = "下载完成"))
+
+            // ⭐ Engine on demand (1.6.373): make sure the VLM `.so`s are in
+            // place too, so the first real reverse-prompt use doesn't sit on a
+            // silent download. One-time (~20 MB); a failure here does not fail
+            // the model download — the reverse panel retries it on use.
+            emit(status(context, def.id).copy(downloadDetail = "检查端侧引擎..."))
+            if (!VlmEngine.ensureEngine(context)) {
+                Log.w(TAG, "vlm engine install failed; first use will retry")
+                emit(status(context, def.id).copy(
+                    downloadDetail = "模型已就绪；端侧引擎下载失败，使用反推时会重试"
+                ))
+            } else {
+                emit(status(context, def.id).copy(downloadDetail = "下载完成"))
+            }
         } catch (e: DownloadCancelled) {
             Log.i(TAG, "download cancelled [${def.id}]")
             // .part is kept on purpose — the next attempt resumes from it.

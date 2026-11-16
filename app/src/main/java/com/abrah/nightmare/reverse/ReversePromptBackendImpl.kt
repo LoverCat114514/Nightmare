@@ -397,11 +397,28 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
             VlmEngine.trim()
         }
 
+        // ⭐ Engine on demand (1.6.373): the APK no longer packs the VLM `.so`s
+        // (they were 20 MB of APK for a feature most users never open). First
+        // use fetches them once from the release into filesDir/vlm-engine and
+        // System.loads them; later runs short-circuit inside ensureEngine.
+        if (!VlmEngine.ensureEngine(context) { p ->
+                if (p.fraction > 0f) {
+                    onProgress(ReverseProgress.Loading("正在下载端侧引擎（约 20 MB，仅一次） ${(p.fraction * 100).toInt()}%..."))
+                }
+            }) {
+            onProgress(ReverseProgress.Error("端侧引擎下载失败，请检查网络后重试"))
+            return
+        }
+
         // ⭐ Hexagon era (2026-11-14): hand the native runtime its environment
-        // (ADSP_LIBRARY_PATH → nativeLibraryDir for the htp skel loader, plus
-        // GGML_HEXAGON_OPPOLL) before any model load. A no-op for the CPU-only
-        // proot build, essential for the CI hexagon build.
-        VlmEngine.configureRuntime(context.applicationInfo.nativeLibraryDir)
+        // (ADSP_LIBRARY_PATH, plus GGML_HEXAGON_OPPOLL) before any model load.
+        // A no-op for the CPU-only proot build, essential for the CI hexagon
+        // build. Since the engine moved out of the APK, the unpack dir comes
+        // FIRST so FastRPC finds libggml-htp-v79.so there; nativeLibraryDir is
+        // still on the list for everything else.
+        VlmEngine.configureRuntime(
+            "${VlmInstaller.dir(context)}:${context.applicationInfo.nativeLibraryDir}"
+        )
 
         if (!VlmEngine.isLoaded) {
             onProgress(ReverseProgress.Loading("正在加载端侧模型（${def.displayName}，首次约 10-30 秒）..."))

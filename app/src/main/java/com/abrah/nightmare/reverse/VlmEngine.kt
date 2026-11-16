@@ -1,12 +1,16 @@
 package com.abrah.nightmare.reverse
 
+import android.content.Context
 import android.util.Log
+import com.abrah.nightmare.ModelInstaller
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * ⭐⭐⭐ Module 2 — JNI bridge to the on-device VLM engine (libvlm_engine.so:
@@ -23,17 +27,53 @@ import kotlinx.coroutines.withContext
 object VlmEngine {
     private const val TAG = "VlmEngine"
 
-    /** Set once in [init]; every entry guards on it (no native calls if false). */
+    /** Set once [ensureEngine] succeeds; every entry guards on it (no native calls if false). */
     @Volatile
     private var libLoaded = false
 
-    init {
-        libLoaded = try {
-            System.loadLibrary("vlm_engine")
+    /**
+     * ⭐⭐⭐ Since 1.6.373 the engine `.so`s are NOT in the APK (`packaging.jniLibs.excludes`
+     * — 20 MB of APK for a feature most users never open). First use downloads and
+     * unpacks them via [VlmInstaller], then `System.load`s each in dependency order
+     * (ggml's backends are separate `.so`s: base→cpu→hexagon→ggml→llama→mtmd→vlm_engine;
+     * an already-loaded soname satisfies the loader, the rest link from the absolute
+     * path we hand it).
+     *
+     * ⚠ Blocking (network on a cold phone) — suspend so callers stay off the main
+     * thread. Concurrent callers share one install+load via the object monitor;
+     * [libLoaded] is `@Volatile` for the fast-path reads. Returns false (and logs)
+     * on any failure — [ensureLoaded]/[inferImage] report their own error codes.
+     */
+    suspend fun ensureEngine(
+        context: Context,
+        onProgress: (suspend (ModelInstaller.Progress) -> Unit)? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (libLoaded) return@withContext true
+        synchronized(this@VlmEngine) {
+            if (libLoaded) return@synchronized true
+            try {
+                // install() reports through a plain callback; bridge it into the
+                // caller's suspend callback (UI emits) via runBlocking — the
+                // callback bodies are fire-and-forget state writes, never a
+                // handshake, so the adapter cannot deadlock.
+                val cb = onProgress
+                VlmInstaller.install(context, { p ->
+                    if (cb != null) runBlocking { cb(p) }
+                }, { false })
+            } catch (t: Throwable) {
+                Log.e(TAG, "VLM engine install failed", t)
+                return@synchronized false
+            }
+            val d = VlmInstaller.dir(context)
+            try {
+                for (lib in VlmInstaller.LIBS) System.load(File(d, lib).absolutePath)
+                libLoaded = true
+                Log.i(TAG, "VLM engine loaded from ${d.absolutePath}")
+            } catch (t: Throwable) {
+                Log.e(TAG, "System.load(vlm engine) failed", t)
+                return@synchronized false
+            }
             true
-        } catch (t: Throwable) {
-            Log.e(TAG, "System.loadLibrary(vlm_engine) failed", t)
-            false
         }
     }
 
@@ -51,14 +91,19 @@ object VlmEngine {
     const val OP_POLL = "1"
 
     /**
-     * Sets native runtime env (ADSP_LIBRARY_PATH → nativeLibraryDir,
-     * GGML_HEXAGON_OPPOLL). Call once before [ensureLoaded]; idempotent and
-     * a no-op for the CPU-only build.
+     * Sets native runtime env (ADSP_LIBRARY_PATH → [adspPath],
+     * GGML_HEXAGON_OPPOLL). Call once after [ensureEngine] before
+     * [ensureLoaded]; idempotent and a no-op for the CPU-only build.
+     *
+     * ⭐ Since the engine libs moved out of the APK, [adspPath] must be a
+     * colon list with the unpack dir FIRST (`VlmInstaller.dir(context)`),
+     * so FastRPC finds `libggml-htp-v79.so` there, and the (now missing from
+     * it) `nativeLibraryDir` LAST for anything else.
      */
-    fun configureRuntime(nativeLibDir: String) {
+    fun configureRuntime(adspPath: String) {
         if (!libLoaded) return
         try {
-            nativeConfigureRuntime(nativeLibDir, OP_POLL)
+            nativeConfigureRuntime(adspPath, OP_POLL)
         } catch (t: Throwable) {
             Log.w(TAG, "configureRuntime failed", t)
         }

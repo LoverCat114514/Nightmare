@@ -58,8 +58,8 @@ android {
         // a minor bump per push, which is what the rule exists to stop. The
         // minor moves only when a release is called a release. ⚠ versionCode
         // stays a plain incrementing integer; Android requires that.
-        versionCode = 679
-        versionName = "1.6.372"
+        versionCode = 680
+        versionName = "1.6.373"
         // ⭐ fix31 (friend's audit P1-1): the touch/frame probe is a diagnostic
         // tool, not a product feature — release builds must not write to
         // external storage from every touch. dev keeps it (this push build is
@@ -214,6 +214,24 @@ android {
             // Grafted .so files are official release artifacts (already
             // stripped), so keep symbols for all of them and skip stripping.
             keepDebugSymbols += "**/*.so"
+            // ⭐⭐ VLM engine libs (1.6.373): the whole llama.cpp stack — 8
+            // libs, ~20 MB of APK, ~80 MB raw — for the on-device captioning
+            // feature most users never open. reverse/VlmInstaller.kt fetches
+            // them once from the vlm-engine release on first use and
+            // VlmEngine.ensureEngine System.loads them in dependency order.
+            // libstable_diffusion_core STAYS: the forked backend is exec'd,
+            // and execve from app data is blocked by SELinux — loading via
+            // System.load is not, which is why the VLM stack can move.
+            excludes += listOf(
+                "lib/arm64-v8a/libggml.so",
+                "lib/arm64-v8a/libggml-base.so",
+                "lib/arm64-v8a/libggml-cpu.so",
+                "lib/arm64-v8a/libggml-hexagon.so",
+                "lib/arm64-v8a/libggml-htp-v79.so",
+                "lib/arm64-v8a/libllama.so",
+                "lib/arm64-v8a/libmtmd.so",
+                "lib/arm64-v8a/libvlm_engine.so",
+            )
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
