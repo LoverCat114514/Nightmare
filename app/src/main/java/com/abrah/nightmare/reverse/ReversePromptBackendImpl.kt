@@ -401,11 +401,15 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
         // (they were 20 MB of APK for a feature most users never open). First
         // use fetches them once from the release into filesDir/vlm-engine and
         // System.loads them; later runs short-circuit inside ensureEngine.
-        if (!VlmEngine.ensureEngine(context) { p ->
-                if (p.fraction > 0f) {
-                    onProgress(ReverseProgress.Loading("正在下载端侧引擎（约 20 MB，仅一次） ${(p.fraction * 100).toInt()}%..."))
-                }
-            }) {
+        // ⭐ vc681 fix: NO live percentage. The installer's progress callback
+        // fires on the download thread; onProgress emits into a Flow that
+        // runs on another coroutine — that is the exact "Emission from
+        // another coroutine" Flow-invariant crash vc680 hit in the field on
+        // the download-failed path. One static Loading line emitted from this
+        // flow's own coroutine instead; every later run short-circuits inside
+        // ensureEngine in <1 ms.
+        onProgress(ReverseProgress.Loading("正在下载端侧引擎（约 20 MB，仅一次）..."))
+        if (!VlmEngine.ensureEngine(context)) {
             onProgress(ReverseProgress.Error("端侧引擎下载失败，请检查网络后重试"))
             return
         }
