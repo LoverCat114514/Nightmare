@@ -14,9 +14,15 @@ import org.json.JSONObject
  *   - item without caption or bbox, text item without non-empty text;
  *   - bbox not a 4-number array, or violating 0 <= x1 < x2 <= w, 0 <= y1 < y2 <= h.
  *
- * This sanitizer strips <think>...</think> blocks and ``` fences, locates the
- * JSON object, then repairs every near-miss above. Anything unrecoverable is
- * dropped item-by-item; an empty-but-valid layout degrades to a plain caption.
+ * This sanitizer strips <think>...</think> blocks and ``` fences, then repairs
+ * two failure classes before parsing:
+ *   1. [repair] — character-level structural rebuild (⭐ vc682) for the field
+ *      failure of 2026-11-16: missing leading '{', items entries without
+ *      their '{' / separating ',', max_tokens truncation mid-string;
+ *   2. [extractJsonObject] — the old quote-aware balanced-substring scan,
+ *      kept as fallback.
+ * Anything unrecoverable is dropped item-by-item; an empty-but-valid layout
+ * degrades to a plain caption.
  */
 object MossJsonSanitizer {
 
@@ -32,21 +38,330 @@ object MossJsonSanitizer {
      * no JSON object could be recovered at all.
      */
     fun sanitize(raw: String): String? {
-        val extracted = extractJsonObject(stripThinking(raw)) ?: return null
+        val stripped = stripThinking(raw)
+        // ⭐ vc682: structural rebuild first — it sees the WHOLE document
+        // (patched), while the balanced scan only ever returns a closed
+        // sub-block and misses everything after the first unclosed bracket.
+        repair(stripped)?.let { parsed -> parseCandidate(parsed)?.let { return finish(it) } }
+        val extracted = extractJsonObject(stripped) ?: return null
+        val obj = parseCandidate(extracted) ?: return null
+        return finish(obj)
+    }
 
-        // Some models return a bare array of items — wrap it into the required shape.
-        val obj: JSONObject = if (extracted.trimStart().startsWith("[")) {
-            try {
+    /** Bare array of items → wrapped; otherwise plain parse. null = unparseable. */
+    private fun parseCandidate(candidate: String): JSONObject? {
+        return try {
+            if (candidate.trimStart().startsWith("[")) {
                 JSONObject()
                     .put("width", 1024).put("height", 1024)
                     .put("bbox_coord_space", "abs").put("bbox_format", "xyxy")
                     .put("summary", JSONObject().put("caption", ""))
-                    .put("items", JSONArray(extracted))
-            } catch (t: Throwable) { return null }
-        } else {
-            try { JSONObject(extracted) } catch (t: Throwable) { return null }
+                    .put("items", JSONArray(candidate))
+            } else {
+                JSONObject(candidate)
+            }
+        } catch (t: Throwable) { null }
+    }
+
+    // ------------------------------------------------------------------
+    // ⭐⭐ vc682 — structural repair
+    //
+    // Field failure (2026-11-16, 9B reverse of a crowded street scene): the
+    // model omitted the leading '{' (output began `"summary":{`), wrote items
+    // array entries WITHOUT their '{' and WITHOUT separating commas
+    // (`"items":[ "label": "character" "caption": ...`), and the run ended
+    // mid-string on the 1024-token budget. The balanced-brace extractor only
+    // ever sees a closed sub-block, so sanitize returned null and the user
+    // got the raw-dump error dialog.
+    //
+    // This state machine re-emits the document character by character with
+    // patches at the defect points:
+    //   - leading prose skipped; a bare `"key":` at the start opens a
+    //     patched '{' (missing document brace);
+    //   - `"key":` inside an array opens a patched '{' (items without braces);
+    //   - a key at comma-position gets the missing ',' inserted;
+    //   - a missing colon is tolerated (key string → value continues);
+    //   - mismatched closers close the nearest open frame with its own match;
+    //   - truncation: unterminated string closed, dangling `"key":` cut back
+    //     to its start, trailing comma cut, every open frame closed in order;
+    //   - trailing prose after the final closer is dropped.
+    // Pure string work — no org.json — so plain-JVM unit tests cover it.
+    // ------------------------------------------------------------------
+
+    private const val PHASE_KEY = 0     // object: expecting "key"
+    private const val PHASE_COLON = 1   // object: key seen, expecting ':'
+    private const val PHASE_VALUE = 2   // expecting a value (inside object after ':' / array element)
+    private const val PHASE_COMMA = 3   // value complete; expecting ',' (then key / next element)
+
+    private class Frame(val open: Char) {
+        val isObj = open == '{'
+        val close = if (isObj) '}' else ']'
+        var phase = if (isObj) PHASE_KEY else PHASE_VALUE
+        var outStart = 0   // out.length just AFTER the open bracket was appended
+        var keyStart = -1  // out.length at the current key (its comma included); -1 = none
+        var keyEnd = -1    // out.length after the current key's closing quote
+        var valStart = -1  // out.length right after the current key's ':'
+        var patched = false               // '{' we synthesized (array item / doc brace)
+        val seen = HashSet<String>()      // keys already emitted in this object
+    }
+
+    /** True when the quote at [from] closes into `"key":` (colon right after). */
+    private fun isKeyStart(t: String, from: Int): Boolean {
+        var j = from + 1
+        while (j < t.length) {
+            val c = t[j]
+            if (c == '\\') { j += 2; continue }
+            if (c == '"') break
+            j++
+        }
+        if (j >= t.length) return false // unterminated → a value, not a key
+        j++
+        while (j < t.length && t[j].isWhitespace()) j++
+        return j < t.length && t[j] == ':'
+    }
+
+    /**
+     * Rebuilds a damaged JSON document into a balanced, parseable string.
+     * Well-formed input passes through byte-identical. Returns null when no
+     * JSON structure at all could be located.
+     */
+    internal fun repair(raw: String): String? {
+        val t = raw.trim()
+        if (t.isEmpty()) return null
+
+        // Document start: first '{' / '[' / bare `"key":` — leading prose
+        // ("Here is the JSON:") is skipped. Fenced input starts inside the
+        // fence naturally this way.
+        var start = -1
+        for (i in t.indices) {
+            val c = t[i]
+            if (c == '{' || c == '[' || (c == '"' && isKeyStart(t, i))) { start = i; break }
+        }
+        if (start < 0) return null
+
+        val out = StringBuilder()
+        val stack = ArrayDeque<Frame>()
+        var inStr = false
+        var esc = false
+        var isKeyStr = false   // the string being read was detected as a key
+        var primitive = false  // a number/true/false/null run is in progress
+        var finished = false   // document closed — trailing prose must not leak
+
+        fun completePrimitive() {
+            if (!primitive) return
+            primitive = false
+            stack.lastOrNull()?.let { f -> f.phase = PHASE_COMMA }
         }
 
+        fun closeString() {
+            stack.lastOrNull()?.let { f ->
+                if (f.isObj && isKeyStr) {
+                    f.keyEnd = out.length
+                    f.phase = PHASE_COLON
+                    if (f.keyStart >= 0) {
+                        f.seen.add(out.substring(f.keyStart + 1, f.keyEnd - 1))
+                    }
+                } else {
+                    f.phase = when {
+                        f.isObj && f.phase == PHASE_VALUE -> PHASE_COMMA
+                        !f.isObj -> PHASE_COMMA
+                        else -> f.phase
+                    }
+                }
+            }
+            isKeyStr = false
+        }
+
+        fun endsWithComma(): Boolean {
+            var j = out.length - 1
+            while (j >= 0 && out[j].isWhitespace()) j--
+            return j >= 0 && out[j] == ','
+        }
+
+        fun cutTrailingComma() {
+            if (!endsWithComma()) return
+            var j = out.length - 1
+            while (j >= 0 && out[j].isWhitespace()) j--
+            out.setLength(j)
+        }
+
+        /**
+         * Drops a dangling `"key":` (no value yet) — but only when NOTHING
+         * was emitted beyond the colon/key except whitespace. A truncated
+         * nested value (the common case: `"summary": { "caption": "unfin…`)
+         * has real content and must be KEPT; it is closed by the unwind
+         * below instead.
+         */
+        fun cutDanglingKey(f: Frame) {
+            if (!f.isObj || f.keyStart < 0) return
+            val from = when (f.phase) {
+                PHASE_VALUE -> if (f.valStart >= 0) f.valStart else f.keyStart
+                PHASE_COLON -> if (f.keyEnd >= 0) f.keyEnd else f.keyStart
+                else -> return
+            }
+            for (j in from until out.length) {
+                if (!out[j].isWhitespace()) return // partial value present — keep it
+            }
+            out.setLength(f.keyStart)
+            cutTrailingComma()
+        }
+
+        /** The key string's content for a quote starting at [from]. */
+        fun keyName(t: String, from: Int): String {
+            var j = from + 1
+            while (j < t.length) {
+                val c = t[j]
+                if (c == '\\') { j += 2; continue }
+                if (c == '"') break
+                j++
+            }
+            return t.substring(from + 1, j)
+        }
+
+        /**
+         * The model started ANOTHER array item but omitted both its '{' and
+         * (often) the separating ',': close the current patched item, emit the
+         * element separator, open the next patched item the same way.
+         */
+        fun closePatchedAndOpenNext(top: Frame) {
+            stack.removeLast()
+            cutTrailingComma()
+            out.append(top.close)      // close the current patched item
+            val parent = stack.lastOrNull()
+            out.append(',')            // array element separator (input rarely has one)
+            if (parent != null && !parent.isObj) parent.phase = PHASE_VALUE
+            val f = Frame('{')
+            f.patched = true
+            out.append('{')
+            f.outStart = out.length
+            f.keyStart = f.outStart
+            stack.addLast(f)
+            isKeyStr = true
+        }
+
+        fun openFrame(open: Char, fromKey: Boolean) {
+            completePrimitive()
+            val parent = stack.lastOrNull()
+            if (parent != null && parent.isObj && parent.phase != PHASE_VALUE) {
+                parent.phase = PHASE_VALUE // the opener IS the pending key's value
+            }
+            val f = Frame(open)
+            out.append(open)
+            f.outStart = out.length
+            if (fromKey && f.isObj) { f.keyStart = f.outStart; f.patched = true }
+            stack.addLast(f)
+        }
+
+        var i = start
+        while (i < t.length && !finished) {
+            val c = t[i]
+            i++
+            if (inStr) {
+                out.append(c)
+                if (esc) esc = false
+                else if (c == '\\') esc = true
+                else if (c == '"') { inStr = false; closeString() }
+                continue
+            }
+            if (c.isWhitespace()) { out.append(c); continue }
+            when (c) {
+                '"' -> {
+                    primitive = false
+                    val key = isKeyStart(t, i - 1)
+                    val top = stack.lastOrNull()
+                    if (top == null) {
+                        if (key) { openFrame('{', true); isKeyStr = true }
+                        else finished = true // bare prose after the document
+                    } else if (top.isObj) {
+                        val repeat = top.patched && key && keyName(t, i - 1) in top.seen
+                        when {
+                            repeat -> closePatchedAndOpenNext(top)
+                            top.phase == PHASE_KEY || top.phase == PHASE_COLON ->
+                                if (key) { top.keyStart = out.length; isKeyStr = true }
+                                else top.phase = PHASE_VALUE // value without colon — tolerate
+                            top.phase == PHASE_COMMA ->
+                                if (key) {
+                                    out.append(','); top.keyStart = out.length
+                                    isKeyStr = true; top.phase = PHASE_KEY
+                                } else top.phase = PHASE_VALUE
+                            else -> { /* PHASE_VALUE: plain value string */ }
+                        }
+                    } else if (key) {
+                        openFrame('{', true) // patched item object inside an array
+                        isKeyStr = true      // …and this string is its first key
+                    }
+                    inStr = true; esc = false; out.append('"')
+                }
+                '{', '[' -> openFrame(c, false)
+                ':' -> {
+                    primitive = false
+                    val top = stack.lastOrNull()
+                    if (top != null && top.isObj && top.phase == PHASE_COLON) top.phase = PHASE_VALUE
+                    out.append(':')
+                    if (top != null && top.isObj && top.phase == PHASE_VALUE) top.valStart = out.length
+                }
+                ',' -> {
+                    completePrimitive()
+                    val top = stack.lastOrNull()
+                    when {
+                        top == null -> { /* comma outside the document — skip */ }
+                        top.isObj && top.phase == PHASE_VALUE -> { /* dangling colon then comma — skip */ }
+                        !top.isObj && top.phase == PHASE_VALUE && endsWithComma() -> { /* ", ," — skip */ }
+                        else -> {
+                            out.append(',')
+                            top.phase = if (top.isObj) PHASE_KEY else PHASE_VALUE
+                        }
+                    }
+                }
+                '}', ']' -> {
+                    completePrimitive()
+                    val top = stack.removeLastOrNull()
+                    if (top == null) { /* stray closer — skip */ }
+                    else {
+                        cutDanglingKey(top)
+                        if (!top.isObj && top.phase == PHASE_VALUE) {
+                            cutTrailingComma() // ",]" with no element after the comma
+                        }
+                        out.append(top.close)
+                        stack.lastOrNull()?.let { p -> p.phase = PHASE_COMMA }
+                        if (stack.isEmpty()) finished = true
+                    }
+                }
+                else -> {
+                    if (!primitive) {
+                        primitive = true
+                        stack.lastOrNull()?.let { f ->
+                            if (f.isObj && f.phase != PHASE_VALUE) f.phase = PHASE_VALUE
+                        }
+                    }
+                    out.append(c)
+                }
+            }
+        }
+
+        // ---- EOF: salvage a truncated tail ----
+        if (inStr) { out.append('"'); closeString() } // cut mid-string
+        completePrimitive()
+        while (stack.isNotEmpty()) {
+            val f = stack.last()
+            cutDanglingKey(f)
+            if (f.phase == PHASE_COMMA) {
+                cutTrailingComma()
+            }
+            out.append(f.close)
+            stack.removeLast()
+        }
+
+        val result = out.toString().trim()
+        return if (result.isEmpty()) null else result
+    }
+
+    // ------------------------------------------------------------------
+    // Post-parse field repair (unchanged behaviour)
+    // ------------------------------------------------------------------
+
+    /** Applies the compiler-contract repairs to a parsed layout object. */
+    private fun finish(obj: JSONObject): String {
         // ---- width/height: positive multiples of 16 ----
         // ⭐ v2 normalized draft (2026-11-13): no width/height of its own plus
         // the mandatory [0,0,1000,1000] photo_background marker. Its bboxes
