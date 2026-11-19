@@ -182,6 +182,9 @@ object DitEngine {
      */
     // ⭐ Current since 1.6.352: the adjudicated 102-patch chain — keep095's line (094 Spectrum, 095 keep-runners,
     // both off unless [BackendProcess.ditSpeedEnv] sets them) + `dit/096`: the `beta57` and `radiance_shift`
+    // ⭐ Current since 1.6.310: sched097 + `dit/099` (OpenCL only, a no-op here) + `dit/100`, MiniMax H3 Image
+    // (sd.cpp #2324 ported: the six PDD heads, its 2D VAE). CI 44406412683, branch `dit-100-engine`. ⚠ The GPU
+    // engine has no `dit/100`: H3 Image is an NPU model (v79).
     // ⭐ The user's call (2026-11-15): upstream's released engine replaces the beta57 one, so
     // `linear_quadratic` ships without a hand build and the three schedules are native (dit/097 +
     // `058` dpmpp_sde). Current since 1.6.295 upstream: keep095's line (`dit/094` Spectrum, `dit/095`
@@ -191,7 +194,7 @@ object DitEngine {
     // wrapper only, skels are `dit/091`'s. ⚠ An older engine reads an unknown schedule as the model's
     // own, so old and new mix safely.
     private const val NPU_URL =
-        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-sched097/dit-engine-abi111-sched097.zip"
+        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-h3img100/dit-engine-abi111-h3img100.zip"
 
     /**
      * ⭐⭐ The GPU variant ([DitGpu]): the same patch line + ggml's OpenCL backend with the Adreno kernels and `dit/067`
@@ -200,7 +203,7 @@ object DitEngine {
      * Its own tag and file name, so the stamp tells the two apart and a switch re-fetches.
      */
     private const val GPU_URL =
-        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-sched097-gpu/dit-engine-abi111-sched097-gpu.zip"
+        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-zscale099-gpu/dit-engine-abi111-zscale099-gpu.zip"
 
     /** ⭐ Which of the two this phone runs: the GPU's wherever [DitGpu.wanted]. */
     private val gpu: Boolean get() = DitGpu.wanted()
@@ -226,12 +229,12 @@ object DitEngine {
         if (downloadBase != Prefs.HF_ORIGIN) listOf(HF_URL, URL) else listOf(URL, HF_URL)
 
     /** ⚠ The ARCHIVE's size, measured off the file that was uploaded. */
-    val BYTES: Long get() = if (gpu) GPU_BYTES else 23_324_021L
+    val BYTES: Long get() = if (gpu) GPU_BYTES else 23_330_459L
 
     /** The unpacked `.so`, checked after extraction. */
     /** ⚠ Public so a test can build an engine fixture without the network. */
     val FILE_BYTES: Long get() = if (gpu) GPU_FILE_BYTES else NPU_FILE_BYTES
-    private const val NPU_FILE_BYTES = 56_243_224L
+    private const val NPU_FILE_BYTES = 56_260_232L
 
     /**
      * ⭐ The GPU variant: CI 41781422175 (branch `gpu-110`), the NPU list + 067 + 080 + 081 + `085`, `opencl=true`.
@@ -241,9 +244,13 @@ object DitEngine {
      * without the dense DP4A kernel (an 8 Gen 1, Saved #7647; the S25 with it off). Skels unchanged.
      * ⭐ 2026-11-05 port from upstream v1.6.280.
      */
-    private const val GPU_BYTES = 24_007_252L
-    private const val GPU_FILE_BYTES = 59_087_304L
-    private const val GPU_SHA256 = "c6c0664af34de001196a89f3510560afcc9b702d78e4ce7d27d4297d96959071"
+    // ⭐ Current since 1.6.309: sched097-gpu + `dit/099`, Z-Image's attention.out scaled 1/16 on OpenCL as on Hexagon
+    // (`dit/025`). The plain Adreno Q4_0 GEMM accumulates in half8, so every Z-Image-family model (NitroFusion 2) came out
+    // a flat green frame on any GPU without the dense DP4A kernel (item 84, an 8s Gen 4; the S25 with it off).
+    // CI 44389663044, branch `dit-099-engine`. Still ABI 111, the wrapper only; the NPU engine is unchanged.
+    private const val GPU_BYTES = 24_006_569L
+    private const val GPU_FILE_BYTES = 59_087_592L
+    private const val GPU_SHA256 = "4bf209296ddc116389c4af87b0d9cc4d1e664b0d650f9f673e744952871f0756"
 
     /**
      * ⚠ A deviation from [com.abrah.nightmare.segment.Segmenter], which checks
@@ -253,7 +260,7 @@ object DitEngine {
      * ⭐ It is the digest GitHub publishes for the release asset, so there is
      * no second place to keep it in step.
      */
-    private val SHA256: String get() = if (gpu) GPU_SHA256 else "91355de8de50304a67ed271964a86ebcf5ae8cc3f906d1df998a258037bcbe3d"
+    private val SHA256: String get() = if (gpu) GPU_SHA256 else "172ccdc98c675584e667c82451cc53de102efaed32ce0163709825cd58b91a79"
 
     fun dir(context: Context): File = BackendProcess.runtimeDir(context)
 

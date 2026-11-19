@@ -625,6 +625,7 @@
     <string name="models_family_moss">About 10 GB. 8 Gen 3 or newer. A careful, detailed picture model with an 8-step speed-up applied every time. About 35 seconds at 512x512 and 2 minutes at 1024x1024; the 4-step one about 20 seconds and 1 minute on an 8 Elite. Text to image only. Use Wi-Fi.</string>
     <string name="models_family_ideogram">About 11.6 GB. 12 GB phones and up, 8 Elite or newer. Best at readable text in a picture: signs, posters, labels. An 8-step speed-up applied every time. About 5.5 minutes at 768x768 on an 8 Elite. Text to image only. Non-commercial use only (Ideogram\'s licence). Use Wi-Fi.</string>
     <string name="models_family_flux3">About 6.2 GB. 8 Gen 3 or newer. The newest picture model from Black Forest Labs: sharp detail and good prompt following, 16 steps. About 45 seconds at 512x512 and 2 minutes at 1024x1024 on an 8 Elite. Text to image only. Under the FLUX Kommunity License. Use Wi-Fi.</string>
+    <string name="models_family_h3image">About 15 GB (13 GB beside Krea 2, whose text encoder it shares). 12 GB phones and up, 8 Elite or newer. MiniMax\'s picture model, made from its H3 video model: 6 steps, no CFG: about 1 min 45 s at 1024x1024 on an 8 Elite (a little longer on an 8 Gen 3), and good at text on signs. Text to image only. Not licensed in the EU, the UK, South Korea or the US. Use Wi-Fi.</string>
     <string name="models_family_flux1">About 10.8 GB. 12 GB phones and up, 8 Elite or newer. Black Forest Labs\' FLUX.1 dev: about 4 minutes at 512x512 and 6 minutes at 1024x1024, 20 steps. Text to image only. Non-commercial use only.</string>
     <string name="models_family_fibo2">About 8.4 GB. 8 Gen 3 or newer, 12 GB of RAM. Bria\'s Fibo 2.0 Edit: wire a picture in and say what to change, in 4 steps. It keeps the rest of the picture, and writes text on signs. With no picture it is a text to image model too: about a minute at 896x1600 on an 8 Elite. Non-commercial licence (Bria). Use Wi-Fi.</string>
     <string name="models_family_other">About 3.5 GB each, and ~7.5 GB free while it unpacks. Use Wi-Fi.</string>
@@ -791,6 +792,9 @@
     <string name="wan_shape_differs">The picture is %1$s, a different shape from the clip\'s %2$s: it will be cropped to fit.</string>
     <string name="wan_match_picture">Match picture (%1$s)</string>
     <string name="knob_cfg">CFG</string>
+    <string name="knob_shift">Shift</string>
+    <string name="hint_flow_shift">Flow shift. 0 uses the model\'s own (Z-Image 3, NitroFusion 2 6). Higher spends more of the steps on the layout, lower on fine detail. A change reloads the model, a few seconds</string>
+    <string name="run_preparing">Preparing</string>
     <string name="knob_loras">LoRAs</string>
     <string name="knob_output_width">Output width</string>
     <string name="knob_output_height">Output height</string>
@@ -1411,6 +1415,7 @@
     <string name="sampling_fold">Scheduler, seed and CFG</string>
     <string name="sampling_seed_value">seed %1$s</string>
     <string name="sampling_cfg_value">CFG %1$s</string>
+    <string name="sampling_shift_value">shift %1$s</string>
     <string name="hint_wan14_seconds">Clip length in seconds, 16 frames each. 1 to 3. 1 s at 720x1280 takes about 12 minutes on an 8 Elite, and each second more takes longer than the last: 3 s at 720p can take an hour.</string>
     <string name="hint_wan13_seconds">Clip length in seconds, 16 frames each. 0 to 5, 0 is a still. 2 s at 832x480 takes about 2 minutes on an 8 Elite, and each second more takes longer than the last.</string>
     <string name="knob_smooth">Smooth motion</string>
@@ -1453,13 +1458,23 @@
     <string name="flow_h3ref_about">Your picture\'s subject (a person, a pet, a product) in a new scene you describe, with sound, by MiniMax H3 Reference. Slow: about 8 minutes for 1.6 s on an 8 Elite.</string>
     <string name="h3_ref_about">Video with sound that keeps the subject of YOUR picture in a new scene: wire a picture into the MiniMax H3 node\'s reference and say what happens. MiniMax H3\'s reference model (Ref2VA, 4 steps); it uses MiniMax H3\'s other files, so install MiniMax H3 first. One part at a time, and a first frame or a reference, not both. About 1.5 to 2.5 times slower than MiniMax H3, because a 2 GB LoRA rides on every run: use it only to keep YOUR subject in a new scene (a 1.6 s clip at 384x384 takes about 8 minutes on an 8 Elite, against 3 without a reference).</string>
     <string name="h3_ref_slower">Reference wired: this clip runs on MiniMax H3 Reference, about 1.5 to 2.5 times slower than plain MiniMax H3 (a 2 GB LoRA rides on every run). Unwire the reference for a faster clip.</string>
+    <string name="mb_powered_h3img">Powered by MiniMax-H3-Image</string>
     <string name="mb_powered_h3">Powered by MiniMax H3</string>
+    <string name="licence_h3img_title">MiniMax-H3-Image Community License</string>
     <string name="licence_h3_title">MiniMax H3 Community License</string>
+    <string name="licence_h3img_terms">MiniMax-H3-Image is made by MiniMax and shared under the MiniMax-H3-Image Community License. Downloading it means you accept that licence. In short:
+
+• It does not cover use in the European Union, the United Kingdom, South Korea or the United States. Do not download or use it there.
+• Anything you make with it and share publicly must say clearly that it was made by AI.
+• Its pictures may not be used to train or improve other AI models.
+• Its acceptable use policy applies: nothing unlawful or harmful.
+
+Nightmare shows "Powered by MiniMax-H3-Image" where it uses the model.</string>
     <string name="licence_h3_terms">MiniMax H3 is made by MiniMax and shared under the MiniMax H3 Community License. Downloading it means you accept that licence. In short:\n\n• It does not cover use in the European Union, the United Kingdom, South Korea or the United States. Do not download or use it there.\n• Anything you make with it and share publicly must say clearly that it was made by AI.\n• Its clips may not be used to train or improve other AI models.\n• Its acceptable use policy applies: nothing unlawful or harmful.\n\nNightmare shows \"Powered by MiniMax H3\" where it uses the model.</string>
     <string name="licence_read">Read the full licence</string>
     <string name="licence_accept">I accept, download</string>
     <string name="hint_h3_size">384x384 is the quickest. Up to 768x1344 worth of pixels; a larger size fits fewer seconds (the note below says when). Nothing under 384: smaller clips lose their colours.</string>
-    <string name="hint_h3_seconds">Clip length in seconds, in H3\'s own steps: 0.9 to 5.2 (22 to 124 frames at 24 fps). 3.0 at 384x384 takes about 6 minutes on an 8 Elite; the larger the size, the shorter the longest clip.</string>
+    <string name="hint_h3_seconds">Clip length in seconds, in H3\'s own steps: 0.9 to 5.2 (22 to 124 frames at 24 fps), and 10.1 at 384x384 or smaller on an 8 Elite or newer. 3.0 at 384x384 takes about 6 minutes on an 8 Elite; the larger the size, the shorter the longest clip.</string>
     <string name="hint_prompt_h3">MiniMax H3 reads its prompt in sections, as in the example: subject_definitions (who is on camera and how they sound: S1 is a woman in her thirties with a calm, low voice), detailed_description (the scene, the camera, the length, and the words said out loud as &lt;d&gt;[English] Hello there.&lt;/d&gt;, any language), overall_soundscape (the sounds: rain on the window) and non_diegetic_music (background music, or N/A for none). Write N/A in a section to leave it out. A plain one-line prompt works too, with no speech and no music.</string>
     <!-- Heat on a video render (BatteryHeat.kt) -->
     <string name="heat_title">Heat</string>

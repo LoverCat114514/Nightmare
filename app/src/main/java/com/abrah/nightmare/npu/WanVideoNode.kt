@@ -175,7 +175,13 @@ object WanVideoNode : NodeType {
     ): String? = when {
         // ⭐ MiniMax H3 ([H3]): 11.6 GB of DiT, so every clip streams; 4.5 GiB holds one block of every size it offers on
         // v79 (832x480 3 s: block 0 needs 4,416 MB with a structured prompt), 2.75 below (`docs/MINIMAX-H3.md` §5d).
-        prof.sound -> if (arch in 1..78) "2.75" else H3_BUDGET
+        // ⭐ The 10.1 s clip (10,368 tokens at 384², past [WanProfile.maxTokens]) needs more: block 0 asked 5,024 MB at
+        // 4.5 and refused; at [H3_LONG_BUDGET] it rendered in 1,212 s, 2.0 GB free at the lowest (S25, 2026-11-19).
+        prof.sound -> when {
+            arch in 1..78 -> "2.75"
+            prof.maxTokens > 0 && (pinned - prof.ditBytes) / prof.bytesPerToken > prof.maxTokens -> H3_LONG_BUDGET
+            else -> H3_BUDGET
+        }
         // ⭐ Wan 2.2 A14B: 8.6 GB an expert, held by no phone, so every clip streams ([WanProfile.alwaysStream]).
         // ⭐ Below v79 one FastRPC session maps ~3.1 GB, so the 14B streams there at 2.75 like everything else (the S25
         // forced to v75, 480x832 1 s, `docs/DEVICES.md` §3e).
@@ -195,6 +201,9 @@ object WanVideoNode : NodeType {
         memoryBudget(pinned, ramBytes, arch, stream = false, prof = prof) != null
 
     private const val H3_BUDGET = "4.5"
+
+    /** ⚠ H3's budget past [WanProfile.maxTokens]: only the 10.1 s clip at 384² or smaller (v79+) gets there. */
+    internal const val H3_LONG_BUDGET = "5.25"
 
     private const val STREAM_FLOOR = 2_816L shl 20
 
@@ -264,7 +273,8 @@ object WanVideoNode : NodeType {
      * and refused nothing under it; the S25 forced to v75 ran 7,056 (768x1344 0.9 s) and failed at 8,580 and 8,670.
      */
     fun fitsTokens(w: Int, h: Int, frames: Int, arch: Int, prof: WanProfile = TURBO): Boolean =
-        prof.maxTokens <= 0 || tokens(w, h, frames, prof) <= if (arch in 1..78) prof.lowArchMaxTokens else prof.maxTokens
+        if (prof.sound && frames > H3Node.SHORT_MAX_FRAMES) w.toLong() * h <= H3Node.LONG_MAX_AREA && arch !in 1..78
+        else prof.maxTokens <= 0 || tokens(w, h, frames, prof) <= if (arch in 1..78) prof.lowArchMaxTokens else prof.maxTokens
 
     /**
      * ⚠ Pure: the NPU holds the clip: by the measured token ceiling where a profile has one ([fitsTokens]; the byte model

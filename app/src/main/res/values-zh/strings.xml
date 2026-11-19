@@ -598,6 +598,7 @@
     <string name="models_family_moss">约 10 GB。8 Gen 3 或更新芯片。细致、细节丰富的图像模型，每次都会应用 8 步加速。8 Elite 上 512x512 约 35 秒，1024x1024 约 2 分钟；4 步版约 20 秒和 1 分钟。仅文生图。请使用 Wi-Fi。</string>
     <string name="models_family_ideogram">约 11.6 GB。12 GB 及以上内存的手机，8 Elite 或更新芯片。最擅长在图中写出清晰可读的文字：招牌、海报、标签。每次都会应用 8 步加速。8 Elite 上 768x768 约 5.5 分钟。仅文生图。仅限非商业用途（Ideogram 许可）。请使用 Wi-Fi。</string>
     <string name="models_family_flux3">约 6.2 GB。8 Gen 3 或更新芯片。Black Forest Labs 最新的图像模型：细节清晰，紧跟提示词，16 步。8 Elite 上 512x512 约 45 秒，1024x1024 约 2 分钟。仅文生图。采用 FLUX Kommunity License 许可。请使用 Wi-Fi。</string>
+    <string name="models_family_h3image">约 15 GB（与 Krea 2 同装时 13 GB，共用其文本编码器）。需 12 GB 及以上内存、8 Elite 或更新。MiniMax 由 H3 视频模型做成的图片模型：6 步，无 CFG：8 Elite 上 1024x1024 约 1 分 45 秒（8 Gen 3 稍慢），擅长画面中的文字。仅文生图。许可不适用于欧盟、英国、韩国和美国。请使用 Wi-Fi。</string>
     <string name="models_family_flux1">约 10.8 GB。12 GB 及以上手机，8 Elite 或更新芯片。Black Forest Labs 的 FLUX.1 dev：512x512 约 4 分钟，1024x1024 约 6 分钟，20 步。仅文生图。仅限非商业用途。</string>
     <string name="models_family_fibo2">约 8.4 GB。8 Gen 3 或更新芯片，12 GB 内存。Bria 的 Fibo 2.0 Edit：连入一张图片并写下要修改的内容，4 步完成。图片其余部分保持不变，也能在牌子上写字。不连图片时也能直接用提示词生成图片：在 8 Elite 上 896x1600 约一分钟。非商业许可（Bria）。请使用 Wi-Fi。</string>
     <string name="models_family_other">每个约 3.5 GB，解包时约需 7.5 GB 可用空间。请使用 Wi-Fi。</string>
@@ -764,6 +765,9 @@
     <string name="wan_shape_differs">图片为 %1$s，与视频的 %2$s 比例不同：将被裁剪以适应。</string>
     <string name="wan_match_picture">匹配图片（%1$s）</string>
     <string name="knob_cfg">CFG</string>
+    <string name="knob_shift">偏移</string>
+    <string name="hint_flow_shift">流偏移。0 使用模型自己的值（Z-Image 为 3，NitroFusion 2 为 6）。越高，越多步数用于构图；越低，越多用于细节。修改后会重新加载模型，需要几秒</string>
+    <string name="run_preparing">准备中</string>
     <string name="knob_loras">LoRA</string>
     <string name="knob_output_width">输出宽度</string>
     <string name="knob_output_height">输出高度</string>
@@ -1381,6 +1385,7 @@
     <string name="sampling_fold">采样器、种子和 CFG</string>
     <string name="sampling_seed_value">种子 %1$s</string>
     <string name="sampling_cfg_value">CFG %1$s</string>
+    <string name="sampling_shift_value">偏移 %1$s</string>
     <string name="hint_wan14_seconds">视频时长（秒），每秒 16 帧。1 到 3 秒。8 Elite 上 720x1280 的 1 秒约 12 分钟，每多一秒都比上一秒更久：720p 的 3 秒可能要一小时。</string>
     <string name="hint_wan13_seconds">视频时长（秒），每秒 16 帧。0 到 5 秒，0 为单帧。8 Elite 上 832x480 的 2 秒约 2 分钟，每多一秒都比上一秒更久。</string>
     <string name="knob_smooth">平滑运动</string>
@@ -1423,13 +1428,23 @@
     <string name="flow_h3ref_about">把你图片中的主体（人物、宠物、产品）放进你描述的新场景，带声音，由 MiniMax H3 Reference 生成。较慢：在 8 Elite 上 1.6 秒约需 8 分钟。</string>
     <string name="h3_ref_about">带声音的视频，把你图片中的主体放进新的场景：把图片连接到 MiniMax H3 节点的 reference 输入，并描述发生的事情。MiniMax H3 的参考模型（Ref2VA，4 步）；它使用 MiniMax H3 的其他文件，所以请先安装 MiniMax H3。一次一个片段，第一帧和参考图只能二选一。比 MiniMax H3 慢约 1.5 到 2.5 倍，因为每次运行都会加载一个 2 GB 的 LoRA：只在需要把你的主体放进新场景时使用（在 8 Elite 上，384x384 的 1.6 秒片段约需 8 分钟，不用参考图约 3 分钟）。</string>
     <string name="h3_ref_slower">已连接参考图：此片段由 MiniMax H3 Reference 生成，比普通 MiniMax H3 慢约 1.5 到 2.5 倍（每次运行都会加载一个 2 GB 的 LoRA）。断开参考图可以更快生成。</string>
+    <string name="mb_powered_h3img">Powered by MiniMax-H3-Image</string>
     <string name="mb_powered_h3">Powered by MiniMax H3</string>
+    <string name="licence_h3img_title">MiniMax-H3-Image 社区许可</string>
     <string name="licence_h3_title">MiniMax H3 Community License 许可</string>
+    <string name="licence_h3img_terms">MiniMax-H3-Image 由 MiniMax 出品，遵循 MiniMax-H3-Image 社区许可。下载模型即表示接受该许可。简言之：
+
+• 许可不适用于欧盟、英国、韩国和美国。请勿在这些地区下载或使用。
+• 用它制作并公开分享的作品，必须明确标注由 AI 生成。
+• 不得用它制作的图片训练或改进其他 AI 模型。
+• 需遵守其合理使用政策：不做违法或有害之事。
+
+Nightmare 在使用该模型的位置会显示「Powered by MiniMax-H3-Image」。</string>
     <string name="licence_h3_terms">MiniMax H3 由 MiniMax 制作，按 MiniMax H3 Community License 发布。下载即表示你接受该许可。简要来说：\n\n• 许可不适用于欧盟、英国、韩国和美国。请勿在这些地区下载或使用。\n• 用它制作并公开分享的内容必须清楚标明由 AI 生成。\n• 它生成的视频不得用于训练或改进其他 AI 模型。\n• 须遵守其可接受使用政策：不得用于违法或有害用途。\n\nNightmare 在使用该模型的地方显示“Powered by MiniMax H3”。</string>
     <string name="licence_read">阅读完整许可</string>
     <string name="licence_accept">接受并下载</string>
     <string name="hint_h3_size">384x384 最快。面积最多相当于 768x1344；尺寸越大，能容纳的秒数越少（下方提示会说明）。不要小于 384：更小的视频会失去颜色。</string>
-    <string name="hint_h3_seconds">视频长度（秒），按 H3 自己的步长：0.9 到 5.2（24 帧每秒，22 到 124 帧）。在 8 Elite 上 384x384 的 3.0 秒约需 6 分钟；尺寸越大，最长的视频越短。</string>
+    <string name="hint_h3_seconds">视频长度（秒），按 H3 自己的步长：0.9 到 5.2（24 帧每秒，22 到 124 帧），在 8 Elite 及更新的芯片上 384x384 或更小时还有 10.1。在 8 Elite 上 384x384 的 3.0 秒约需 6 分钟；尺寸越大，最长的视频越短。</string>
     <string name="hint_prompt_h3">MiniMax H3 按段落读取提示词，如示例所示：subject_definitions（画面中是谁、声音如何：S1 is a woman in her thirties with a calm, low voice）、detailed_description（场景、镜头、时长，以及说出的台词，写成 &lt;d&gt;[Chinese] 你好。&lt;/d&gt;，任何语言）、overall_soundscape（声音：雨打在窗上）和 non_diegetic_music（背景音乐，不要就写 N/A）。在某段写 N/A 即可省略。普通的一行提示词也可以，只是没有对白和音乐。</string>
     <!-- Heat on a video render (BatteryHeat.kt) -->
     <string name="heat_title">发热</string>

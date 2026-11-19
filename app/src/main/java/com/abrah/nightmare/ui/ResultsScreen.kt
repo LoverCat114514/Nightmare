@@ -155,7 +155,11 @@ fun ResultsScreen(
     /** ⚠ Thumbnails are decoded lazily by the caller and may not be ready yet. */
     thumbnailFor: (String) -> ImageBitmap?,
     onOpenFlow: (Result) -> Unit,
-    onView: (Result) -> Unit,
+    /**
+     * ⭐ Open [Result] full screen, with the list the grid shows (Favourites and the filter applied): the one a swipe
+     * pages through. GitHub #137: a favourite's swipe ran on into pictures that were not favourites.
+     */
+    onView: (Result, List<Result>) -> Unit,
     onDelete: (Result) -> Unit,
     onDiskBytes: Long,
     modifier: Modifier = Modifier,
@@ -379,16 +383,19 @@ fun ResultsScreen(
         androidx.compose.runtime.SideEffect { lastShownIndex = shownIndex }
         // ⭐ A new pager for a new LIST (All / Favourites), opened on the shown picture: the old one's page
         // index belongs to another list (GitHub #119: "switching back and forth between all and favorites" flashed).
-        val pager = androidx.compose.runtime.key(favouritesOnly) {
-            androidx.compose.foundation.pager.rememberPagerState(
-                initialPage = shownIndex, pageCount = { items.size },
-            )
+        // ⚠⚠ ONE state that the page count AND the page keys read (GitHub #126, #130, Saved #8129/#8203): each lambda
+        // captured its own `items`, so after All / Favourites or a filter the pager could count the new list while a
+        // key still read the old, shorter one, `IndexOutOfBoundsException: Index 1 out of bounds for length 1`.
+        val currentItems by androidx.compose.runtime.rememberUpdatedState(items)
+        // ⚠⚠ `remember(keys)`, not a `key(…)` group: a group whose key changed left the grid's lambda below
+        // un-recomposed, so Favourites kept showing every picture (GitHub #130's video, `ResultsFavouritesTest`).
+        val pager = remember(favouritesOnly) {
+            androidx.compose.foundation.pager.PagerState(currentPage = shownIndex, pageCount = { currentItems.size })
         }
         // ⚠⚠ The page the pager SETTLED on, and only when that changes (GitHub #119: "when an image has finished
         // generating while in the gallery page, the image above the tools would flash"). Keyed on `items.size` too, it
         // ran as a picture landed, BEFORE the pager had followed its page to where the list moved it, and wrote the
         // picture now at the old index over the one being looked at. The pager follows its page by key itself.
-        val currentItems by androidx.compose.runtime.rememberUpdatedState(items)
         LaunchedEffect(pager) {
             androidx.compose.runtime.snapshotFlow { pager.settledPage }.collect { page ->
                 currentItems.getOrNull(page)?.let { if (it.id != shownId) shownId = it.id }
@@ -408,10 +415,10 @@ fun ResultsScreen(
 
         if (previewOpen) androidx.compose.foundation.pager.HorizontalPager(
             state = pager,
-            key = { items[it].id },
+            key = { currentItems.getOrNull(it)?.id ?: "gone-$it" },
             modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 10.dp),
         ) { i ->
-            val r = items[i]
+            val r = currentItems.getOrNull(i) ?: return@HorizontalPager
             Box(
                 Modifier
                     .fillMaxSize()
@@ -447,7 +454,7 @@ fun ResultsScreen(
                     )
                     Box(
                         Modifier.fillMaxSize().clickable {
-                            if (selecting) onToggleSelect(r) else onView(r)
+                            if (selecting) onToggleSelect(r) else onView(r, items)
                         },
                     )
                 } else {
@@ -464,7 +471,7 @@ fun ResultsScreen(
                             modifier = Modifier
                                 .aspectRatio(bmp.width.toFloat() / bmp.height.coerceAtLeast(1))
                                 .clip(RoundedCornerShape(12.dp))
-                                .clickable { if (selecting) onToggleSelect(r) else onView(r) },
+                                .clickable { if (selecting) onToggleSelect(r) else onView(r, items) },
                         )
                     } ?: run { if (unreadable(r.id)) UnreadablePicture() }
                 }
@@ -650,7 +657,7 @@ fun ResultsScreen(
                     // ⚠ Folded, there is no frame to show it in: a tap opens it full screen.
                     onClick = {
                         if (selecting) onToggleSelect(r)
-                        else { shownId = r.id; if (!previewOpen) onView(r) }
+                        else { shownId = r.id; if (!previewOpen) onView(r, items) }
                     },
                     onLongClick = { onToggleSelect(r) },
                 )
@@ -824,9 +831,11 @@ fun ResultViewer(
     val clipHandle = rememberClipHandle()
     val frameScope = androidx.compose.runtime.rememberCoroutineScope()
     var upscalingPick by remember { mutableStateOf<Result?>(null) }
+    // ⚠ One state for the count and the pages, as the Results frame's pager (GitHub #126, #130).
+    val viewerItems by androidx.compose.runtime.rememberUpdatedState(items)
     val pager = androidx.compose.foundation.pager.rememberPagerState(
         initialPage = startIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0)),
-        pageCount = { items.size },
+        pageCount = { viewerItems.size },
     )
     var showInfo by remember { mutableStateOf(false) }
     var confirmingDelete by remember { mutableStateOf(false) }
@@ -893,7 +902,7 @@ fun ResultViewer(
             modifier = Modifier.fillMaxSize(),
             userScrollEnabled = scale <= 1.01f,
         ) { page ->
-            val item = items[page]
+            val item = viewerItems.getOrNull(page) ?: return@HorizontalPager
             // ⭐⭐ A kept CLIP plays, exactly as it does in the canvas viewer, and ZOOMS like a picture (GitHub #66):
             // the player is a `TextureView` now ([com.abrah.nightmare.ui.ClipPlayer]), so [viewerPicture] scales it.
             // ⚠ The gesture is the same [viewerZoom] the pictures use (pinch, double tap, pan, tap to close at 1x), on

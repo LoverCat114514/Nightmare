@@ -8416,7 +8416,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun viewResult(r: com.abrah.nightmare.canvas.Result) {
+    fun viewResult(r: com.abrah.nightmare.canvas.Result, shown: List<com.abrah.nightmare.canvas.Result>? = null) {
         // ⭐ Kept: the fullscreen viewer has broken twice with nothing in any log
         // (`ResultsFullscreenTest`). `logcat -s NmViewer` says open/close and WHO closed.
         android.util.Log.i("NmViewer", "open ${r.id}")
@@ -8425,7 +8425,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         viewingResultDetails = emptyList()
         // ⭐ EVERY kept picture, in the grid's order (a series in its own order, where its tile sits), so a swipe
         // runs on past the end of a series (a tester, Saved #7304: it stopped there and sent him back to the grid).
-        val set = keptGroups.flatMap { it.items }.ifEmpty { listOf(r) }
+        // ⭐ …or the list the Results grid shows, Favourites and the filter applied (GitHub #137).
+        val set = (shown ?: keptGroups.flatMap { it.items }).ifEmpty { listOf(r) }
         viewingSet = set
         viewingIndex = set.indexOfFirst { it.id == r.id }.coerceAtLeast(0)
         // ⚠⚠ Off the main thread: `full()` decodes a PNG and `details()` reads
@@ -9315,9 +9316,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 if (!log.running) { RunNotice.clear(app); continue }
                 val ms = android.os.SystemClock.elapsedRealtime() - log.startedAtMs
                 if (ms < RunNotice.SHOW_AFTER_MS) continue
-                val frac = log.step?.takeIf { it.second > 0 }?.let { (s, t) -> s.toFloat() / t }
+                // ⭐ The run bar's own number (item 88, [com.abrah.nightmare.canvas.RunLogState.fraction]).
+                val frac = log.fraction(ms)
                 val title = log.now?.let { app.getString(R.string.run_notice_title, it) } ?: app.getString(R.string.run_notice_running)
-                RunNotice.progress(app, title, RunNotice.textFor(log.stepLabel, ms), frac)
+                val label = log.stepLabel ?: if (log.preparing) app.getString(R.string.run_preparing) else null
+                RunNotice.progress(app, title, RunNotice.textFor(label, ms), frac)
             }
         }
     }
@@ -9366,12 +9369,41 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     private fun noteNodeRun(n: NodeRun) {
         canvasStatus[n.id] = NodeStatus(outcome = n.outcome, detail = n.detail)
         if (n.outcome == Outcome.RAN) nodeMs[n.id] = n.ms
-        runLog = runLog.copy(
-            lines = runLog.lines +
+        // ⭐ Item 88: a node that counted steps teaches [com.abrah.nightmare.canvas.RunProgress] its split, and the next node's clock starts now.
+        val log = runLog
+        val clock = android.os.SystemClock.elapsedRealtime()
+        val stepped = log.prepMs != null
+        if (stepped && n.outcome == Outcome.RAN) {
+            com.abrah.nightmare.canvas.RunProgress.record(log.progressKey, log.prepMs!!, clock - log.clockOrigin())
+        }
+        runLog = log.copy(
+            lines = log.lines +
                 com.abrah.nightmare.canvas.runLineOf(logName(n.id), n.outcome, n.ms, humanized(n.detail)),
             now = null,
             step = null,
+            progressKey = null,
+            prepMs = null,
+            clockFromMs = if (stepped) clock else log.clockFromMs,
+            stepsDone = log.stepsDone || stepped,
         )
+    }
+
+    /** ⭐ A node begins: named in the run log, and the model [com.abrah.nightmare.canvas.RunProgress] learns its bar under (samplers only). */
+    private fun logNodeStart(id: String) {
+        val node = canvas.workflow.graph.byId[id]
+        val key = node?.takeIf { isSampler(it.type) }?.let { n ->
+            (NODE_TYPES[n.type]?.effectiveParams(n) ?: n.params)["model"]?.takeIf { it.isNotBlank() } ?: n.type
+        }
+        runLog = runLog.copy(now = logName(id), step = null, phase = null, progressKey = key, prepMs = null)
+    }
+
+    /** ⭐ A node's step count; the first real step fixes how long it prepared (item 88). */
+    private fun logProgress(id: String, step: Int, total: Int) {
+        val log = runLog
+        val prep = log.prepMs ?: if (step >= 1 && log.progressKey != null) {
+            android.os.SystemClock.elapsedRealtime() - log.clockOrigin()
+        } else null
+        runLog = log.copy(now = logName(id), step = step to total, askedSteps = askedStepsOf(id), prepMs = prep)
     }
 
     fun clearRunLog() { runLog = com.abrah.nightmare.canvas.RunLogState() }
@@ -9520,13 +9552,13 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             val r = ops.runWorkflow(
                 canvas.workflow.copy(graph = graph),
                 onStart = { id, _ ->
-                    runLog = runLog.copy(now = logName(id), step = null, phase = null)
+                    logNodeStart(id)
                     CrashReport.stage(getApplication(), id)
                 },
                 onNode = ::noteNodeRun,
                 onProgress = { id, step, total ->
                     canvasStatus[id] = NodeStatus(progress = step to total)
-                    runLog = runLog.copy(now = logName(id), step = step to total, askedSteps = askedStepsOf(id))
+                    logProgress(id, step, total)
                 },
                 onPhase = { _, ph -> if (runLog.phase != ph) runLog = runLog.copy(phase = ph) },
                 // ⚠ Once per SWEEP per sentence: eight runs refusing the same
@@ -9804,7 +9836,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             // ⭐ Named before it runs, so a 24 s sampler is a node with a name
             // rather than a frozen screen.
             onStart = { id, _ ->
-                runLog = runLog.copy(now = logName(id), step = null, phase = null)
+                logNodeStart(id)
                 // ⭐ Which node, and the RAM free as it starts: survives a phone restart ([CrashReport.stage]).
                 CrashReport.stage(getApplication(), id)
             },
@@ -9831,7 +9863,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             },
             onProgress = { id, step, total ->
                 canvasStatus[id] = NodeStatus(progress = step to total)
-                runLog = runLog.copy(now = logName(id), step = step to total, askedSteps = askedStepsOf(id))
+                logProgress(id, step, total)
             },
             onPhase = { _, ph -> if (runLog.phase != ph) runLog = runLog.copy(phase = ph) },
             // ⭐⭐ A long node's own narration, live in the panel.

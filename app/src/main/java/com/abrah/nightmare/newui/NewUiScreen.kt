@@ -558,7 +558,62 @@ fun NewUiScreen(
     val onImportImageParamsCallback = remember(ctx) {
         { uri: android.net.Uri ->
             runCatching {
-                ctx.contentResolver.openInputStream(uri)?.use { stream ->
+                // ⭐ ComfyUI / A1111 (GitHub #133): those pictures keep their values inside the graph or the
+                // `parameters` line, not in our flat JSON. Read every text chunk first and take the values out of
+                // the graph; only when this is not one of those (our own `nightmare` chunk, a JPEG comment) does the
+                // old path run.
+                var readForeign = false
+                val chunks = runCatching {
+                    ctx.contentResolver.openInputStream(uri)?.use {
+                        com.abrah.nightmare.newui.core.PngMetadata.textChunks(it)
+                    } ?: emptyMap()
+                }.getOrDefault(emptyMap<String, String>())
+                if (chunks["nightmare"].isNullOrBlank()) {
+                    val pic = com.abrah.nightmare.canvas.PictureParams.of(chunks)
+                    if (pic != null) {
+                        pic.prompt?.let { positive = it }
+                        pic.negative?.let { negative = it }
+                        if (pic.seed != null) {
+                            s.seed = pic.seed
+                            s.fixedSeed = true
+                        }
+                        pic.steps?.let { s.steps = it }
+                        pic.cfg?.let { s.cfg = it.toFloat() }
+                        pic.width?.let { s.w = it }
+                        pic.height?.let { s.h = it }
+                        // The sampler is only written when this model really has it: a name we do not know would
+                        // leave the run with a scheduler the engine cannot build.
+                        pic.sampler?.let { name ->
+                            val want = name.trim().lowercase().replace(' ', '_')
+                            val alias = when (want) {
+                                "euler_ancestral" -> "euler_a"
+                                "dpmpp_2m" -> "dpm++2m"
+                                "dpmpp_2m_sde" -> "dpm++2m_sde"
+                                "dpmpp_3m_sde" -> "dpm3_sde"
+                                "dpmpp_2m_karras" -> "dpm++2m"
+                                else -> want
+                            }
+                            val hit = com.abrah.nightmare.ModelCatalog.DIT_SAMPLER_IDS.firstOrNull {
+                                it.equals(alias, ignoreCase = true)
+                            } ?: com.abrah.nightmare.ModelCatalog.SAMPLERS.firstOrNull {
+                                it.first.equals(alias, ignoreCase = true)
+                            }?.first
+                            if (hit != null) s.scheduler = hit
+                        }
+                        if (pic.loras.isNotEmpty()) {
+                            s.loras = pic.loras.map {
+                                com.abrah.nightmare.newui.core.LoraPick(it.name, it.strength.toFloat())
+                            }
+                        }
+                        readForeign = true
+                        android.widget.Toast.makeText(
+                            ctx,
+                            "已从 ${pic.from} 参数中恢复提示词、负向提示、种子、步数、CFG、尺寸与 LoRA（模型与采样器按当前设置保留）",
+                            android.widget.Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+                if (!readForeign) ctx.contentResolver.openInputStream(uri)?.use { stream ->
                     val rawMeta = com.abrah.nightmare.newui.core.PngMetadata.extractMetadata(stream)
                     if (!rawMeta.isNullOrBlank()) {
                         val norm = com.abrah.nightmare.newui.core.PngMetadata.normalizeMetadata(rawMeta)

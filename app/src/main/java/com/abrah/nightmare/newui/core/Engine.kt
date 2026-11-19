@@ -488,6 +488,99 @@ object PngMetadata {
         null
     }
 
+    /**
+     * ⭐ EVERY text chunk a picture carries, keyed by its PNG keyword in lower case (`prompt`, `workflow`,
+     * `parameters`, `comment`, …).
+     *
+     * [extractMetadata] stops at the first keyword it recognises, which is enough for Nightmare's own JSON but not for
+     * ComfyUI: its pictures carry BOTH `prompt` (the API graph) and `workflow` (the editor's layout), in either order,
+     * so a single value can be the wrong one. The JPEG comment / XMP paths are folded in under `comment` / `xmp`.
+     */
+    fun textChunks(inStream: java.io.InputStream): Map<String, String> {
+        val bytes = inStream.readBytes()
+        if (bytes.size < 8) return emptyMap()
+        val out = LinkedHashMap<String, String>()
+
+        fun keyword(bytes: ByteArray, dataStart: Int, len: Int): Pair<String, Int>? {
+            for (i in 0 until len) {
+                if (bytes[dataStart + i] == 0.toByte()) {
+                    return String(bytes, dataStart, i, Charsets.ISO_8859_1).lowercase() to i
+                }
+            }
+            return null
+        }
+
+        if (bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte()
+            && bytes[2] == 'N'.code.toByte() && bytes[3] == 'G'.code.toByte()) {
+            var idx = 8
+            val buf = java.nio.ByteBuffer.wrap(bytes)
+            while (idx + 8 <= bytes.size) {
+                val len = buf.getInt(idx)
+                if (len < 0) break
+                val type = String(bytes, idx + 4, 4, Charsets.US_ASCII)
+                val dataStart = idx + 8
+                if (dataStart + len > bytes.size) break
+                when (type) {
+                    "tEXt" -> keyword(bytes, dataStart, len)?.let { (kw, nullIdx) ->
+                        val textLen = len - (nullIdx + 1)
+                        if (textLen > 0 && kw !in out) out[kw] = String(bytes, dataStart + nullIdx + 1, textLen, Charsets.UTF_8)
+                    }
+                    "zTXt" -> keyword(bytes, dataStart, len)?.let { (kw, nullIdx) ->
+                        if (nullIdx + 2 < len && kw !in out) {
+                            decompressZlib(bytes, dataStart + nullIdx + 2, len - (nullIdx + 2))
+                                ?.takeIf { it.isNotBlank() }?.let { out[kw] = it }
+                        }
+                    }
+                    "iTXt" -> keyword(bytes, dataStart, len)?.let { (kw, nullIdx) ->
+                        if (nullIdx + 3 < len && kw !in out) {
+                            val compFlag = bytes[dataStart + nullIdx + 1].toInt()
+                            // Skip the language tag and the translated keyword (both null-terminated).
+                            var p = dataStart + nullIdx + 3
+                            var nullCount = 0
+                            while (p < dataStart + len && nullCount < 2) {
+                                if (bytes[p] == 0.toByte()) nullCount++
+                                p++
+                            }
+                            val textLen = (dataStart + len) - p
+                            if (textLen > 0) {
+                                val text = if (compFlag == 1) decompressZlib(bytes, p, textLen)
+                                else String(bytes, p, textLen, Charsets.UTF_8)
+                                if (!text.isNullOrBlank()) out[kw] = text
+                            }
+                        }
+                    }
+                }
+                idx += 8 + len + 4
+            }
+        }
+
+        // JPEG: the comment segment, and Exif/XMP when it names Nightmare or carries A1111's `Steps:`.
+        if (bytes.size >= 4 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()) {
+            var p = 2
+            while (p + 4 <= bytes.size) {
+                if (bytes[p] == 0xFF.toByte()) {
+                    val marker = bytes[p + 1].toInt() and 0xFF
+                    val segLen = ((bytes[p + 2].toInt() and 0xFF) shl 8) or (bytes[p + 3].toInt() and 0xFF)
+                    if (segLen < 2) break
+                    if (marker == 0xFE && p + 2 + segLen <= bytes.size) {
+                        String(bytes, p + 4, segLen - 2, Charsets.UTF_8).trim()
+                            .takeIf { it.isNotBlank() }?.let { if ("comment" !in out) out["comment"] = it }
+                    }
+                    if (marker == 0xE1 && segLen > 6 && p + 2 + segLen <= bytes.size) {
+                        val segContent = String(bytes, p + 4, segLen - 2, Charsets.ISO_8859_1)
+                        if ("\"app\":\"Nightmare\"" in segContent || "Steps:" in segContent) {
+                            if ("xmp" !in out) out["xmp"] = segContent
+                        }
+                    }
+                    p += 2 + segLen
+                } else {
+                    p++
+                }
+            }
+        }
+        return out
+    }
+
     fun extractMetadata(inStream: java.io.InputStream): String? {
         val bytes = inStream.readBytes()
         if (bytes.size < 8) return null

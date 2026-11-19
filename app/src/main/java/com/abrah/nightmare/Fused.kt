@@ -343,6 +343,20 @@ class SdSampler(
         const val LORAS = "loras"
 
         /**
+         * ⭐ GitHub #129: the flow shift, on the flow-matching DiT families. 0 = the model's own (Z-Image 3, NitroFusion 2
+         * 6). Higher spends more of the steps on the picture's layout, lower on its detail. Launch-bound
+         * ([ContextKey.flowShift]).
+         */
+        const val SHIFT = "shift"
+
+        /** ⚠ Pure: the families whose sampler is a flow and takes [SHIFT]: every DiT picture model. */
+        fun takesShift(family: Family): Boolean = family.dit && family != Family.WAN && family != Family.IRIS
+
+        /** ⚠ Pure: the node's shift as the engine reads it, or null for the model's own (0, blank, nonsense). */
+        fun shiftOf(p: Map<String, String>): String? =
+            p[SHIFT]?.trim()?.toDoubleOrNull()?.takeIf { it > 0.0 && it <= 20.0 }?.let { LoraSpec.number(it) }
+
+        /**
          * ⭐⭐ SD 1.5 Swap's ControlNet ([SwapInputs]): the type, its strength and
          * the picture picked ON the node. ⚠ The [CONTROL] port, when wired, wins
          * over the picked picture — the user's design, 2026-09-29.
@@ -753,6 +767,8 @@ class SdSampler(
         val FLUX3 = SdSampler("flux3.sample", Family.FLUX3, inpaint = false)
         /** ⭐ FLUX.1 dev (`docs/IMPORTS.md`) — text to image only until the rest is measured. */
         val FLUX1 = SdSampler("flux1.sample", Family.FLUX1, inpaint = false)
+        /** ⭐ MiniMax H3 Image (`docs/MINIMAX-H3.md` §7): text to image only, 6 steps on its own PDD sigmas. */
+        val H3IMAGE = SdSampler("h3image.sample", Family.H3IMAGE, inpaint = false)
         /** ⭐ Fibo 2.0 Edit Turbo (GH #69, `dit/056`): an editor, its picture the reference ([Family.edit]); no inpaint. */
         val FIBO2 = SdSampler("fibo2.sample", Family.FIBO2, inpaint = false)
         /**
@@ -792,7 +808,7 @@ class SdSampler(
         val FLUX2_INPAINT = SdSampler("flux2.inpaint", Family.FLUX2, inpaint = true)
 
         val ALL = listOf(
-            SD15, SD15_SWAP, SDXL, SDXL_SWAP, ANIMA, FLUX2, ZIMAGE, QWEN21, KREA2, ANIMA_DIT, IRIS, MOSS, IDEOGRAM, FLUX3, FLUX1, FIBO2,
+            SD15, SD15_SWAP, SDXL, SDXL_SWAP, ANIMA, FLUX2, ZIMAGE, QWEN21, KREA2, ANIMA_DIT, IRIS, MOSS, IDEOGRAM, FLUX3, FLUX1, FIBO2, H3IMAGE,
             SD15_INPAINT, SD15_SWAP_INPAINT, SDXL_INPAINT, SDXL_SWAP_INPAINT, ANIMA_INPAINT,
             ZIMAGE_INPAINT, QWEN21_INPAINT, KREA2_INPAINT, ANIMA_DIT_INPAINT, MOSS_INPAINT, FLUX2_INPAINT,
         )
@@ -1107,7 +1123,7 @@ class SdSampler(
      * panel, a saved workflow and `applyDefaults` all read.
      */
     private fun ditWidgets(): List<Widget> = baseWidgets()
-        .filterNot { it.name in setOf("scheduler", "aspect", "width", "height", "cfg") } + listOf(
+        .filterNot { it.name in setOf("scheduler", "aspect", "width", "height", "cfg") } + listOfNotNull(
         // ⭐⭐ The engine's samplers by name (GitHub #19, 2026-10-14: "not all of them are tuned
         // for Euler"). Euler stays the default: every turbo DiT here was distilled for it.
         Widget(
@@ -1124,6 +1140,8 @@ class SdSampler(
             "cfg", "float", defaultSpec().cfg.toString(), 1.0, 20.0, fine = true,
             hintRes = R.string.hint_cfg_distilled,
         ),
+        // ⭐ GitHub #129: the flow shift, 0 = the model's own ([SHIFT]).
+        if (takesShift(family)) Widget(SHIFT, "float", "0.0", 0.0, 12.0, fine = true, hintRes = R.string.hint_flow_shift) else null,
         // ⭐ The hint goes on WIDTH alone, not on both: it describes the pair,
         // and saying it twice under two adjacent sliders is noise.
         Widget(
@@ -1225,7 +1243,8 @@ class SdSampler(
         )
         // ⭐ What this phone's NPU taught us (GitHub #97): a changed budget in the key is what relaunches the backend.
         val capped = if (family.dit) BackendProcess.cappedDitBudget(budget, DeviceProbe.ditMapCap) else budget
-        val withBudget = if (capped == null) key else key.copy(memoryBudget = capped)
+        val withBudget = (if (capped == null) key else key.copy(memoryBudget = capped))
+            .let { k -> if (takesShift(family)) k.copy(flowShift = shiftOf(p)) else k }
         return if (editOnNpu(family, pictures, ModelCatalog.byId(key.model), DeviceProbe.caps())) withBudget.copy(npu = true) else withBudget
     }
 
@@ -1323,7 +1342,7 @@ class SdSampler(
      * ControlNet pack), not Iris (no VAE to mask through) or Wan (a video).
      */
     private val offersDetail: Boolean
-        get() = !inpaint && family !in setOf(Family.IRIS, Family.WAN, Family.IDEOGRAM, Family.FLUX3, Family.FLUX1, Family.FIBO2)
+        get() = !inpaint && family !in setOf(Family.IRIS, Family.WAN, Family.IDEOGRAM, Family.FLUX3, Family.FLUX1, Family.FIBO2, Family.H3IMAGE)
 
     /** ⭐ True when [node] will run the detail pass: what the Run's up-front tool check asks. */
     internal fun detailWanted(node: Node): Boolean = offersDetail && effectiveParams(node).let { p ->
@@ -1350,7 +1369,7 @@ class SdSampler(
     private fun detailWidgets(): List<Widget> = listOfNotNull(
         // ⭐ On every sampler but Wan and Iris: it acts on image to image, inpaint and Fix faces / hands.
         Widget(MATCH_COLORS, "bool", "false", hintRes = R.string.hint_match_colours)
-            .takeIf { family != Family.WAN && family != Family.IRIS && family != Family.MOSS && family != Family.IDEOGRAM && family != Family.FLUX3 && family != Family.FLUX1 && family != Family.FIBO2 },
+            .takeIf { family != Family.WAN && family != Family.IRIS && family != Family.MOSS && family != Family.IDEOGRAM && family != Family.FLUX3 && family != Family.FLUX1 && family != Family.FIBO2 && family != Family.H3IMAGE },
         // ⭐⭐ MOSS layout prompt (a port of Comfyui-Moss-LayoutPrompt, 2026-11): paste a
         // layout DRAFT into the prompt box and this switch compiles it (abs/xyxy -> the
         // engine's centred yxyx) right before the render. MOSS only — the compiler speaks
@@ -1894,7 +1913,16 @@ class SdSampler(
         // ⭐ Match colours: the patch in the cut's colours before it is blended in, so no tinted seam.
         val patchBmp = if (matching(p)) ColorTools.matchBitmap(patchBmp, cut.image) else patchBmp
         val out = if (!p[PasteNode.STITCH].equals("true", ignoreCase = true)) {
-            InpaintPixels.composite(frame, patchBmp, dst, cut.mask)
+            // ⭐ GitHub #128: the photo's own transparency back, in the frame's pixels (padding counts as filled).
+            val sx = frame.width / frameRect.width()
+            val sy = frame.height / frameRect.height()
+            val photoAt = android.graphics.RectF(
+                -frameRect.left * sx, -frameRect.top * sy, (src.width - frameRect.left) * sx, (src.height - frameRect.top) * sy,
+            )
+            InpaintPixels.keepTransparency(
+                InpaintPixels.composite(frame, patchBmp, dst, cut.mask), src, photoAt,
+                android.graphics.RectF(0f, 0f, frame.width.toFloat(), frame.height.toFloat()), cut.mask, dst,
+            )
         } else {
             stitch(src, frame, frameRect, patchBmp, dst, cut.mask)
         }
@@ -1947,7 +1975,12 @@ class SdSampler(
             frameRect.left + dst.left * sx, frameRect.top + dst.top * sy,
             frameRect.left + dst.right * sx, frameRect.top + dst.bottom * sy,
         )
-        return InpaintPixels.composite(base, patch, into, mask)
+        // ⭐ GitHub #128: the photo's own transparency back; the frame's padding counts as filled.
+        return InpaintPixels.keepTransparency(
+            InpaintPixels.composite(base, patch, into, mask), photo,
+            place(0f, 0f, photo.width.toFloat(), photo.height.toFloat()),
+            place(frameRect.left, frameRect.top, frameRect.right, frameRect.bottom), mask, into,
+        )
     }
 
     /**

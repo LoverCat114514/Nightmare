@@ -22,6 +22,12 @@ import java.io.IOException
 object Fp8Q8Gguf {
 
     private const val F8 = "F8_E4M3"
+
+    /**
+     * The families it converts. ⭐ MOSS since item 86 (Saved #8177, the same vivo 8 Gen 3, 1.6.307): an fp8 Moody MOSS Mix
+     * stayed a safetensors and aborted in its first block (`ggml-cpu/ops.cpp:571`), the CPU fallback for fp8 below v79.
+     */
+    private val FAMILIES = setOf(Family.KREA2, Family.MOSS)
     private const val NATIVE_FP8_ARCH = 79
 
     /**
@@ -30,7 +36,7 @@ object Fp8Q8Gguf {
      * (`F8_E5M2` goes through [Fp8Widen] as before).
      */
     fun converts(head: CustomModels.DitHead, family: Family?, caps: DeviceProbe.Caps): Boolean =
-        !head.gguf && family == Family.KREA2 && caps.known && caps.qualcomm && caps.arch < NATIVE_FP8_ARCH &&
+        !head.gguf && family in FAMILIES && caps.known && caps.qualcomm && caps.arch < NATIVE_FP8_ARCH &&
             !MxFp8Gguf.converts(head) && !Int8Gguf.converts(head) && plainFp8(head.json)
 
     /** ⭐ fp8 matmul weights, and every tensor's dtype one the writer reads (the dropped U8 settings aside). */

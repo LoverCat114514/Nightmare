@@ -90,6 +90,10 @@ class H3NodeTest {
         assertEquals("4.5", WanVideoNode.memoryBudget(WanVideoNode.pinnedBytes(384, 384, 73, h3), 12L shl 30, 79, stream = false, prof = h3))
         assertEquals("4.5", WanVideoNode.memoryBudget(0L, 16L shl 30, 0, stream = false, prof = h3))
         assertEquals("2.75", WanVideoNode.memoryBudget(0L, 12L shl 30, 75, stream = false, prof = h3))
+        // ⭐ The 10.1 s clip at 384²: block 0 asked 5,024 MB at 4.5 (S25, 2026-11-19); the longest everyday clips stay at 4.5.
+        assertEquals("5.25", WanVideoNode.memoryBudget(WanVideoNode.pinnedBytes(384, 384, 243, h3), 12L shl 30, 79, stream = false, prof = h3))
+        assertEquals("4.5", WanVideoNode.memoryBudget(WanVideoNode.pinnedBytes(384, 384, 124, h3), 12L shl 30, 79, stream = false, prof = h3))
+        assertEquals("4.5", WanVideoNode.memoryBudget(WanVideoNode.pinnedBytes(832, 480, 73, h3), 12L shl 30, 79, stream = false, prof = h3))
     }
 
     @Test
