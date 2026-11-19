@@ -302,6 +302,11 @@ fun ModeSegmentedRow(
 
 /**
  * ⭐ A labelled slider whose thumb IS the wire value.
+ *
+ * [steps] is the number of stops BETWEEN the two ends (Material's own
+ * convention, 0 = continuous). A discrete slider snaps the thumb to those
+ * stops, which is what makes a short range with a fine grid land on the value
+ * the finger aimed at instead of one pixel past it.
  */
 @Composable
 fun PostSlider(
@@ -309,6 +314,10 @@ fun PostSlider(
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     fmt: (Float) -> String,
+    // ⚠ steps sits BEFORE onSet on purpose: four call sites in ParamsCard pass
+    // onSet as a trailing lambda, and a defaulted parameter after it would
+    // swallow that lambda (Function0<Unit> vs Int).
+    steps: Int = 0,
     onSet: (Float) -> Unit,
 ) {
     Column {
@@ -330,6 +339,7 @@ fun PostSlider(
             value = value.coerceIn(range.start, range.endInclusive),
             onValueChange = onSet,
             valueRange = range,
+            steps = steps,
             colors = SliderDefaults.colors(
                 thumbColor = Nm.pri,
                 activeTrackColor = Nm.pri,

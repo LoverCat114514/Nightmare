@@ -624,6 +624,7 @@ fun NewUiScreen(
                         if (obj.has("negative")) negative = obj.getString("negative")
                         if (obj.has("steps")) s.steps = obj.getInt("steps")
                         if (obj.has("cfg")) s.cfg = obj.getDouble("cfg").toFloat()
+                        if (obj.has("shift")) s.shift = obj.getDouble("shift").toFloat()
                         if (obj.has("seed")) {
                             s.seed = obj.getLong("seed")
                             s.fixedSeed = true
@@ -1071,6 +1072,7 @@ private fun buildMetaJson(s: WbParams, positive: String, negative: String, seed:
         put("negative", negative)
         put("steps", s.steps)
         put("cfg", s.cfg.toDouble())
+        put("shift", s.shift.toDouble())
         put("seed", seed)
         put("width", s.w)
         put("height", s.h)

@@ -176,6 +176,26 @@ fun ParamsCard(
             fmt = { String.format(java.util.Locale.US, "%.1f", it) },
             onSet = { s.cfg = it },
         )
+        // ⭐ GitHub #129: the flow shift, the same knob the canvas sampler
+        // offers ([SdSampler.takesShift] — the families whose sampler really has
+        // the widget; sending it to any other family 400s). 0 = the model's own
+        // value, so the slider starts at the bottom and only a moved slider is
+        // sent ([Engine.buildRequest]).
+        if (com.abrah.nightmare.SdSampler.takesShift(family)) {
+            // ⚠ 0..5 in half steps, the user's call (2026-11-19): the useful
+            // part of the range is all below 3, and on a phone-width slider the
+            // 0..12 grid could not be hit precisely. steps = 9 puts a stop every
+            // 0.5 between the two ends (11 values), so the thumb lands on the
+            // value the finger aimed at.
+            PostSlider(
+                label = stringResource(R.string.knob_shift),
+                value = s.shift,
+                range = 0f..5f,
+                steps = 9,
+                fmt = { com.abrah.nightmare.LoraSpec.number(it.toDouble()) },
+                onSet = { s.shift = it },
+            )
+        }
 
         // ── The seed segment: random / fixed, the field only when fixed ─────
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

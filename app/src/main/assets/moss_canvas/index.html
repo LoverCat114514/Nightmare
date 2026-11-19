@@ -379,32 +379,14 @@ details summary{
 <!-- ============ 画板页面 ============ -->
 <div class="page on" id="p-cv">
 
-  <!-- 1. 尺寸与分辨率卡片 -->
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title"><i>📐</i>生成尺寸与构图比例</div>
-    </div>
-    <div class="input-row">
-      <div class="size-stepper">
-        <button onclick="stepSize('W', -16)">−</button>
-        <input id="W" type="number" step="16" min="256" value="896" onchange="onSizeChanged()">
-        <button onclick="stepSize('W', 16)">+</button>
-      </div>
-      <button class="swap-btn" onclick="swapWH()" title="交换宽高">⇄</button>
-      <div class="size-stepper">
-        <button onclick="stepSize('H', -16)">−</button>
-        <input id="H" type="number" step="16" min="256" value="1152" onchange="onSizeChanged()">
-        <button onclick="stepSize('H', 16)">+</button>
-      </div>
-    </div>
-    <div class="ratio-chips" id="ratioChips">
-      <button class="ratio-chip" onclick="setPresetSize(1024,1024)">1:1 默认 (1024²)</button>
-      <button class="ratio-chip on" onclick="setPresetSize(896,1152)">3:4 人像 (896×1152)</button>
-      <button class="ratio-chip" onclick="setPresetSize(768,1344)">9:16 壁纸 (768×1344)</button>
-      <button class="ratio-chip" onclick="setPresetSize(1152,896)">4:3 风景 (1152×896)</button>
-      <button class="ratio-chip" onclick="setPresetSize(1344,768)">16:9 宽屏 (1344×768)</button>
-    </div>
-  </div>
+  <!-- 1. 尺寸：由采样器（工作台 / 节点）决定，画布里不再单独调 -->
+  <!-- ⚠ The two inputs stay (hidden): every size helper in this file reads
+       $("W")/$("H") — onSizeChanged, stepSize, swapWH, setPresetSize,
+       saveState, restoreState, importDraft and __nmSetSize all go through
+       them. The canvas opens at the sampler's own resolution
+       ([MossCanvasActivity] injects it via __nmSetSize). -->
+  <input type="hidden" id="W" value="896">
+  <input type="hidden" id="H" value="1152">
 
   <!-- 2. 画布交互区域 -->
   <div class="card canvas-card">
@@ -604,6 +586,28 @@ function fitItems(items, w, h) {
   });
 }
 
+/**
+ * ⭐ Reads a draft into the CURRENT canvas size.
+ *
+ * The canvas no longer carries a size control — it is opened at the sampler's
+ * own resolution ([MossCanvasActivity] injects it through `__nmSetSize`). A
+ * draft may still declare its own `width`/`height` (an older canvas export, a
+ * hand-written JSON), so its boxes are fitted inside that declared space first
+ * and then scaled into `w`/`h`: the boxes keep their relative layout, the
+ * canvas keeps the sampler's size, and the returned `width`/`height` are ALWAYS
+ * the target — nothing downstream can move the canvas off the sampler's
+ * resolution.
+ */
+/** ⭐ Maps boxes from one canvas size to another, keeping their relative place. */
+function scaleItems(items, fromW, fromH, toW, toH) {
+  if (!(fromW > 0) || !(fromH > 0) || (fromW === toW && fromH === toH)) return items;
+  const fx = toW / fromW, fy = toH / fromH;
+  return items.map(it => {
+    const b = it.bbox; if (!Array.isArray(b) || b.length !== 4) return it;
+    return { ...it, bbox: [b[0] * fx, b[1] * fy, b[2] * fx, b[3] * fy] };
+  });
+}
+
 function loadDraft(raw, w, h) {
   let d = raw;
   if (typeof raw === "string") {
@@ -612,13 +616,16 @@ function loadDraft(raw, w, h) {
     d = parseDraftLoose(s);
     if (!d) throw new LayoutError("无法识别合法 JSON");
   }
+  const dw = Number(d.width) > 0 ? Number(d.width) : w;
+  const dh = Number(d.height) > 0 ? Number(d.height) : h;
+  const items = scaleItems(fitItems(d.items || [], dw, dh), dw, dh, w, h);
   return {
-    width: d.width ?? w,
-    height: d.height ?? h,
+    width: w,
+    height: h,
     bbox_coord_space: d.bbox_coord_space || "abs",
     bbox_format: d.bbox_format || "xyxy",
     summary: d.summary || { caption: "" },
-    items: fitItems(d.items || [], d.width || w, d.height || h)
+    items: items
   };
 }
 
@@ -1183,9 +1190,9 @@ function importDraft() {
   try {
     const text = $("jsIn").value.trim();
     if (!text) { toast("请先粘贴 JSON 内容"); return; }
+    // ⚠ The canvas size belongs to the sampler, not to the draft: loadDraft
+    // returns it unchanged and only re-fits the boxes into it.
     const d = loadDraft(text, S.w, S.h);
-    S.w = parseInt(d.width) || S.w;
-    S.h = parseInt(d.height) || S.h;
     $("W").value = S.w;
     $("H").value = S.h;
     $("cap").value = d.summary.caption || "";
@@ -1262,6 +1269,9 @@ compileAndUpdate();
 window.__nmSetSize = function(w, h) {
   try {
     if (typeof w !== "number" || typeof h !== "number" || !sizeOk(w) || !sizeOk(h)) return;
+    // ⭐ The sampler owns the size: whatever the restored draft used, the boxes
+    // move with it instead of being clipped or left behind.
+    S.items = scaleItems(S.items || [], S.w, S.h, w, h);
     S.w = w; S.h = h;
     $("W").value = w; $("H").value = h;
     clampBoxes();

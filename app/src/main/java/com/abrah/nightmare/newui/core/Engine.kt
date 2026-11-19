@@ -336,6 +336,14 @@ fun buildRequest(
             if (s.h > 0) knobs["height"] = s.h.toString()
             if (s.steps > 0) knobs["steps"] = s.steps.toString()
             if (s.cfg > 0f) knobs["cfg"] = s.cfg.toString()
+            // ⭐ GitHub #129: the flow shift, the same knob the canvas offers
+            // ([SdSampler.takesShift] decides whether the sampler has the
+            // widget at all — sending it to a family without one 400s with
+            // "no sampler in this flow takes \"shift\""). 0 = the model's own,
+            // so an untouched slider sends nothing.
+            if (SdSampler.takesShift(model.family) && s.shift > 0f) {
+                knobs[SdSampler.SHIFT] = com.abrah.nightmare.LoraSpec.number(s.shift.toDouble())
+            }
             if (mode == WbParams.MODE_IMG2IMG || mode == WbParams.MODE_INPAINT || mode == "swap_i2i") {
                 knobs["denoise"] = s.denoise.toString()
             }

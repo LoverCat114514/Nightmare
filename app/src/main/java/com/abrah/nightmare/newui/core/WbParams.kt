@@ -54,6 +54,8 @@ class WbParams(
     h: Int = 1216,
     steps: Int = 29,
     cfg: Float = 5.0f,
+    // ⭐ Shift (flow-matching DiT families only; 0 = the model's own).
+    shift: Float = 0f,
     seed: Long = 0L,
     fixedSeed: Boolean = false,
     denoise: Float = 0.40f,
@@ -78,6 +80,7 @@ class WbParams(
     var h by mutableStateOf(h)
     var steps by mutableStateOf(steps)
     var cfg by mutableStateOf(cfg)
+    var shift by mutableStateOf(shift)
     var seed by mutableStateOf(seed)
     var fixedSeed by mutableStateOf(fixedSeed)
     var denoise by mutableStateOf(denoise)
@@ -144,6 +147,7 @@ class WbParams(
                 h = p.getInt(KEY_H, 1216),
                 steps = p.getInt(KEY_STEPS, 29),
                 cfg = p.getFloat(KEY_CFG, 5.0f),
+                shift = p.getFloat(KEY_SHIFT, 0f),
                 seed = p.getLong(KEY_SEED, 0L),
                 fixedSeed = p.getBoolean(KEY_FIXED_SEED, false),
                 denoise = p.getFloat(KEY_DENOISE, 0.40f),
@@ -177,6 +181,7 @@ class WbParams(
                 .putInt(KEY_H, s.h)
                 .putInt(KEY_STEPS, s.steps)
                 .putFloat(KEY_CFG, s.cfg)
+            .putFloat(KEY_SHIFT, s.shift)
                 .putLong(KEY_SEED, s.seed)
                 .putBoolean(KEY_FIXED_SEED, s.fixedSeed)
                 .putFloat(KEY_DENOISE, s.denoise)
@@ -205,6 +210,7 @@ class WbParams(
         private const val KEY_H = "h"
         private const val KEY_STEPS = "steps"
         private const val KEY_CFG = "cfg"
+        private const val KEY_SHIFT = "shift"
         private const val KEY_SEED = "seed"
         private const val KEY_FIXED_SEED = "fixedSeed"
         private const val KEY_DENOISE = "denoise"
@@ -305,6 +311,7 @@ object WbSnapshots {
             .put("loras", LoraPick.encode(s.loras))
             .put("w", s.w).put("h", s.h)
             .put("steps", s.steps).put("cfg", s.cfg.toDouble())
+            .put("shift", s.shift.toDouble())
             .put("seed", s.seed).put("fixedSeed", s.fixedSeed)
             .put("denoise", s.denoise.toDouble())
             .put("mossOn", s.mossOn).put("mode", s.mode)
@@ -353,6 +360,7 @@ object WbSnapshots {
         if (o.has("h") && !o.isNull("h")) s.h = o.getInt("h")
         if (o.has("steps") && !o.isNull("steps")) s.steps = o.getInt("steps")
         dbl("cfg")?.let { s.cfg = it.toFloat() }
+        dbl("shift")?.let { s.shift = it.toFloat() }
         if (o.has("seed") && !o.isNull("seed")) { s.seed = o.getLong("seed"); s.fixedSeed = true }
         if (o.has("fixedSeed") && !o.isNull("fixedSeed")) s.fixedSeed = o.getBoolean("fixedSeed")
         dbl("denoise")?.let { s.denoise = it.toFloat() }
