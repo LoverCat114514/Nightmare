@@ -153,7 +153,7 @@
     <string name="embeddings_title">Эмбеддинги</string>
     <string name="import_upscaler_body">Сконвертированный файл весов апскейлера (.bin). Проверки архитектуры нет: он либо загрузится, либо нет.</string>
     <string name="import_upscaler_title">Импорт апскейлера</string>
-    <string name="loras_body">Стиль или персонаж в виде небольшого файла-адаптера поверх чекпойнта. Только FLUX.2 и Z‑Image: выберите его в параметре LoRAs узла сэмплера.</string>
+    <string name="loras_body">Стиль или персонаж в виде небольшого файла-адаптера поверх чекпойнта. Раскладывайте их по папкам через ⋮. Выберите его в параметре LoRAs узла сэмплера.</string>
     <string name="loras_title">LoRA</string>
     <string name="lora_experimental">LoRA на этой модели может заметно замедлить генерацию.</string>
     <string name="mask_pick_hint">Выберите, что перерисовать. Коснитесь метки ещё раз, чтобы снять её. Поток запомнит выбор и применит его к каждому новому снимку.</string>
@@ -270,6 +270,7 @@
     <!-- ⭐ 2026-11-10 port (upstream 1.6.288-292) -->
     <string name="run_sdxl_lowram_anyway">SDXL на этом телефоне работает в режиме экономии памяти при любом положении переключателя: без него SDXL заполняет память телефона с объёмом меньше 16 ГБ, и Android закрывает приложения.</string>
     <string name="run_moss_few_steps">Эта модель MOSS рассчитана на %1$d шагов: при меньшем числе тёмные и ровные области получаются блоками. Для 4 шагов есть 4-шаговая модель.</string>
+    <string name="run_dit_all_cpu">На этом телефоне %1$s работает на процессоре: NPU не может запустить эту модель, а маршрут через GPU её не берёт. Каждый шаг может занять минуты, большая картинка больше часа (у тестировщика 18 шагов при 1024x1024 заняли 96 мин). Меньший холст или меньше шагов закончатся быстрее.</string>
     <string name="run_ref_fit_warning">%1$s с референсом: %2$s, скорее всего, слишком много для этого телефона и может не получиться. Подойдёт %3$s. Пробуем</string>
     <string name="feature_missing_convert">В этой конвертации нет %1$s. Сконвертируйте снова в npuforge, отметив %1$s.</string>
     <string name="feature_missing_builtin">В этой загрузке модели нет %1$s. Удалите её и скачайте снова, чтобы получить версию с ним.</string>
@@ -367,6 +368,9 @@
     <string name="describe_tags">Теги</string>
     <string name="describe_tags_hint">Теги Danbooru, для аниме-моделей вроде Illustrious, Anima и Pony.</string>
     <string name="describe_words_hint">Предложения, для фото-моделей, SDXL и FLUX.2.</string>
+    <string name="describe_vlm_form">Как писать</string>
+    <string name="describe_vlm_prose">Предложения</string>
+    <string name="describe_vlm_hint">Читает картинку моделью зрения прямо на телефоне и пишет так, как читает подключённая модель: теги для аниме-моделей, разметку для MOSS-Image, предложения для остальных. Медленнее остальных: около 15 секунд на предложения или теги, минута на разметку.</string>
     <string name="tagger_about">Пишет теги Danbooru по картинке, для аниме-моделей: кнопка с картинкой у промпта, «Теги». WD tagger от SmilingWolf, без интернета, на процессоре.</string>
     <string name="tag_heavier">Сильнее: вес +0,1</string>
     <string name="tag_lighter">Слабее: вес −0,1</string>
@@ -515,6 +519,7 @@
     <string name="results_unreadable">не удаётся прочитать изображение</string>
     <string name="results_info">Сведения</string>
     <string name="results_copy_all">Копировать всё</string>
+    <string name="results_run_log">Журнал запуска</string>
     <string name="transfer_hint">Удерживайте выделенные строки, чтобы использовать их в открытом процессе.</string>
     <string name="transfer_use_n">Использовать: %1$d</string>
     <string name="transfer_title">Использовать в открытом процессе</string>
@@ -826,6 +831,16 @@
     <string name="moss_open_canvas">Открыть холст</string>
     <string name="moss_no_prompt_wire">Сначала подключите узел промпта</string>
     <string name="run_moss_layout_compiled">Черновик раскладки MOSS скомпилирован для этого запуска</string>
+    <string name="run_moss_layout">рендер по разметке</string>
+    <string name="layout_tab">Разметка</string>
+    <string name="layout_note">Нарисуйте рамку для каждого предмета на картинке и опишите его. Промпт описывает всю картинку. Проведите по пустому месту, чтобы нарисовать рамку, перетащите рамку, чтобы сдвинуть, потяните точку в углу, чтобы изменить размер. Края прилипают к середине картинки и к другим рамкам.</string>
+    <string name="layout_object">Предмет</string>
+    <string name="layout_character">Персонаж</string>
+    <string name="layout_text">Текст</string>
+    <string name="layout_add_box">Добавить рамку</string>
+    <string name="layout_clear">Очистить</string>
+    <string name="layout_clear_title">Очистить разметку?</string>
+    <string name="layout_clear_body">Все рамки (%1$d) и их описания будут удалены. Промпт останется.</string>
     <string name="hint_auto_colour">Исправляет тусклую или с оттенком картинку: тёмное делает тёмным, светлое светлым и убирает цветовой оттенок. Тёплая сцена остаётся тёплой.</string>
     <string name="hint_adjust_colours">Показывает четыре ползунка (яркость, контраст, насыщенность, теплота), чтобы подстроить картинку вручную после автоцвета. «Применить сейчас» покажет изменение на последней картинке без новой генерации.</string>
     <string name="hint_warmth">Ниже 0 холоднее (синее), выше 0 теплее (оранжевее).</string>
@@ -929,6 +944,14 @@
     <!-- Метки инструментов моделей и палитры узлов. -->
     <string name="describe_promptgen_label">Описание (Florence-2 PromptGen)</string>
     <string name="describe_wd_label">Теги (WD ViT v3)</string>
+    <string name="describe_vlm_label">Умное описание (Qwen3-VL 4B)</string>
+    <string name="enhance_action">Улучшить промпт</string>
+    <string name="enhance_undo">Отменить улучшение</string>
+    <string name="enhance_working">Пишу подробный промпт на телефоне\u2026</string>
+    <string name="enhance_use">Использовать</string>
+    <string name="enhance_again">Ещё вариант</string>
+    <string name="enhance_failed">Не удалось улучшить промпт: %1$s</string>
+    <string name="enhance_unusable">ответ не подходит как промпт</string>
     <string name="models_installed_named">установлено: %1$s</string>
     <string name="models_deleted_named">удалено: %1$s</string>
     <string name="upscaler_anime_label">Аниме 4x</string>
@@ -1312,6 +1335,7 @@
     <string name="schedule_linear_quadratic">Linear Quadratic</string>
 
     <string name="schedule_unavailable">У LCM своё расписание</string>
+    <string name="schedule_unavailable_spectral">Euler Spectral идёт по расписанию модели</string>
     <string name="drawer_support">Поддержка</string>
     <string name="support_coffee">Угостить кофе</string>
     <string name="support_title">Поддержать Nightmare</string>
@@ -1374,6 +1398,8 @@
     <string name="palette_about_animate">лицо на фото двигается как лицо в выбранном видео (LivePortrait)</string>
     <!-- review fixes (2026-10-22): canvas, inspector, ui -->
     <string name="inspector_sweep_count">Сколько: %1$d</string>
+    <string name="inspector_sweep_prompts_note">Один промпт на строку, до %1$d. Каждая картинка берёт следующий; остальное на узле не меняется.</string>
+    <string name="inspector_sweep_prompts">%1$d запусков, по одному на каждый промпт</string>
     <string name="inspector_sweep_seeds">%1$d запусков, у каждого новый случайный сид</string>
     <string name="output_auto_upscale_on">этот выход уже увеличивает каждый результат. Снимите автоувеличение, чтобы выбрать</string>
     <string name="inspector_sweep_this">перебирать этот параметр</string>
@@ -1477,7 +1503,9 @@ Nightmare показывает «Powered by MiniMax-H3-Image» там, где и
     <string name="heat_title">Нагрев</string>
     <string name="heat_note">Видео загружает процессоры телефона на минуты, и телефон нагревается. Чип защищает себя сам, аккумулятор нет: нагрев выше примерно 45 °C изнашивает его быстрее. Журнал запуска предупреждает, когда аккумулятор тёплый.</string>
     <string name="heat_pause">Пауза видео при горячем аккумуляторе</string>
-    <string name="heat_pause_hint">Видео ждёт между шагами, когда аккумулятор нагревается до 45 °C, и продолжает, когда он остывает до 40 °C. В тёплой комнате дольше, зато бережнее к аккумулятору. Не для Neodragon: его ролики занимают секунды.</string>
+    <string name="heat_pause_hint">Видео ждёт между шагами, когда аккумулятор нагревается до температуры ниже, и продолжает, когда он остынет на 5 °C. В тёплой комнате дольше, зато бережнее к аккумулятору. Не для Neodragon: его ролики занимают секунды.</string>
+    <string name="heat_pause_at">Пауза при</string>
+    <string name="heat_pause_at_hint">40 °C бережнее всего к аккумулятору, но пауз больше; при 50 °C пауз меньше всего, а выше 45 °C аккумулятор изнашивается быстрее.</string>
     <string name="gpu_title">GPU</string>
     <string name="gpu_note">Для телефонов, чей NPU не запускает модели DiT, и для всех, кто хочет попробовать графический чип.</string>
     <string name="dit_v69_npu">Попробовать NPU для моделей DiT (тест)</string>
@@ -1529,6 +1557,7 @@ Nightmare показывает «Powered by MiniMax-H3-Image» там, где и
     <string name="newui_src_empty">не загружено</string>
     <string name="newui_choose">Выбрать</string>
     <string name="newui_loras_hint">Адаптеры поверх этого чекпоинта</string>
+    <string name="newui_loras_loading">Читаю LoRA…</string>
     <string name="newui_lora_pick_hint">Добавляется в промпт тегом &lt;lora:имя:сила&gt;; сила 0.2-1.5. Список тот же, что в Модели → LoRA.</string>
     <string name="newui_lora_filter">Фильтр…</string>
     <string name="newui_lora_sheet_title">Выбрать LoRA</string>
@@ -1537,4 +1566,5 @@ Nightmare показывает «Powered by MiniMax-H3-Image» там, где и
     <string name="newui_lora_empty">В приложении пока нет LoRA — импортируйте в Модели → LoRA и откройте эту страницу заново</string>
     <string name="newui_size_hint">Округляется до кратного 64 при запуске; слишком большие размеры могут быть разбиты или отклонены</string>
     <string name="newui_model">Модель %1$s</string>
+    <string name="dit_area_too_big">%1$dx%2$d больше, чем эта модель может отрисовать на телефоне. Не больше %3$dx%4$d пикселей, в любой пропорции: 3840x2160 (4K) подходит.</string>
 </resources>

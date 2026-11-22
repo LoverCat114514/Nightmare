@@ -214,7 +214,12 @@ Java_com_abrah_nightmare_reverse_VlmEngine_nativeInferImage(
             "ERR:推理失败（eval 阶段，代码 " + std::to_string(eres) + "）";
         return env->NewStringUTF(emsg.c_str());
     }
-    // ---- generation: temp 0.7 / top-k 20 / top-p 0.8 (Qwen recommended) ----
+    // ---- generation: temp 0.25 / top-k 20 / top-p 0.9 / min-p 0.05 ----
+    // Structured JSON output (MOSS/Anima reverse): the old "Qwen
+    // recommended" 0.7 temperature let the 4B quantized models drift
+    // mid-JSON — empty items or schema echoes — and the sanitizer could
+    // not repair what the model never wrote. Low temperature + wide nucleus
+    // + min-p keeps the long structured output on-format (2026-11-23).
     // Every early-exit path carries its reason into the returned error — the
     // app surfaces it verbatim; silent breaks cost a whole debug round-trip.
     std::string out;
@@ -224,8 +229,9 @@ Java_com_abrah_nightmare_reverse_VlmEngine_nativeInferImage(
     const llama_token eot = llama_vocab_eot(g_eng.vocab);
     llama_sampler * chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(chain, llama_sampler_init_top_k(20));
-    llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.8f, 1));
-    llama_sampler_chain_add(chain, llama_sampler_init_temp(0.7f));
+    llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.9f, 1));
+    llama_sampler_chain_add(chain, llama_sampler_init_min_p(0.05f, 1));
+    llama_sampler_chain_add(chain, llama_sampler_init_temp(0.25f));
     llama_sampler_chain_add(chain, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
     llama_token cur = llama_sampler_sample(chain, g_eng.lctx, -1);
     for (int g = 0; g < max_new; ++g) {

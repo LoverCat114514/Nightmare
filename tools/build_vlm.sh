@@ -45,9 +45,10 @@ INC="-I$LLAMA_SRC/include \
      -I$LLAMA_SRC/vendor"
 
 # ---- generated version headers (normally produced by cmake) ----
-sed -e 's/@GGML_VERSION@/0.0.0/' -e 's/@GGML_BUILD_COMMIT@/unknown/' \
+sed -e 's/@GGML_VERSION@/1.0.0/' -e 's/@GGML_BUILD_COMMIT@/unknown/' \
+    -e 's/@GGML_VERSION_MAJOR@/1/' -e 's/@GGML_VERSION_MINOR@/0/' -e 's/@GGML_VERSION_PATCH@/0/' \
     "$LLAMA_SRC/ggml/src/ggml-version.h.in" > "$LLAMA_SRC/ggml/src/ggml-version.h"
-sed -e 's/@LLAMA_VERSION@/0.0.0/' -e 's/@LLAMA_BUILD_COMMIT@/unknown/' \
+sed -e 's/@LLAMA_VERSION@/1.0.0/' -e 's/@LLAMA_BUILD_COMMIT@/unknown/' \
     "$LLAMA_SRC/src/llama-version.h.in" > "$LLAMA_SRC/src/llama-version.h"
 
 # Fail-fast: every compile job appends to FAILED on error; each phase checks

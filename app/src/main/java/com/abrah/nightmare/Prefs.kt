@@ -96,6 +96,7 @@ object Prefs {
         postOpen = p.getBoolean(KEY_POST_OPEN, false)
         wanStream = p.getBoolean(KEY_WAN_STREAM, false)
         heatPause = p.getBoolean(KEY_HEAT_PAUSE, false)
+        heatPauseAt = p.getInt(KEY_HEAT_PAUSE_AT, HEAT_PAUSE_DEFAULT).takeIf { it in HEAT_PAUSE_STOPS } ?: HEAT_PAUSE_DEFAULT
         // ⭐ 2026-11-05 upstream port (v1.6.280, #78): chip temperature switch.
         chipTemps = p.getBoolean(KEY_CHIP_TEMPS, false)
         ditGpu = p.getBoolean(KEY_DIT_GPU, false)
@@ -408,6 +409,27 @@ object Prefs {
     /** ⚠ [KEY_HEAT_PAUSE] held in memory: a node's run reads it with no Context. Loaded by [load], set by [setLowRam]. */
     @Volatile var heatPause: Boolean = false
         private set
+
+    /** ⭐ The battery temperature that pauses, among [HEAT_PAUSE_STOPS] (the default 45 °C, [BatteryHeat.PAUSE_AT]) —
+     *  the user's #137 pick: the slider's stops are the only values, so a half-choice never lands between them. */
+    const val KEY_HEAT_PAUSE_AT = "heat_pause_at"
+
+    /** ⚠ The slider's stops, low to high. */
+    val HEAT_PAUSE_STOPS = listOf(40, 45, 50)
+
+    /** ⭐ The default stop: [BatteryHeat.PAUSE_AT]. */
+    const val HEAT_PAUSE_DEFAULT = 45
+
+    /** ⚠ [KEY_HEAT_PAUSE_AT] held in memory: a node's run reads it with no Context. Loaded by [load], set by [setHeatPauseAt]. */
+    @Volatile var heatPauseAt: Int = HEAT_PAUSE_DEFAULT
+        private set
+
+    /** ⭐ Nearest stop wins, so a REST call with 47 lands on 45, not 50. */
+    fun setHeatPauseAt(context: Context, celsius: Int) {
+        val v = HEAT_PAUSE_STOPS.minByOrNull { kotlin.math.abs(it - celsius) } ?: return
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putInt(KEY_HEAT_PAUSE_AT, v).apply()
+        heatPauseAt = v
+    }
 
     /** ⭐ The RAM readout shows the chip's temperatures, CPU, GPU and NPU ([ChipTemps], GitHub #78), not the battery's. ⭐ 2026-11-05 port from upstream v1.6.280. */
     const val KEY_CHIP_TEMPS = "chip_temps"

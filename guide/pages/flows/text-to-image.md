@@ -34,6 +34,13 @@ The model families read prompts differently:
 - No words for it? The **picture button** on the prompt box describes a picture you already
   have, either a render on the canvas or a photo from your gallery, as sentences or, for anime
   models, Danbooru tags, and writes that into the prompt ([Prompt node](../reference/nodes.md#prompt)).
+  Its **Qwen3-VL** chip (phones with 10 GB of RAM or more) uses a vision model that also reads
+  what is where, and for MOSS-Image writes the layout of boxes the model draws to.
+- Too few words? The **sparkle** on the prompt box hands your idea to the same Qwen3-VL, offline,
+  and shows a fuller prompt to use or roll again, then Undo puts yours back. It writes what the
+  wired model reads: sentences, Danbooru tags for anime models, or for MiniMax H3 its whole
+  structured prompt (who speaks and how they sound, the words, the soundscape, the music), with a
+  picture's person kept as they are when a first frame or reference is wired.
 
 ## The generator's settings
 
@@ -49,7 +56,7 @@ Tap the **Text to image** node:
 | **Steps** | How many refinement passes | More is slower; each model opens on the number its author recommends |
 | **CFG** | How strictly the prompt is followed | Too high burns colours; turbo/distilled models want ~1–2 |
 | **Seed** | The starting noise | `0` = a new picture every Run. Type a seed shown on a node to get that picture back |
-| **Scheduler** | The sampling method. SD 1.5 and SDXL: DPM++ 2M, DPM++ 2M SDE, DPM++ 3M, DPM++ 3M SDE, DPM++ SDE (two model runs a step, so twice as slow), Euler, Euler A, LCM. FLUX.2, Z-Image, Qwen Image, Krea 2, Iris and Anima DiT: Euler, Euler A, Heun, DPM++ 2M, DPM++ 2M SDE, ER-SDE, Res Multistep, iPNDM, LCM | Use what the model's author recommends; turbo models usually want Euler (DiT) or LCM |
+| **Scheduler** | The sampling method. SD 1.5 and SDXL: DPM++ 2M, DPM++ 2M SDE, DPM++ 3M, DPM++ 3M SDE, DPM++ SDE (two model runs a step, so twice as slow), Euler, Euler A, LCM. FLUX.2, Z-Image, Qwen Image, Krea 2, Iris and Anima DiT: Euler, Euler A, Heun, DPM++ 2M, DPM++ 2M SDE, ER-SDE, Res Multistep, iPNDM, LCM. MiniMax H3 Image also: Euler Spectral (the fine-detail noise re-drawn on the middle steps) | Use what the model's author recommends; turbo models usually want Euler (DiT) or LCM |
 | **Schedule** | How the noise steps are spaced: **Normal**, **Karras** or **Exponential** (SD 1.5, SDXL and the DiT models but Wan and Iris; not with LCM), and on the DiT models also **SGM Uniform**, **Bong Tangent**, **Simple** and **Beta**. Normal is each model's own. On a 4- or 8-step DiT model Karras and Exponential come out murky at those steps: give them about 12 | Many turbo and hyper SDXL models recommend Exponential |
 | **Resolution** / **Aspect** / **Width, Height** | The picture's size | Depends on the family. Below |
 

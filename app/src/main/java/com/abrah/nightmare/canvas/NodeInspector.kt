@@ -67,6 +67,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -367,6 +368,8 @@ fun NodeInspector(
      * [com.abrah.nightmare.DescribeMode]; [done] gets the text or null. ⚠ Null draws no button.
      */
     onDescribe: ((picture: String, mode: com.abrah.nightmare.DescribeMode, done: (String?) -> Unit) -> Unit)? = null,
+    /** ⭐⭐ The prompt enhancer (`docs/FLORENCE.md` §7): Qwen3-VL rewrites the prompt; done(null) when it could not. */
+    onEnhance: ((node: String, param: String, seed: Int, done: (String?) -> Unit) -> Unit)? = null,
     parserInstalled: Boolean = true,
     parserRow: com.abrah.nightmare.ui.ToolRow? = null,
     onInstallParser: (() -> Unit)? = null,
@@ -533,6 +536,7 @@ fun NodeInspector(
             onSetResolution = { onSetResolution(nodeId, it) },
             onSetAspect = onSetAspect,
             canSweep = com.abrah.nightmare.canSweep(state.workflow.graph, nodeId),
+            armedAxes = com.abrah.nightmare.BatchParams.axesOf(state.workflow.graph).size,
             // ⚠ Read HERE for the same reason: what a prompt is measured
             // against depends on what it is WIRED into.
             promptBudget = com.abrah.nightmare.PromptTokens.budgetFor(state.workflow.graph, nodeId),
@@ -548,6 +552,8 @@ fun NodeInspector(
                 describePictures(state, types, imageFor)
             } else emptyList(),
             describeDefault = com.abrah.nightmare.DescribeMode.defaultFor(state.workflow.graph, nodeId),
+            describeVision = com.abrah.nightmare.DescribeMode.visionFor(state.workflow.graph, nodeId)
+                .takeIf { com.abrah.nightmare.vlm.VisionDescriber in com.abrah.nightmare.DescribeMode.models },
             installedModels = installedModels,
             onSetModel = onSetModel,
             preview = shownId?.let(imageFor),
@@ -741,6 +747,7 @@ fun NodeInspector(
             onPickMask = onPickMask,
             onTranslate = onTranslate,
             onDescribe = onDescribe,
+            onEnhance = onEnhance,
             parserInstalled = parserInstalled,
             parserRow = parserRow,
             onInstallParser = onInstallParser,
@@ -801,9 +808,7 @@ fun NodeInspector(
             onInfo = detailsOf?.takeIf { previewId != null }?.let { d -> { d(nodeId) } },
         )
         if (showingBeforeInfo && detailsOf != null) {
-            com.abrah.nightmare.ui.ResultInfoDialog(detailsOf(nodeId)) {
-                showingBeforeInfo = false
-            }
+            com.abrah.nightmare.ui.ResultInfoDialog(detailsOf(nodeId), onClose = { showingBeforeInfo = false })
         }
         }
         if (vertical) {
@@ -1324,6 +1329,11 @@ internal fun NodeInspectorBody(
     onSetAspect: (String) -> Unit = {},
     /** ⭐ Whether THIS node may arm a sweep — the last-node rule. */
     canSweep: Boolean = true,
+    /**
+     * ⭐ Sweeps armed on the WHOLE graph ([com.abrah.nightmare.BatchParams.MAX_AXES] is per graph): a prompt batch (#137)
+     * arms on the prompt node, so counting this node's alone let a third axis past the cap.
+     */
+    armedAxes: Int = 0,
     /** ⭐ What this node's prose is counted against — [com.abrah.nightmare.PromptTokens.budgetFor]. */
     promptBudget: com.abrah.nightmare.PromptTokens.Budget? = null,
     /** ⭐ The prompt box's hint when what it feeds reads prompts its own way (MiniMax H3's sections), else the widget's. */
@@ -1336,6 +1346,11 @@ internal fun NodeInspectorBody(
     describePictures: List<DescribePicture> = emptyList(),
     /** ⭐ The chip the describe dialog opens on — [com.abrah.nightmare.DescribeMode.defaultFor]. */
     describeDefault: com.abrah.nightmare.DescribeMode = com.abrah.nightmare.DescribeMode.DETAILED,
+    /**
+     * ⭐ The vision chip's mode for this prompt ([com.abrah.nightmare.DescribeMode.visionFor]); null where the vision
+     * model is not offered, and no chip is drawn.
+     */
+    describeVision: com.abrah.nightmare.DescribeMode? = null,
     /** ⚠ Whether a mode's model is on the phone — the tests answer for it. */
     describeReady: (com.abrah.nightmare.DescribeMode) -> Boolean = { it.model.installed },
     installedModels: List<CheckpointChoice> = emptyList(),
@@ -1515,6 +1530,8 @@ internal fun NodeInspectorBody(
      * [com.abrah.nightmare.DescribeMode]; [done] gets the text or null. ⚠ Null draws no button.
      */
     onDescribe: ((picture: String, mode: com.abrah.nightmare.DescribeMode, done: (String?) -> Unit) -> Unit)? = null,
+    /** ⭐⭐ The prompt enhancer (`docs/FLORENCE.md` §7): Qwen3-VL rewrites the prompt; done(null) when it could not. */
+    onEnhance: ((node: String, param: String, seed: Int, done: (String?) -> Unit) -> Unit)? = null,
     parserInstalled: Boolean = true,
     parserRow: com.abrah.nightmare.ui.ToolRow? = null,
     onInstallParser: (() -> Unit)? = null,
@@ -2720,22 +2737,27 @@ internal fun NodeInspectorBody(
         // ⭐ The SAME dialog Results opens — one function, so the two cannot
         // drift (`docs/ARCHITECTURE.md` §5.6).
         if (showingInfo && onInfo != null) {
-            com.abrah.nightmare.ui.ResultInfoDialog(onInfo()) { showingInfo = false }
+            com.abrah.nightmare.ui.ResultInfoDialog(onInfo(), onClose = { showingInfo = false })
         }
-        if (pickingLoras) {
+        // ⚠⚠ Called from a composable LAMBDA, as the knob list is: R8 inlines a one-caller private function, so a direct
+        // call put [NodeLoraPicker] back inside this body, and 1.6.317's LoRA chip branches tipped it into a method ART's
+        // verifier rejects again (`tools/verify_dex.sh` on the 1.6.321 candidate). The lambda compiles as its own class.
+        val loraPicker: @Composable () -> Unit = {
             NodeLoraPicker(
                 nodeId, node, type, loraEpoch, onSetParam, onImportLora, onBrowseLoras, onAddToPrompt, onReplacePrompt,
                 onDeleteLora, onDismiss = { pickingLoras = false },
             )
         }
+        if (pickingLoras) loraPicker()
 
         batching?.let { w ->
             BatchDialog(
                 node = node,
                 widget = w,
-                alreadyArmed = com.abrah.nightmare.BatchParams.axesOf(
-                    com.abrah.nightmare.Graph(listOf(node))
-                ).size,
+                alreadyArmed = maxOf(
+                    armedAxes,
+                    com.abrah.nightmare.BatchParams.axesOf(com.abrah.nightmare.Graph(listOf(node))).size,
+                ),
                 onDismiss = { batching = null },
                 onSet = { spec ->
                     onSetParam(nodeId, com.abrah.nightmare.BatchParams.keyFor(w.name), spec)
@@ -2982,7 +3004,10 @@ internal fun NodeInspectorBody(
                                     pick(ModelCatalog.joinScheduler(base, sfx))
                                 },
                             ) else Text(
-                                stringResource(R.string.schedule_unavailable),
+                                stringResource(
+                                    if (base == ModelCatalog.H3_SPECTRAL) R.string.schedule_unavailable_spectral
+                                    else R.string.schedule_unavailable,
+                                ),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -3147,7 +3172,7 @@ internal fun NodeInspectorBody(
             // 2026-09-10.
             if (armedSpec != null) {
                 val vals = com.abrah.nightmare.BatchParams.valuesOf(w.name, armedSpec)
-                ArmedSweepRow(w.name.localizedKnobLabel(), vals, armedSpec) { batching = w }
+                ArmedSweepRow(w.name.localizedKnobLabel(), vals, armedSpec, com.abrah.nightmare.BatchParams.joined(w.name, vals)) { batching = w }
                 continue
             }
             if (why == null && w.numeric && w.min != null && w.max != null) {
@@ -3387,13 +3412,29 @@ internal fun NodeInspectorBody(
                 }
                 Row(Modifier.align(Alignment.TopEnd)) {
                 PromptExpandButton(name.localizedKnobLabel(), current) { text -> onSetParam(nodeId, name, text); show(text) }
+                // ⭐ A prompt batch's toggle (#137) on the border too: beside the box it narrowed the prompt against the negative.
+                if (batchable && com.abrah.nightmare.BatchParams.isList(name)) {
+                    BorderBatchToggle(armed = com.abrah.nightmare.BatchParams.armed(node, name), onClick = { batching = w })
+                }
                 if (name == "prompt" && onDescribe != null) {
                     DescribeToggle(
                         prompt = current,
                         pictures = describePictures,
                         defaultMode = describeDefault,
+                        visionMode = describeVision,
                         isReady = describeReady,
                         onDescribe = onDescribe,
+                        onWrite = { text ->
+                            onSetParam(nodeId, name, text)
+                            show(text)
+                        },
+                    )
+                }
+                // ⭐ Enhance (`docs/FLORENCE.md` §7), then Undo in the same slot, Translate's shape; the positive prompt only.
+                if (name == "prompt" && onEnhance != null && current.isNotBlank()) {
+                    EnhanceToggle(
+                        prompt = current,
+                        onEnhance = { seed, done -> onEnhance(nodeId, name, seed, done) },
                         onWrite = { text ->
                             onSetParam(nodeId, name, text)
                             show(text)
@@ -3424,7 +3465,7 @@ internal fun NodeInspectorBody(
                 }
             }
             }
-            if (batchable) {
+            if (batchable && !com.abrah.nightmare.BatchParams.isList(w.name)) {
                 BatchToggle(
                     armed = com.abrah.nightmare.BatchParams.armed(node, w.name),
                     onClick = { batching = w },
@@ -3860,6 +3901,10 @@ internal fun SliderRow(
      * sixty invalidations and sixty log lines for one drag.
      */
     onCommit: (() -> Unit)? = null,
+    /** ⭐ A label of its own, for a slider outside a node (Settings); null = the knob's name, localised. */
+    label: String? = null,
+    /** Printed after the value: " °C". */
+    unit: String = "",
 ) {
     val min = widget.min!!.toFloat()
     val max = widget.max!!.toFloat()
@@ -3900,9 +3945,9 @@ internal fun SliderRow(
     }
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
-            widget.name.localizedKnobLabel() + "   " +
-                if (isInt) shown.roundToInt().toString()
-                else fixed(shown, decimalsAt(shown)),
+            (label ?: widget.name.localizedKnobLabel()) + "   " +
+                (if (isInt) shown.roundToInt().toString()
+                else fixed(shown, decimalsAt(shown))) + unit,
             style = MaterialTheme.typography.bodyMedium,
         )
         Slider(
@@ -4344,18 +4389,29 @@ internal fun pictureCap(pair: Boolean = false): androidx.compose.ui.unit.Dp {
  */
 /** ⭐ An ARMED knob's row: its name, what it will sweep, and the toggle. ONE function for the choice and the range. */
 @Composable
-private fun ArmedSweepRow(label: String, values: List<String>, armed: String, onClick: () -> Unit) {
+private fun ArmedSweepRow(label: String, values: List<String>, armed: String, shown: String = values.joinToString(", "), onClick: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.bodyMedium)
             Text(
-                stringResource(R.string.inspector_batching_values, values.size, values.joinToString(", ")),
+                stringResource(R.string.inspector_batching_values, values.size, shown),
                 style = NoteTextStyle,
                 color = MaterialTheme.colorScheme.primary,
             )
         }
         BatchToggle(armed = armed, onClick = onClick)
     }
+}
+
+/** ⭐ [BatchToggle] on a prose box's top border, in the sheet's colour, as [TranslateToggle] sits there. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BorderBatchToggle(armed: String?, onClick: () -> Unit) {
+    Surface(
+        color = androidx.compose.material3.BottomSheetDefaults.ContainerColor,
+        shape = CircleShape,
+        modifier = Modifier.padding(end = 8.dp).offset(y = (-8).dp),
+    ) { BatchToggle(armed = armed, onClick = onClick) }
 }
 
 @Composable
@@ -4445,6 +4501,8 @@ private fun DescribeToggle(
     prompt: String,
     pictures: List<DescribePicture>,
     defaultMode: com.abrah.nightmare.DescribeMode,
+    /** ⭐ The vision chip's first style for this prompt, or null for no vision chip. */
+    visionMode: com.abrah.nightmare.DescribeMode?,
     onDescribe: (picture: String, mode: com.abrah.nightmare.DescribeMode, done: (String?) -> Unit) -> Unit,
     onWrite: (String) -> Unit,
     /** ⚠ Read at the TAP — whether "Describing…" is true, or a download popup is coming. */
@@ -4523,9 +4581,24 @@ private fun DescribeToggle(
             onDismissRequest = close,
             title = { Text(stringResource(R.string.describe_action)) },
             text = {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    androidx.compose.material3.CircularProgressIndicator(Modifier.size(24.dp))
-                    Text(stringResource(R.string.describe_working), style = MaterialTheme.typography.bodyMedium)
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(24.dp))
+                        Text(stringResource(R.string.describe_working), style = MaterialTheme.typography.bodyMedium)
+                    }
+                    // ⭐ The vision model's answer as it is written (GitHub #120): tens of seconds of a bare spinner read as a hang.
+                    if (mode.vision != null) {
+                        val live by com.abrah.nightmare.vlm.VisionDescriber.live.collectAsState()
+                        if (live.isNotBlank()) {
+                            Text(
+                                live.trim(),
+                                style = NoteTextStyle,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 8,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {},
@@ -4541,15 +4614,40 @@ private fun DescribeToggle(
                         com.abrah.nightmare.DescribeMode.DETAILED to stringResource(R.string.describe_detailed),
                         com.abrah.nightmare.DescribeMode.TAGS to stringResource(R.string.describe_tags),
                     )
+                    // ⭐ The vision model is ONE chip (GitHub #120); what it writes is the row under it.
+                    val vlmWord = stringResource(R.string.describe_vlm)
+                    val vision = mode.vision != null
                     Chooser(
                         label = stringResource(R.string.describe_length),
                         hint = stringResource(
-                            if (mode == com.abrah.nightmare.DescribeMode.TAGS) R.string.describe_tags_hint else R.string.describe_words_hint,
+                            when {
+                                vision -> R.string.describe_vlm_hint
+                                mode == com.abrah.nightmare.DescribeMode.TAGS -> R.string.describe_tags_hint
+                                else -> R.string.describe_words_hint
+                            },
                         ),
-                        options = words.values.toList(),
-                        current = words.getValue(mode),
-                        onPick = { w -> mode = words.entries.first { it.value == w }.key },
+                        options = words.values.toList() + listOfNotNull(vlmWord.takeIf { visionMode != null }),
+                        current = if (vision) vlmWord else words.getValue(mode),
+                        onPick = { w ->
+                            mode = if (w == vlmWord) {
+                                if (vision) mode else visionMode ?: mode
+                            } else words.entries.first { it.value == w }.key
+                        },
                     )
+                    if (vision) {
+                        val forms = mapOf(
+                            com.abrah.nightmare.DescribeMode.VLM_PROSE to stringResource(R.string.describe_vlm_prose),
+                            com.abrah.nightmare.DescribeMode.VLM_TAGS to stringResource(R.string.describe_tags),
+                            com.abrah.nightmare.DescribeMode.VLM_LAYOUT to stringResource(R.string.layout_tab),
+                        )
+                        Chooser(
+                            label = stringResource(R.string.describe_vlm_form),
+                            hint = null,
+                            options = forms.values.toList(),
+                            current = forms.getValue(mode),
+                            onPick = { w -> mode = forms.entries.first { it.value == w }.key },
+                        )
+                    }
                     Text(stringResource(R.string.describe_on_canvas), style = MaterialTheme.typography.labelLarge)
                     if (pictures.isEmpty()) {
                         Text(
@@ -4590,6 +4688,97 @@ private fun DescribeToggle(
         )
     }
 }
+
+/**
+ * ⭐⭐ The prompt enhancer's button (`docs/FLORENCE.md` §7): Qwen3-VL rewrites the prompt into what the wired checkpoint
+ * reads, the answer streaming in a dialog as the describe button's does; the result is SHOWN with Use it, Try again (a
+ * new seed) and Cancel, never written unread. Once used, the slot is Undo while the box still holds the result.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EnhanceToggle(prompt: String, onEnhance: (seed: Int, done: (String?) -> Unit) -> Unit, onWrite: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    var offer by remember { mutableStateOf<String?>(null) }
+    // (the text before, the text written): Undo while the box holds the second.
+    var undo by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var ticket by remember { mutableStateOf(0) }
+    val latest = androidx.compose.runtime.rememberUpdatedState(prompt)
+    val start: () -> Unit = {
+        offer = null
+        open = true
+        val mine = ++ticket
+        onEnhance(kotlin.random.Random.nextInt(1, Int.MAX_VALUE)) { text ->
+            if (mine != ticket) return@onEnhance
+            if (text.isNullOrBlank()) open = false else offer = text
+        }
+    }
+    val close: () -> Unit = { open = false; offer = null; ticket += 1 }
+    val undoing = undo?.takeIf { it.second == prompt }
+    Surface(
+        color = androidx.compose.material3.BottomSheetDefaults.ContainerColor,
+        shape = CircleShape,
+        modifier = Modifier.padding(end = 8.dp).offset(y = (-8).dp),
+    ) {
+        IconButton(
+            onClick = {
+                if (undoing != null) { onWrite(undoing.first); undo = null } else start()
+            },
+            modifier = Modifier.size(32.dp),
+        ) {
+            Icon(
+                if (undoing != null) com.abrah.nightmare.ui.UndoIcon else com.abrah.nightmare.ui.SparkleIcon,
+                contentDescription = stringResource(if (undoing != null) R.string.enhance_undo else R.string.enhance_action),
+                tint = if (undoing != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+    if (!open) return
+    val text = offer
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text(stringResource(R.string.enhance_action)) },
+        text = {
+            Column(
+                Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (text == null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(24.dp))
+                        Text(stringResource(R.string.enhance_working), style = MaterialTheme.typography.bodyMedium)
+                    }
+                    val live by com.abrah.nightmare.vlm.VisionDescriber.live.collectAsState()
+                    if (live.isNotBlank()) {
+                        Text(live.trim(), style = NoteTextStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    Text(text, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {
+            if (text != null) {
+                com.abrah.nightmare.ui.DialogButtonStack {
+                    com.abrah.nightmare.ui.StudioButton(
+                        onClick = { undo = latest.value to text; onWrite(text); close() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(stringResource(R.string.enhance_use)) }
+                    StudioOutlinedButton(onClick = start, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.enhance_again))
+                    }
+                    StudioOutlinedButton(onClick = close, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            }
+        },
+        dismissButton = if (text == null) {
+            { StudioOutlinedButton(onClick = close) { Text(stringResource(R.string.cancel)) } }
+        } else null,
+    )
+}
+
 
 /**
  * ⭐⭐ The prompt's translate button, and its undo — [BatchToggle]'s size and
@@ -4682,6 +4871,11 @@ private fun BatchDialog(
     // ⭐ The SEED is swept by COUNT ([com.abrah.nightmare.BatchParams.isCount]): one "how many" slider. ⚠ From/to
     // sliders over 1..10 read as seeds 1, 2, 3, while `rollSeeds` swaps them for random ones at the start.
     val isCount = com.abrah.nightmare.BatchParams.isCount(widget.name)
+    // ⭐ A PROMPT batch (#137): whole prompts, one per line, the node's own prompt as the first when nothing is armed.
+    val isList = com.abrah.nightmare.BatchParams.isList(widget.name)
+    var listText by remember {
+        mutableStateOf(stored.ifBlank { node.params[widget.name].orEmpty().lines().joinToString(" ").trim() })
+    }
     var count by remember {
         mutableStateOf(parsed.size.takeIf { it >= com.abrah.nightmare.BatchParams.MIN_PER_AXIS } ?: 4)
     }
@@ -4725,6 +4919,7 @@ private fun BatchDialog(
     }
 
     val spec = when {
+        isList -> listText
         !isRange -> chosen.joinToString(", ")
         isCount -> (1..count).joinToString(", ")
         else -> values.joinToString(", ")
@@ -4743,6 +4938,20 @@ private fun BatchDialog(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 when {
+                    // ⭐ PROMPT (#137): whole prompts, one per line, each picture takes the next.
+                    isList -> {
+                        Text(
+                            stringResource(R.string.inspector_sweep_prompts_note, com.abrah.nightmare.BatchParams.MAX_PER_AXIS),
+                            style = NoteTextStyle,
+                        )
+                        OutlinedTextField(
+                            value = listText,
+                            onValueChange = { listText = it },
+                            minLines = 4,
+                            maxLines = 10,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     // ⭐ SCHEDULER: a set, with no order to make a range from.
                     !isRange -> {
                         Text(
@@ -4822,6 +5031,7 @@ private fun BatchDialog(
                 Text(
                     why ?: when {
                         armedValues.isEmpty() -> stringResource(R.string.inspector_not_sweeping)
+                        isList -> stringResource(R.string.inspector_sweep_prompts, armedValues.size)
                         isCount -> stringResource(R.string.inspector_sweep_seeds, armedValues.size)
                         else -> stringResource(
                             R.string.inspector_sweep_runs,
@@ -4987,8 +5197,12 @@ private fun NodeLoraPicker(
         onReplacePrompt = onReplacePrompt,
         onDelete = onDeleteLora,
         library = library,
-        nodeBase = if (node.type in com.abrah.nightmare.WAN_TYPES) com.abrah.nightmare.LoraLibrary.Base.WAN
-        else com.abrah.nightmare.LoraLibrary.Base.of((type as? com.abrah.nightmare.SdSampler)?.family),
+        nodeBase = if (node.type == com.abrah.nightmare.npu.H3Node.name) com.abrah.nightmare.LoraLibrary.Base.H3
+        else if (node.type in com.abrah.nightmare.WAN_TYPES) com.abrah.nightmare.LoraLibrary.Base.WAN
+        else (type as? com.abrah.nightmare.SdSampler)?.family?.let { f ->
+            com.abrah.nightmare.ModelCatalog.byId(node.params["model"].orEmpty())?.takeIf { it.family == f }
+                ?.let { com.abrah.nightmare.LoraLibrary.Base.of(it) } ?: com.abrah.nightmare.LoraLibrary.Base.of(f)
+        },
         experimental = com.abrah.nightmare.LoraSources.Target.experimental((type as? com.abrah.nightmare.SdSampler)?.family),
         // ⭐ GitHub #51: below 0 where the engine takes it, the DiT families and Wan (`LoraSpec.MIN_NEGATIVE`).
         allowNegative = node.type in com.abrah.nightmare.WAN_TYPES ||

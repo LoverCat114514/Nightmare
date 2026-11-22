@@ -77,14 +77,14 @@ fun ParamsCard(
         PostSlider(
             label = stringResource(R.string.knob_width),
             value = s.w.toFloat(),
-            range = 256f..2048f,
+            range = 256f..ModelCatalog.ditMax(family).toFloat(),
             fmt = { String.format(java.util.Locale.US, "%.0f", it) },
             onSet = { s.w = snap64(it.toInt()) },
         )
         PostSlider(
             label = stringResource(R.string.knob_height),
             value = s.h.toFloat(),
-            range = 256f..2048f,
+            range = 256f..ModelCatalog.ditMax(family).toFloat(),
             fmt = { String.format(java.util.Locale.US, "%.0f", it) },
             onSet = { s.h = snap64(it.toInt()) },
         )

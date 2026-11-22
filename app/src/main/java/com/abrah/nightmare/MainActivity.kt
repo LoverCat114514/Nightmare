@@ -209,6 +209,7 @@ class MainActivity : ComponentActivity() {
         // previous selection.
         SelectedModel.load(this)
         DeviceProbe.loadHmxVerdict(this)
+        DitGpu.load(this)
         com.abrah.nightmare.canvas.RunProgress.load(this)
         // ⭐ The API, if it was left on (`api/ApiService.kt`).
         runCatching { com.abrah.nightmare.api.ApiService.syncWith(this) }
@@ -794,6 +795,7 @@ fun HarnessScreen(
             onPickMask = vm::pickMask,
             onTranslate = vm::translatePrompt,
             onDescribe = vm::describePicture,
+            onEnhance = if (com.abrah.nightmare.vlm.VisionDescriber.offered) vm::enhancePrompt else null,
             onCancelRun = vm::requestCancelRun,
             onSetResolution = vm::setNodeResolution,
             onSetAspect = vm::selectAspect,
@@ -1100,6 +1102,7 @@ fun HarnessScreen(
                         onOpenFlow = { vm.openResultFlow(it.id) },
                         transferFor = vm::infoTransferFor,
                         diagnoseFor = vm::diagnoseFor,
+                        logFor = vm::runLogOf,
                         onView = { r, shown -> vm.viewResult(r, shown) },
                         onDelete = { vm.deleteResult(it.id) },
                         onDiskBytes = vm.keptBytes,
@@ -1186,6 +1189,7 @@ fun HarnessScreen(
                         detailsFor = vm::detailsOf,
                         transferFor = vm::infoTransferFor,
                         diagnoseFor = vm::diagnoseFor,
+                        logFor = vm::runLogOf,
                         onDismiss = { vm.closeResult() },
                         onOpenFlow = { r -> vm.closeResult(); vm.openResultFlow(r.id) },
                         onDelete = { r -> vm.deleteResult(r.id) },

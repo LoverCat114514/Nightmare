@@ -4003,6 +4003,40 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * ⭐⭐ The prompt enhancer (`docs/FLORENCE.md` §7): [param] of [nodeId] rewritten by Qwen3-VL into what the wired
+     * checkpoint reads ([com.abrah.nightmare.vlm.PromptEnhance.targetFor]); [done] gets the text to OFFER, or null. Not
+     * written here: the dialog shows it first. ⚠ A missing model asks with the describe button's popup
+     * ([MissingModel.Describe]) and runs when it lands.
+     */
+    fun enhancePrompt(nodeId: String, param: String, seed: Int, done: (String?) -> Unit) {
+        val ctx = getApplication<Application>()
+        val vd = com.abrah.nightmare.vlm.VisionDescriber
+        if (!vd.isInstalled(ctx)) {
+            pendingDescribe = Pair({ enhancePrompt(nodeId, param, seed, done) }, { done(null) })
+            refreshDescribe()
+            missingModel = MissingModel.Describe(vd)
+            return
+        }
+        val idea = canvas.workflow.graph.byId[nodeId]?.params?.get(param).orEmpty()
+        val target = com.abrah.nightmare.vlm.PromptEnhance.targetFor(canvas.workflow.graph, nodeId)
+        viewModelScope.launch {
+            val out = runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    val raw = vd.rewrite(ctx, com.abrah.nightmare.vlm.PromptEnhance.ask(target, idea, seed))
+                    com.abrah.nightmare.vlm.PromptEnhance.finish(target, raw)
+                        ?: throw java.io.IOException(ctx.getString(com.abrah.nightmare.R.string.enhance_unusable))
+                }
+            }
+            (out.exceptionOrNull() as? kotlinx.coroutines.CancellationException)?.let { throw it }
+            out.onSuccess { done(it) }.onFailure { e ->
+                ErrorReport.record(e)
+                toast(ctx.getString(com.abrah.nightmare.R.string.enhance_failed, e.message ?: e.javaClass.simpleName))
+                done(null)
+            }
+        }
+    }
+
+    /**
      * ⭐⭐ A picture into words or tags, for the prompt box's describe button.
      * [picture] is a canvas image id or a photo's URI; [done] gets the text, or
      * null when it did not happen (a failure is toasted). ⚠ Writes NOTHING — the
@@ -4024,13 +4058,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     val photo = ops.images.get(picture) ?: com.abrah.nightmare.AddObjects.load(ctx, picture)
                         ?: throw java.io.IOException(ctx.getString(com.abrah.nightmare.R.string.describe_unreadable))
-                    val text = when (mode) {
-                        com.abrah.nightmare.DescribeMode.TAGS -> com.abrah.nightmare.ImageTagger.tags(ctx, photo)
-                        com.abrah.nightmare.DescribeMode.SHORT ->
-                            com.abrah.nightmare.ImageCaption.caption(ctx, photo, com.abrah.nightmare.ImageCaption.Length.SHORT)
-                        com.abrah.nightmare.DescribeMode.DETAILED ->
-                            com.abrah.nightmare.ImageCaption.caption(ctx, photo, com.abrah.nightmare.ImageCaption.Length.DETAILED)
-                    }
+                    val text = mode.describe(ctx, photo)
                     text ?: throw java.io.IOException(mode.model.label)
                 }
             }
@@ -7463,6 +7491,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     batchId, batchLabel, video = clip, favourite = favourite, auto = auto, times = times,
                 )
             }
+            // ⭐ The run's report beside an autosaved result ([ResultsStore.keepLog]): only the run that made it, so only
+            // while it is [current] and kept at the run's end (a star tapped later may find another run's log).
+            if (auto && current) r.getOrNull()?.let { kept ->
+                runCatching { results.keepLog(kept.id, errorReport(text(R.string.run_report_title))) }
+                    .onFailure { android.util.Log.w("Harness", "could not keep the run log: ${it.message}") }
+            }
             withContext(kotlinx.coroutines.Dispatchers.Main) {
                 r.fold(
                     onSuccess = {
@@ -10078,6 +10112,9 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         return ErrorReport.build(getApplication(), message, runLines + appLines, prompts) +
             (lastDiagnosis?.let { "\n\n$it" } ?: "")
     }
+
+    /** ⭐ The report of the run that made [r], kept with it ([ResultsStore.keepLog]); null when there is none. */
+    fun runLogOf(r: com.abrah.nightmare.canvas.Result): String? = results.runLog(r.id)
 
     /** ⭐ Diagnose's dialog ([BlankDiagnosis]): the leg running, or [report] once it is done. */
     data class Diagnosis(val step: Int, val total: Int, val what: String, val report: String? = null)

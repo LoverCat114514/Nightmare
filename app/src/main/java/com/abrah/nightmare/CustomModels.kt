@@ -157,7 +157,14 @@ object CustomModels {
 
     /** ⭐ Whether [dir] (a MOSS import) can take the speed-up: not few-step already, and its donor holds the LoRA. */
     fun mossSpeedAvailable(dir: File): Boolean =
-        File(dir, MOSS_MARK).isFile && !File(dir, MOSS_FEW_STEP_MARK).isFile && mossSpeedLora(dir) != null
+        File(dir, MOSS_MARK).isFile && !mossIsFewStep(dir) && mossSpeedLora(dir) != null
+
+    /**
+     * ⭐ A few-step MOSS import: the mark written at import, or its folder's name (Telegram #9488, 2026-11-20: an import
+     * named `...-6step-Q4_0`, made before the mark, got the 8-step LoRA on top once its donor had one: 10 to 17+ min on
+     * the CPU, and the "made for 8 steps" note at 4).
+     */
+    internal fun mossIsFewStep(dir: File): Boolean = File(dir, MOSS_FEW_STEP_MARK).isFile || mossFewStep(dir.name)
 
     /**
      * The speed-up's file in [dir]'s donor, or null. SFT's since GitHub #94, else `dmd8.safetensors`: what Base holds,
@@ -502,7 +509,7 @@ object CustomModels {
         family == Family.MOSS && mossSpeedOn(dir) -> Defaults("euler", 8, 1.0)
         // ⭐ An imported MOSS runs without the built-in's LoRA: a base fine-tune unless its name says few-step
         // (25 steps at CFG 3, Moody Moss Mix's card and the DeBand quality variants').
-        family == Family.MOSS && File(dir, MOSS_MARK).isFile && !File(dir, MOSS_FEW_STEP_MARK).isFile ->
+        family == Family.MOSS && File(dir, MOSS_MARK).isFile && !mossIsFewStep(dir) ->
             Defaults("euler", 25, 3.0)
         else -> familyDefaults(family)
     }
@@ -528,6 +535,7 @@ object CustomModels {
         partsFrom = runCatching { File(dir, PARTS_FROM_FILE).readText().trim() }.getOrNull()?.takeIf { isValidName(it) },
         // ⭐ The donor's 8-step LoRA ([mossSpeedOn]), found through [ModelSpec.ownLoraFile].
         ownLora = if (family == Family.MOSS && mossSpeedOn(dir)) mossSpeedLora(dir) else null,
+        anima29 = family == Family.ANIMA_DIT && File(dir, ANIMA29_MARK).isFile,
         id = dir.name,
         label = cfg.label ?: dir.name,
         // ⭐ What the conversion kept ([ModelFeatures]) — the node dims the rest.
@@ -870,7 +878,12 @@ object CustomModels {
             val int8 = Int8Gguf.converts(head)
             // And an mxfp8 one ([MxFp8Gguf]): its per-block scales are something the engine cannot read at all.
             val mx = MxFp8Gguf.converts(head)
-            val toQ8 = !int8 && !mx && variant == DitVariant.MOSS && !head.gguf && MossGguf.converts(head.json)
+            // ⭐ GitHub #146: and a 16-bit Anima, by the rule the catalogue's own Anima downloads use ([AnimaGguf]).
+            val toQ8 = !int8 && !mx && !head.gguf && when (variant) {
+                DitVariant.MOSS -> MossGguf.converts(head.json)
+                DitVariant.ANIMA -> AnimaGguf.converts(head.json)
+                else -> false
+            }
             // ⭐ And a plain fp8 Krea 2 below v79 ([Fp8Q8Gguf]): its first block outgrew the NPU budget on an 8 Gen 3.
             val fp8q8 = !int8 && !mx && !toQ8 && Fp8Q8Gguf.converts(head, variant.family, DeviceProbe.caps())
             // ⭐ A `.gguf` keeps its format: the engine picks the loader by name.
@@ -893,7 +906,7 @@ object CustomModels {
                 Log.i(TAG, "converted int8 '$name' to a Q8_0 GGUF: $bytes bytes")
             } else if (toQ8) {
                 val bytes = SafetensorsGguf.convertStream(
-                    open, part, MossGguf.rule,
+                    open, part, if (variant == DitVariant.ANIMA) AnimaGguf.rule else MossGguf.rule,
                     { done, total -> onProgress(ModelInstaller.Progress("converting to Q8_0", done, total)) }, isCancelled,
                 )
                 Log.i(TAG, "converted '$name' to a Q8_0 GGUF: $bytes bytes")
@@ -1290,11 +1303,15 @@ object CustomModels {
             // ⭐ Fibo 2.0: the perceiver and the gated cross-attention (realrebelai's GGUF, read 2026-10-27). ⚠ Its DiT is
             // Z-Image's, so `noise_refiner.` and `attention.qkv.` are two Z-Image hits ([OUTRANKS]).
             Family.FIBO2 to listOf("perceiver.", "latent_queries", "cross_attention.", "cross_attn_gate"),
+            // ⭐ MiniMax H3 Image (our Q4_0's header, read 2026-11-21): H3's DiT without its audio branch. The video model
+            // has the same four plus `audio_patch_proj.` and `final_layer.audio_out`, and is not a picture model.
+            Family.H3IMAGE to listOf("video_patch_proj.", "token_refiner.", "condition_proj.", "final_layer.video_out"),
         )
         // ⚠ Anima only with `llm_adapter.`: Z-Image's own `t_embedder.` and `x_embedder.` are two Anima hits, and a KJ
         // Z-Image read as Z-Image AND Anima, so as nothing (2026-10-22, `docs/IMPORTS.md` §4).
         val hits = signatures.filter { (family, keys) ->
-            keys.count(header::contains) >= 2 && (family != Family.ANIMA_DIT || "llm_adapter." in header)
+            keys.count(header::contains) >= 2 && (family != Family.ANIMA_DIT || "llm_adapter." in header) &&
+                (family != Family.H3IMAGE || "audio_patch_proj." !in header)
         }.keys
         return (hits - hits.flatMap { OUTRANKS[it].orEmpty() }.toSet()).singleOrNull()
     }
@@ -1519,10 +1536,12 @@ object CustomModels {
         /** ⚠ Its OWN copy of Qwen's 6.6 GB of parts, always: Qwen's backend reads the model's folder only (013). */
         QWEN21(Family.QWEN21, "qwen_image_2_1_turbo", true),
         /** ⭐ Borrows an installed Fibo 2.0's encoder, vision tower, VAE and tokenizer, else its own copy (3.6 GB). */
-        FIBO2(Family.FIBO2, "fibo2_edit_turbo", true);
+        FIBO2(Family.FIBO2, "fibo2_edit_turbo", true),
+        /** ⭐ Borrows an installed H3 Image's encoder, ClipProj, VAE and tokenizer when it holds them whole, else its own copy. */
+        H3IMAGE(Family.H3IMAGE, "minimax_h3_image", true);
 
         /** ⭐ Launched as `krea2`, whose backend reads a donor's folder ([ModelSpec.partsFrom], backend 040). */
-        val lends: Boolean get() = this == MOSS || this == FLUX3 || this == FLUX1 || this == FIBO2
+        val lends: Boolean get() = this == MOSS || this == FLUX3 || this == FLUX1 || this == FIBO2 || this == H3IMAGE
 
         companion object {
             /** When the file's names say nothing, the tab's family decides. */
@@ -1535,6 +1554,7 @@ object CustomModels {
                 Family.FLUX1 -> FLUX1
                 Family.QWEN21 -> QWEN21
                 Family.FIBO2 -> FIBO2
+                Family.H3IMAGE -> H3IMAGE
                 else -> KLEIN_4B
             }
         }

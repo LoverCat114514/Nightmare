@@ -470,7 +470,7 @@ class ReversePromptBackendImpl(private val context: Context) : ReversePromptBack
         // one applies is decided by the device at engine load time.
         val estimate = when (selectedModelId) {
             VlmModelManager.DEEPSEEK_9B.id -> "9B 模型 NPU 约 3 分钟（CPU 回退约 10 分钟）"
-            VlmModelManager.QWEN_4B.id -> "4B 模型 NPU 通常 1 分钟内（CPU 回退 1-3 分钟）"
+            VlmModelManager.DEEPSEEK_4B.id -> "4B 模型 NPU 通常 1 分钟内（CPU 回退 1-3 分钟）"
             else -> "用时视模型大小与 NPU 可用性而定"
         }
         onProgress(ReverseProgress.Loading("端侧推理中（8 线程 CPU，$estimate）..."))

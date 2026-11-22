@@ -180,4 +180,17 @@ class DitGpuTest {
         Prefs.setLowRam(ctx, Prefs.KEY_DIT_GPU, true)
         assertEquals("the Adreno cannot run FP8", listOf("dit.gguf"), klein.missing(ctx))
     }
+
+    /** ⭐ LIST item 33: the run log warns before a DiT that runs wholly on the CPU, and only then. */
+    @Test
+    fun aWholeCpuRenderIsKnownBeforeItStarts() {
+        val cpuOnly = ModelCatalog.all.first { it.isDit && !it.gpu }
+        val s25 = DeviceProbe.Caps(arch = 79, vtcmMb = 8, measured = true, soc = "SM8750")
+        DitGpu.openClForTest = true
+        assertFalse("the GPU takes Klein on a v69", SdSampler.FLUX2.ditAllOnCpu(klein, caps(69)))
+        assertTrue("…not a model it was never measured with", SdSampler.FLUX2.ditAllOnCpu(cpuOnly, caps(69)))
+        assertFalse("the NPU runs it on the S25", SdSampler.FLUX2.ditAllOnCpu(cpuOnly, s25))
+        DitGpu.openClForTest = false
+        assertTrue("no OpenCL: the CPU", SdSampler.FLUX2.ditAllOnCpu(klein, caps(69)))
+    }
 }

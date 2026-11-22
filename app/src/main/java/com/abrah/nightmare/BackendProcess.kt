@@ -158,7 +158,11 @@ object BackendProcess {
         // ⚠⚠ Only the NEWEST launch's lines (everything after its `exec:`). The
         // buffer holds 400 lines across launches, and "the oldest error" taken
         // over all of them named an earlier launch's failure as this one's.
-        val raw = output.takeWhile { !it.startsWith(EXEC_PREFIX) }.lastOrNull {
+        val launch = output.takeWhile { !it.startsWith(EXEC_PREFIX) }
+        // ⭐ GitHub #61/#62/#142 (HONOR, SM8975): the DSP refused QNN's session before any model or arch mattered, and the
+        // report quoted `loadRemoteSymbols failed with err 4000`. The DiT engine opens its own session, and ran there.
+        if (launch.any { QNN_SESSION_REFUSED in it }) return NPU_SESSION_REFUSED
+        val raw = launch.lastOrNull {
             (it.contains("[ ERROR ]") || it.trimStart().startsWith("ERROR")) && HARMLESS_ERRORS.none { h -> h in it }
         } ?: return null
         // ⭐ 2026-11-05 port (#85): QNN's own words for a phone with no Hexagon NPU (a MediaTek MT6835), said for a person.
@@ -178,6 +182,12 @@ object BackendProcess {
 
     private const val EXEC_PREFIX = "exec: "
 
+    internal const val QNN_SESSION_REFUSED = "DspTransport.getHandle failed"
+
+    internal const val NPU_SESSION_REFUSED =
+        "this phone refused an NPU session to the runtime the SD 1.5, SDXL and Anima models use (QNN), so they cannot " +
+            "start on it. The DiT models (FLUX.2, Z-Image, Anima DiT and the others) start the NPU another way, and run"
+
     // ⭐ 2026-11-05 port (#85): QNN's own words for a phone with no Hexagon NPU, said for a person.
     internal const val NO_SNAPDRAGON =
         "this phone has no Snapdragon NPU, which this model needs. Nightmare's models run on Qualcomm Snapdragon chips only"
@@ -196,6 +206,10 @@ object BackendProcess {
         // launch there; a tester's text-encoder assert was reported as "forcing ndev to 1" (2026-10-17).
         "forcing ndev to 1",
         "failed to get URI",
+        // ⚠ The GPU engine keeps the Hexagon backend for NPU models, and on a v68 chip (Snapdragon 888) it notes the arch
+        // as an ERROR at every launch, GPU route or not. The S21 FE's GPU crash was reported as this line (2026-11-22).
+        "is under supported range",
+        "FASTRPC_GET_DOMAINS query failed",
     )
 
     /**
@@ -299,6 +313,10 @@ object BackendProcess {
         137 -> "killed by the system (SIGKILL). On a phone that is almost always Android freeing memory"
         134 -> "the engine aborted (SIGABRT). Usually an assert on something in the model it could not handle"
         139 -> "the engine crashed (SIGSEGV)"
+        // ⭐ GitHub #147 (Snapdragon 888, Hexagon v68): a harmless "not in the
+        // supported range" arch warning was the log's last ERROR line, so a
+        // real death looked like a benign warning. Name the signal instead.
+        132 -> "the engine used a CPU instruction this phone's cores do not have (SIGILL). Please report it with this log"
         135 -> "the engine crashed (SIGBUS)"
         143 -> "terminated (SIGTERM)"
         in 129..159 -> "killed by signal ${code - 128}"
@@ -567,7 +585,13 @@ object BackendProcess {
      * tile: an 1,800 MB encode on the NPU, which a real 8 Gen 3 failed to map ("HTP0 buffer mapping failed"). The
      * engine encodes at twice the decode tile, so 16 = a 512 px encode: 384 MB, and a 160 MB decode.
      */
-    internal fun lowArchVaeTile(spec: ModelSpec?): Int? = if (spec?.family == Family.FIBO2) 16 else null
+    internal fun lowArchVaeTile(spec: ModelSpec?): Int? = if (spec?.family in VAE16_TILED) 16 else null
+
+    /**
+     * ⭐ The families decoded by the FLUX.2 VAE in 512 px pieces below v79. ⚠ GitHub #141 (Z Fold6, 8 Gen 3): FLUX.3 at
+     * 1088x1088 sampled, then its VAE asked 2,657 MB of a 2,304 MB budget, and on 1.6.312 "1284 MB of working memory".
+     */
+    private val VAE16_TILED = setOf(Family.FIBO2, Family.FLUX3)
 
     /**
      * ⭐ A real 8 Gen 2 maps only ~2.5 GB per FastRPC session (v75: ~3.1). A Xiaomi SM8550 on 1.6.173
@@ -699,6 +723,14 @@ object BackendProcess {
         // folder has no `llm.gguf` of its own and was never checked, which is why the S25 passed.
         (spec.files + if (spec.isCustom) ModelCatalog.builtIn.filter { it.family == spec.family }.flatMap { it.files } else emptyList())
             .any { it.name == "llm.gguf" && it.bytes == teBytes }
+
+    /**
+     * ⭐ GitHub #143: Qwen 2.1 on a v73 NPU decodes on the CPU. S25 forced to v73, 512², 8 steps: the NPU decode
+     * stacks two copies (four on a real 8 Gen 2), full-frame and at tile 16 alike; with `vae=CPU` it is the v79
+     * picture, 180 s against 64. ⚠ Only a known v73-class chip: v75 and up decode it right, v69 runs all on the CPU.
+     */
+    internal fun v73CpuVae(spec: ModelSpec?, caps: DeviceProbe.Caps): Boolean =
+        spec?.family == Family.QWEN21 && caps.known && caps.arch in 73 until 75
 
     internal fun lowArchOpFilter(arch: Int): String =
         if (arch < 75) "CONV_2D_UPSCALE|CONCAT|SWIGLU" else "CONV_2D_UPSCALE|CONCAT"
@@ -971,6 +1003,7 @@ object BackendProcess {
             // ⚠ A self-test line from a previous launch must not relaunch this one.
             hmxFailedThisLaunch = false
             launchedDitBudget = null
+            launchedDitModel = modelId.takeUnless { upscalerOnly }
             lastStartError = null
             // ⚠ Nor its arch / hwinfo / HMX lines reach this launch's error report.
             engineNpu = emptyMap()
@@ -1212,6 +1245,11 @@ object BackendProcess {
                         // 1.6.214), the phone idle. The S25 forced to v69 runs both, so it is the hardware. ⇒ The whole
                         // DiT on the CPU there: Anima Turbo 512² 10 steps 520 s on the S25's CPU, so ~15-20 min there.
                         if (ditOnCpu(DeviceProbe.caps()) && !diagnosing) put("NM_DIT_BACKEND", BlankDiagnosis.CPU_ALL)
+                        // ⭐ GitHub #143: Qwen 2.1's decode on a v73 NPU (8 Gen 2, 8s Gen 3, 8s Gen 4) stacks the picture
+                        // into copies, full-frame or tiled. On the CPU it is the v79 picture ([v73CpuVae], `docs/DEVICES.md` §3b).
+                        if (v73CpuVae(spec, DeviceProbe.caps()) && !diagnosing) put("NM_DIT_BACKEND", BlankDiagnosis.CPU_VAE)
+                        // ⭐ GitHub #145: this phone's OpenCL would not start the engine once — the CPU takes it from here.
+                        if (DitGpu.failed && !diagnosing) put("NM_DIT_BACKEND", BlankDiagnosis.CPU_ALL)
                         // ⭐ The trial ([Prefs.v69Npu]): at most 3 workers + main on v69, or main's HVX deadlocks (HexAnima's
                         // `docs/PITFALLS.md`).
                         if (Prefs.v69Npu && belowDitNpu(DeviceProbe.caps())) put("GGML_HEXAGON_NHVX", "3")
@@ -1544,6 +1582,7 @@ object BackendProcess {
     /** ⭐ This launch's `DIT_MAX_VRAM`, or null: what [learnDitMapLimit] lowers. */
     @Volatile
     private var launchedDitBudget: String? = null
+    private var launchedDitModel: String? = null
 
     /**
      * ⭐ The NPU refused a mapping (GitHub #97): below v79 the next DiT launch gets a smaller budget ([DeviceProbe.ditMapCap]),
@@ -1556,6 +1595,20 @@ object BackendProcess {
         if (!caps.known || caps.arch >= ModelCatalog.DIT_MIN_ARCH) return null
         return DeviceProbe.learnDitMapLimit(ctx, launchedDitBudget)
     }
+
+    /**
+     * ⭐ How many times the launched DiT model's working buffer failed to map within the last hour, this one included
+     * (GitHub #148): one is chance (#125, once in 15+ renders), two is this phone's ceiling. In memory only: a restart
+     * forgets, which costs one more failed Run at worst.
+     */
+    fun workingBufferStrike(now: Long = System.currentTimeMillis()): Int = synchronized(workingBufferFails) {
+        val model = launchedDitModel ?: return 1
+        val recent = workingBufferFails.getOrPut(model) { ArrayDeque() }
+        while (recent.isNotEmpty() && now - recent.first() > 60 * 60_000L) recent.removeFirst()
+        recent.addLast(now)
+        recent.size
+    }
+    private val workingBufferFails = HashMap<String, ArrayDeque<Long>>()
 
     /** ⭐ A block needed more than the learned cap ([DeviceProbe.liftDitMapCap]); the changed budget relaunches. */
     fun liftDitMapCap(needMb: Double): String? {

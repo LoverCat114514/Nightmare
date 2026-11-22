@@ -47,4 +47,31 @@ class H3ImageFamilyTest {
         assertFalse(SdSampler.H3IMAGE.inpaint)
         assertEquals(Family.H3IMAGE, SdSampler.H3IMAGE.family)
     }
+
+    /** ⭐ An H3 Image checkpoint imports (the user, 2026-11-20); the H3 VIDEO model's header is not taken for one. */
+    @Test
+    fun anH3ImageCheckpointIsRecognised() {
+        val img = """{"video_patch_proj.weight":{},"token_refiner.blocks.0.attn.weight":{},"condition_proj.weight":{},""" +
+            """"final_layer.video_out.weight":{},"blocks.0.attn.qkv.weight":{}}"""
+        assertEquals(Family.H3IMAGE, CustomModels.ditFamilyOf(img))
+        val video = img.dropLast(1) + ""","audio_patch_proj.weight":{},"final_layer.audio_out.weight":{}}"""
+        assertEquals(null, CustomModels.ditFamilyOf(video))
+        assertEquals(CustomModels.DitVariant.H3IMAGE, CustomModels.DitVariant.defaultFor(Family.H3IMAGE))
+    }
+
+    /** ⭐ Telegram #8301: H3 Image takes sides up to 4096; every other DiT stays at 2048. */
+    @Test
+    fun h3ImageGoesTo4096AndNothingElseDoes() {
+        val h3 = ModelCatalog.byId("minimax_h3_image")!!
+        assertEquals(4096, ModelCatalog.ditMax(h3.family))
+        // ⚠ …but an area cap: 4096x4096 is kept at 3072x3072, the measured fit; 4K at 16:9 stays whole.
+        assertEquals(Res(3072, 3072), ModelCatalog.keptSize(h3, 4096, 4096))
+        assertEquals(Res(3840, 2176), ModelCatalog.keptSize(h3, 3840, 2160))
+        assertTrue(ModelCatalog.ditAreaFits(h3.family, 4096, 2304))
+        assertFalse(ModelCatalog.ditAreaFits(h3.family, 3584, 3584))
+        val krea = ModelCatalog.byId("krea2_turbo")!!
+        assertEquals(2048, ModelCatalog.keptSize(krea, 4096, 4096).width)
+        assertEquals(4096, SdSampler.H3IMAGE.widgets.first { it.name == "width" }.max?.toInt())
+        assertEquals(2048, SdSampler.KREA2.widgets.first { it.name == "width" }.max?.toInt())
+    }
 }

@@ -623,6 +623,11 @@ data class ModelSpec(
      */
     val ownLora: String? = null,
     /**
+     * ⭐ Anima 2.9B (40 blocks), built-in or imported ([CustomModels.ANIMA29_MARK]): its LoRAs are filed apart from
+     * Anima 2B's ([LoraLibrary.Base.ANIMA29], Telegram #8323, 2026-11-20: 2B LoRAs do not all work on it).
+     */
+    val anima29: Boolean = false,
+    /**
      * ⭐ The flow shift this model samples at, for the whole launch (`NM_DIT_FLOW_SHIFT`, `dit/048`), when it is not its
      * family's default. Null = the family's: NitroFusion 2 wants 6 at 2 steps, where Z-Image's default is 3.
      */
@@ -1092,7 +1097,9 @@ data class ModelSpec(
      * legal DiT size but one. ⇒ Ask this, never the list.
      */
     fun serves(context: Context, res: Res): Boolean =
-        if (isDit && !fixedSizes) ModelCatalog.ditSupported(res.width) && ModelCatalog.ditSupported(res.height)
+        if (isDit && !fixedSizes) ModelCatalog.ditMax(family).let { m ->
+                ModelCatalog.ditSupported(res.width, m) && ModelCatalog.ditSupported(res.height, m)
+            } && ModelCatalog.ditAreaFits(family, res.width, res.height)
         else res in availableResolutions(context)
 
     /**
@@ -1101,7 +1108,8 @@ data class ModelSpec(
      * picked from when the real rule is a range.
      */
     fun sizesServedText(context: Context): String =
-        if (isDit && !fixedSizes) "any size ${ModelCatalog.DIT_MIN}–${ModelCatalog.DIT_MAX} in ${ModelCatalog.DIT_STEP}-pixel steps"
+        if (isDit && !fixedSizes) "any size ${ModelCatalog.DIT_MIN}–${ModelCatalog.ditMax(family)} in ${ModelCatalog.DIT_STEP}-pixel steps" +
+            (ModelCatalog.ditMaxPixels(family)?.let { ", up to ${it / 1_000_000.0} megapixels" } ?: "")
         else availableResolutions(context).joinToString(", ")
 
     /** What this model occupies on disk, or 0 when it is not installed. */
@@ -1279,6 +1287,32 @@ object ModelCatalog {
     const val DIT_STEP = 64
 
     /**
+     * ⭐ H3 Image renders 4K natively (Telegram #8301, #8315: "designed in
+     * native 4K", docs/MINIMAX-H3.md §7), so it takes [DIT_STEP]-grid sizes up
+     * to this instead of [DIT_MAX]. Every other DiT keeps [DIT_MAX].
+     */
+    const val H3_IMAGE_MAX = 4096
+
+    /** ⭐ Which single-side max a DiT family snaps to: H3 Image's is 4K. */
+    fun ditMax(family: Family?): Int = if (family == Family.H3IMAGE) H3_IMAGE_MAX else DIT_MAX
+
+    /**
+     * ⭐⭐ H3 Image's real ceiling is AREA, not the side ([H3_IMAGE_MAX] is just
+     * the slider's end): ~363 MB a megapixel plus 361 MB of app on the S25,
+     * 2026-11-21 — 3072² finished in 21 min on the 4 GiB budget, 3584² needed
+     * 5,027 MB, 4096² 6,453 MB, and at a 7 GiB budget lmkd killed the app on a
+     * 12 GB phone (docs/MINIMAX-H3.md §7). A 4K 16:9 (3840x2160) fits.
+     */
+    const val H3_IMAGE_MAX_PIXELS = 3072 * 3072
+
+    /** ⭐ The pixel ceiling a DiT family answers for, or null when it has none. */
+    fun ditMaxPixels(family: Family?): Int? = if (family == Family.H3IMAGE) H3_IMAGE_MAX_PIXELS else null
+
+    /** ⭐ Whether [w]x[h] is inside the family's pixel budget; always true when it has none. */
+    fun ditAreaFits(family: Family?, w: Int, h: Int): Boolean =
+        ditMaxPixels(family)?.let { w.toLong() * h <= it } ?: true
+
+    /**
      * ⭐ The grid, as ONE function — the sampler snaps a request to it and the
      * size control only ever writes values already on it.
      *
@@ -1287,9 +1321,9 @@ object ModelCatalog {
      * is. Two such places stop agreeing, and the symptom is a picture that comes
      * back a different size from the one the sheet says.
      */
-    fun ditSnap(v: Int): Int =
+    fun ditSnap(v: Int, max: Int = DIT_MAX): Int =
         (((v - DIT_MIN) + DIT_STEP / 2) / DIT_STEP * DIT_STEP + DIT_MIN)
-            .coerceIn(DIT_MIN, DIT_MAX)
+            .coerceIn(DIT_MIN, max)
 
     /**
      * ⭐⭐ The size a node KEEPS when its model changes with "keep my settings" (GitHub #33, the
@@ -1298,7 +1332,17 @@ object ModelCatalog {
      * that shape, then nearest that area, because it renders its own size whatever is asked.
      */
     fun keptSize(spec: ModelSpec, w: Int, h: Int): Res {
-        if (spec.isDit && !spec.fixedSizes) return Res(ditSnap(w), ditSnap(h))
+        if (spec.isDit && !spec.fixedSizes) {
+            val m = ditMax(spec.family)
+            var r = Res(ditSnap(w, m), ditSnap(h, m))
+            // ⭐ Over [ditMaxPixels]: the same shape, smaller, a grid step at a
+            // time until it fits (a 4K Krea 2 import into H3 Image).
+            while (!ditAreaFits(spec.family, r.width, r.height) && (r.width > DIT_MIN || r.height > DIT_MIN)) {
+                r = if (r.width >= r.height) Res(r.width - DIT_STEP, ditSnap((r.width - DIT_STEP) * r.height / r.width, m))
+                else Res(ditSnap((r.height - DIT_STEP) * r.width / r.height, m), r.height - DIT_STEP)
+            }
+            return r
+        }
         val aspect = w.toDouble() / h.coerceAtLeast(1)
         val area = w.toDouble() * h
         return spec.resolutions.minWithOrNull(
@@ -1314,8 +1358,8 @@ object ModelCatalog {
      * Rewriting a saved workflow's size silently is the thing the 2026-09-19
      * "picture came back a different size" report was about.
      */
-    fun ditSupported(v: Int): Boolean =
-        v in DIT_MIN..DIT_MAX && (v - DIT_MIN) % DIT_STEP == 0
+    fun ditSupported(v: Int, max: Int = DIT_MAX): Boolean =
+        v in DIT_MIN..max && (v - DIT_MIN) % DIT_STEP == 0
 
     /**
      * ⭐⭐⭐ **The size nearest [aspect] that a DiT model can render** — both
@@ -1547,14 +1591,16 @@ object ModelCatalog {
      */
     fun schedulersFor(family: Family): List<String> = when {
         family == Family.ANIMA -> listOf("euler", "euler_a")
-        family == Family.WAN || family == Family.IRIS -> DIT_SAMPLER_IDS
+        family == Family.WAN || family == Family.IRIS -> DIT_COMMON_SAMPLER_IDS
+        // ⭐ H3 Image alone has the spectral sampler ([H3_SPECTRAL]).
+        family == Family.H3IMAGE -> DIT_SCHEDULERS + H3_SPECTRAL
         family.dit -> DIT_SCHEDULERS
         else -> SCHEDULERS
     }
 
     /** ⭐ The DiT samplers, each with the schedules ([DIT_SCHEDULES]) the engine takes since ABI 108. */
     val DIT_SCHEDULERS: List<String> by lazy {
-        DIT_SAMPLER_IDS.flatMap { id -> DIT_SCHEDULES.map { (sfx, _) -> joinScheduler(id, sfx) } }.distinct()
+        DIT_COMMON_SAMPLER_IDS.flatMap { id -> DIT_SCHEDULES.map { (sfx, _) -> joinScheduler(id, sfx) } }.distinct()
     }
 
     /**
@@ -1633,15 +1679,29 @@ object ModelCatalog {
         "res_multistep" to "Res Multistep",
         "ipndm" to "iPNDM",
         "lcm" to "LCM",
+        H3_SPECTRAL to "Euler Spectral",
     )
     val DIT_SAMPLER_IDS: List<String> = DIT_SAMPLERS.map { it.first }
     const val DIT_DEFAULT_SAMPLER = "euler"
+
+    /** Every DiT sampler name the app knows (to recognise and label a stored value). */
+
+    /**
+     * ⭐ H3 Image's spectral sampler (engine `dit/102` + `dit/104`, the user's call 2026-11-22: "ship as an option"):
+     * Euler, with the noise above a frequency cutoff re-drawn on the middle steps. The request carries it, so a switch
+     * needs no relaunch. An engine before `dit/104` does not know the name and falls back to the model's default sampler.
+     * No schedule of its own ([schedulesSupported]). Offered by [schedulersFor] for [Family.H3IMAGE] only.
+     */
+    const val H3_SPECTRAL = "h3_spectral"
+
+    /** The samplers every DiT family takes: all but the one family's own. */
+    val DIT_COMMON_SAMPLER_IDS: List<String> = DIT_SAMPLER_IDS - H3_SPECTRAL
 
     /**
      * ⚠ LCM has no schedule of its own to change — the backend's LCM scheduler ignores both
      * (upstream guards the same: `karrasSupported = baseId != "lcm"`), and DiT samplers take none.
      */
-    fun schedulesSupported(base: String) = base != "lcm" && (SAMPLERS.any { it.first == base } || base in DIT_SAMPLER_IDS)
+    fun schedulesSupported(base: String) = base != "lcm" && base != H3_SPECTRAL && (SAMPLERS.any { it.first == base } || base in DIT_SAMPLER_IDS)
 
     /** ⚠ Kept for its callers: Karras is one of the schedules. */
     fun karrasSupported(base: String) = schedulesSupported(base)
@@ -2442,6 +2502,7 @@ object ModelCatalog {
         cfg: Double = 1.0,
         /** ⚠ See [ModelSpec.ownLora]. */
         ownLora: String? = null,
+        anima29: Boolean = false,
         /** ⚠ See [ModelSpec.gpu]. */
         /** ⚠ See [ModelSpec.flowShift]. */
         flowShift: String? = null,
@@ -2449,6 +2510,7 @@ object ModelCatalog {
         gpu: Boolean = false,
     ) = ModelSpec(
         ownLora = ownLora,
+        anima29 = anima29,
         flowShift = flowShift,
         gpu = gpu,
         startRes = startRes,
@@ -2750,6 +2812,7 @@ object ModelCatalog {
             minArch = DIT_V69_MIN_ARCH,
             ownDitParts = true,
             ownLora = ANIMA29_TURBO_LORA,
+            anima29 = true,
             files = listOf(
                 RemoteFile(
                     HF + "Gazingstars123/Anima-2.9B/resolve/main/Anima-2.9B-preview-v1.safetensors",
@@ -2880,6 +2943,26 @@ object ModelCatalog {
             files = listOf(
                 RemoteFile(HF + "leejet/flux-3-image-klein-GGUF/resolve/main/flux3-image-klein-Q4_0.gguf", "dit.gguf", 3_514_023_104L),
                 RemoteFile(HF + "bartowski/Qwen_Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen_Qwen3-VL-4B-Instruct-Q4_0.gguf", "llm.gguf", 2_375_774_112L),
+                RemoteFile(HF + "zhiyuanasad/flux2_klein_adreno/resolve/main/vae.safetensors", "vae.safetensors", 336_213_556L),
+                RemoteFile(HF + "Qwen/Qwen3-VL-4B-Instruct/resolve/main/tokenizer.json", "tokenizer.json", 7_032_403L),
+            ),
+        ),
+        // ⭐ Fibo 2.0 Dev (Bria, 8B, non-commercial; the user's call 2026-11-21, Saved #8329): the base model, text to image
+        // and editing, 30 steps at CFG 5 (realrebelai's and molbal's cards: 30-50 at ~5). Ours: realrebelai's Q4_0 made
+        // all-Q4_0 as Edit Turbo's (`../LocalDream/fibo/requant_q4.py`, 4.87 GB, 2026-11-21). The same architecture, so
+        // the same launch (`dit/056`, backend 049); it BORROWS Edit Turbo's vision tower, VAE, encoder and tokenizer when
+        // Edit Turbo holds them ([ModelSpec.partsFrom]; a part Edit Turbo itself borrowed from Krea 2 is fetched here).
+        dit(
+            "fibo2_dev", "Fibo 2.0 Dev", Family.FIBO2, KREA2, steps = 30, cfg = 5.0,
+            ownDitParts = true,
+            partsFrom = "fibo2_edit_turbo",
+            minRamBytes = Prefs.RAM_12GB_CLASS_BYTES,
+            minArch = DIT_GGML_MIN_ARCH,
+            prompt = "a red fox sitting in a snowy pine forest at dawn, soft light, photograph",
+            files = listOf(
+                RemoteFile(HF + "AbrahamPJ/fibo2-dev-q4_0-gguf/resolve/main/fibo2_dev-q4_0.gguf", "dit.gguf", 4_870_390_432L),
+                RemoteFile(HF + "bartowski/Qwen_Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen_Qwen3-VL-4B-Instruct-Q4_0.gguf", "llm.gguf", 2_375_774_112L),
+                RemoteFile(HF + "bartowski/Qwen_Qwen3-VL-4B-Instruct-GGUF/resolve/main/mmproj-Qwen_Qwen3-VL-4B-Instruct-f16.gguf", "llm_vision.gguf", 836_180_256L),
                 RemoteFile(HF + "zhiyuanasad/flux2_klein_adreno/resolve/main/vae.safetensors", "vae.safetensors", 336_213_556L),
                 RemoteFile(HF + "Qwen/Qwen3-VL-4B-Instruct/resolve/main/tokenizer.json", "tokenizer.json", 7_032_403L),
             ),

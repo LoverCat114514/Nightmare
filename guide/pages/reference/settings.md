@@ -15,6 +15,10 @@ Open Settings from the sidebar (☰ at the top left). It has six tabs: **Appeara
 backgrounds, which saves power on an OLED screen. The canvas follows it: white under Light, true black
 under Black.
 
+**Language**: the phone's, or one of the four the app is written in — **English**, **Русский**,
+**中文** or **日本語** — each named in itself, on Android 13 and up (Android's per-app languages
+list it too). Japanese was added in 1.6.324.
+
 ### Accent colour
 
 The colour of buttons, highlights and the selected node: **Violet** (the default), **Blue**, **Teal**,
@@ -144,11 +148,12 @@ in [Memory and speed](memory.md).
 A video render keeps the phone's processors busy for minutes, and the phone gets hot. The chip
 protects itself; the battery does not, and heat above about 45 °C wears it out faster. The run
 log warns when the battery is already warm (40 °C) before a clip, and again when a clip took it
-to 45 °C. Keep the phone off the charger and out of the sun while it renders.
+to the pause temperature (45 °C unless you move it). Keep the phone off the charger and out of the sun while it renders.
 
 | switch | default | what it does |
 |---|---|---|
-| **Pause video when the battery is hot** | off | A video render waits between steps when the battery reaches 45 °C and carries on when it cools to 40 °C. Slower in a warm room, easier on the battery. Not for Neodragon, whose clips take seconds |
+| **Pause video when the battery is hot** | off | A video render waits between steps when the battery reaches the **Pause at** temperature and carries on when it is 5 °C cooler. Slower in a warm room, easier on the battery. Not for Neodragon, whose clips take seconds |
+| **Pause at** (with the pause on) | 45 °C | 40, 45 or 50 °C. 40 °C is kindest to the battery and pauses most; 50 °C pauses least, and above 45 °C a battery wears faster |
 
 ### GPU
 

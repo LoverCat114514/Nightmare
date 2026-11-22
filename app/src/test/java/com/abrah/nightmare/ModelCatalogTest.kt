@@ -460,6 +460,13 @@ class ModelCatalogTest {
         assertEquals(url(ideo, "vae.safetensors"), url(f3, "vae.safetensors"))
         assertEquals(true, BackendProcess.shipsThisEncoder(f3, 2_375_774_112L))
         assertEquals("krea2_turbo", f3.partsFrom)
+        // ⭐ GitHub #141: below v79 its VAE decodes in 512 px tiles, as Fibo's does.
+        assertEquals(16, BackendProcess.lowArchVaeTile(ModelCatalog.byId("flux3_klein")))
+        // ⭐ GitHub #143: Qwen decodes on the CPU on a known v73 chip only.
+        val qwen = ModelCatalog.byId("qwen_image_2_1_turbo")
+        assertEquals(true, BackendProcess.v73CpuVae(qwen, DeviceProbe.Caps(73, 8, measured = true, soc = "SM8550")))
+        assertEquals(false, BackendProcess.v73CpuVae(qwen, DeviceProbe.Caps(75, 8, measured = true, soc = "SM8650")))
+        assertEquals(false, BackendProcess.v73CpuVae(krea, DeviceProbe.Caps(73, 8, measured = true, soc = "SM8550")))
     }
 
     /** ⭐ Only a chip KNOWN to be below v73 gets the CPU encoder: an unrecognised one reads as the v68 floor. */

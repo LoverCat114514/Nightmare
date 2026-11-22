@@ -46,12 +46,15 @@ write:
 | **Short** | one sentence | photo models, SDXL, FLUX.2 | Florence-2 PromptGen, about 4 s |
 | **Detailed** | a paragraph. Subject, clothes, pose, light, background | the same | Florence-2 PromptGen, about 4–5 s |
 | **Tags** | Danbooru tags, the character if it knows them, and a rating | Illustrious, Anima, Pony | WD tagger, about 1 s |
+| **Qwen3-VL** | what the wired model reads: Tags, or a MOSS-Image layout of boxes, or sentences | any, with 10 GB of RAM or more | Qwen3-VL 4B on the NPU, about 15 s for tags or sentences, a minute for a layout |
 
 It opens on **Tags** when the prompt feeds an anime checkpoint and on **Detailed** otherwise. An
 empty prompt is filled straight away; otherwise you see the result and choose **Add after your
 prompt** or **Replace your prompt**. Each model (548 MB and 378 MB) is offered the first time
 you need it and listed in [Models → Tools](../models/manage.md). Sentences can get details wrong;
 for anime, Tags is the accurate one. Nothing is filtered, and nothing leaves the phone.
+**Qwen3-VL** (a 2.8 GB download) also reads what is where in the picture, and for MOSS-Image
+writes the layout of boxes the model draws to.
 
 <figure markdown>
   ![A prompt with the describe and translate buttons](../img/inspector-prompt-describe.png){ .screen }
@@ -103,7 +106,7 @@ the node's settings. It opens and closes with a tap and remembers which; closed,
 | **Steps** | all | Refinement passes. Opens on the model's own recommended value |
 | **CFG** | all | How strictly the prompt is followed. FLUX.2, Z-Image and Qwen are made for **1**: above 1 the negative prompt is read, but the picture burns quickly |
 | **Seed** | all | `0` = a new picture every Run. Type a seed shown on a node to get that one back |
-| **Scheduler** | all | The sampling method; a distilled model usually wants its author's choice. SD 1.5 / SDXL: DPM++ 2M, 2M SDE, 3M, 3M SDE, DPM++ SDE (2x slower), Euler, Euler A, LCM. DiT models: Euler (default), Euler A, Heun, DPM++ 2M, DPM++ 2M SDE, ER-SDE, Res Multistep, iPNDM, LCM. Anima: Euler, Euler A |
+| **Scheduler** | all | The sampling method; a distilled model usually wants its author's choice. SD 1.5 / SDXL: DPM++ 2M, 2M SDE, 3M, 3M SDE, DPM++ SDE (2x slower), Euler, Euler A, LCM. DiT models: Euler (default), Euler A, Heun, DPM++ 2M, DPM++ 2M SDE, ER-SDE, Res Multistep, iPNDM, LCM; MiniMax H3 Image also Euler Spectral. Anima: Euler, Euler A |
 | **Hires fix** | SD 1.5, SDXL (not inpaint) | After the render, enlarge it ×2 with your first upscaler and redraw the detail with [UltraFix](results.md#ultrafix): one Run, a picture twice the size. Uses UltraFix's last Steps / Denoise steps. On the Snapdragon 8 Elite: SD 1.5 512 → 1024 about 16 s in all, SDXL 1024 → 2048 about 2½ min. Needs an upscaler: switching it on offers one to download, and so does a Run |
 | **Enlarge ×2** | every Image node without Hires fix: FLUX.2, Z-Image, Qwen, Krea, Iris, Anima, the Swap models and every inpaint | After the render, enlarge it ×2 with your first upscaler, nothing redrawn. The node's own picture is the enlarged one, so wire it into an inpaint (with **Only masked**) to fix faces at the larger size. E.g. Z-Image text to image → enlarge → an inpaint over the face. Needs an upscaler: switching it on offers one to download, and so does a Run |
 | **Fix faces**, **Fix hands** | every Image node but inpaint, Iris, Wan and Ideogram (on MOSS-Image since 1.6.222, new: please report) | After the render (and Hires fix or Enlarge), each face or hand is found and redrawn zoomed in, with this node's prompt and model, then blended back (ADetailer). A face or hand that already fills most of the picture is left as it is: redrawing it would only soften it. A Swap model redraws it with its LoRAs, without its ControlNet or reference picture. Up to 4 of each, the largest first. Needs the **Face and hand detector** from Models, Tools: switching it on offers it, and so does a Run. Each patch's tone is matched to the picture along its edge, so it leaves no lighter or darker ring. Each one found adds a render: on SD 1.5 about 2 s, more on bigger models |

@@ -353,6 +353,8 @@ fun CanvasScreen(
      * [com.abrah.nightmare.DescribeMode]; [done] gets the text or null. ⚠ Null draws no button.
      */
     onDescribe: ((picture: String, mode: com.abrah.nightmare.DescribeMode, done: (String?) -> Unit) -> Unit)? = null,
+    /** ⭐⭐ The prompt enhancer (`docs/FLORENCE.md` §7): Qwen3-VL rewrites the prompt; done(null) when it could not. */
+    onEnhance: ((node: String, param: String, seed: Int, done: (String?) -> Unit) -> Unit)? = null,
     parserInstalled: Boolean = true,
     parserRow: com.abrah.nightmare.ui.ToolRow? = null,
     onInstallParser: (() -> Unit)? = null,
@@ -688,7 +690,7 @@ fun CanvasScreen(
     // ⭐ The SAME dialog Results and the inspector open.
     showingNodeInfo?.let { n ->
         detailsOfNode?.let { d ->
-            com.abrah.nightmare.ui.ResultInfoDialog(d(n)) { showingNodeInfo = null }
+            com.abrah.nightmare.ui.ResultInfoDialog(d(n), onClose = { showingNodeInfo = null })
         }
     }
     // ⭐⭐ An empty image node tapped on the canvas: the file picker, directly
@@ -730,6 +732,7 @@ fun CanvasScreen(
         onPickMask = onPickMask,
         onTranslate = onTranslate,
         onDescribe = onDescribe,
+        onEnhance = onEnhance,
         parserInstalled = parserInstalled,
         parserRow = parserRow,
         onInstallParser = onInstallParser,

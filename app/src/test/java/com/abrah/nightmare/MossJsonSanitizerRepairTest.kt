@@ -96,6 +96,22 @@ class MossJsonSanitizerRepairTest {
     }
 
     @Test
+    fun emptyItemsWithHollowCaptionGetsTheFloorCaption() {
+        // The 2026-11-22 field report (4B, Moss reverse): the model echoed the
+        // wrapper fields but framed nothing — items [], caption "high quality,
+        // detailed" (its own floor phrase). Sanitize must keep the layout
+        // legal: the marker-less wrapper passes repair, finish() strips
+        // width/height and keeps the caption as-is (already non-blank).
+        val raw = """{"width":1024,"height":1024,"bbox_coord_space":"abs","bbox_format":"xyxy","summary":{"caption":"high quality, detailed"},"items":[]}"""
+        // org.json is stubbed in JVM unit tests (sanitize→finish needs optInt) —
+        // assert the pure-string repair stage: the wrapper passes through
+        // byte-identical, so finish() will only swap the caption when blank.
+        val out = MossJsonSanitizer.repair(raw).also { println("DBG-out: [$it]") }
+        assertNotNull(out)
+        assertEquals(raw, out)
+    }
+
+    @Test
     fun danglingKeyAtTruncationIsCut() {
         val raw = """{"a": 1, "b": """
         assertEquals("""{"a": 1}""", MossJsonSanitizer.repair(raw))

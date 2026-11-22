@@ -27,7 +27,37 @@ object DitGpu {
 
     /** ⭐ Whether this phone's DiT renders may use the GPU at all; the engine variant follows it ([DitEngine]). */
     fun wanted(caps: DeviceProbe.Caps = DeviceProbe.caps()): Boolean =
-        hasOpenCl && (Prefs.ditGpu || BackendProcess.ditOnCpu(caps))
+        hasOpenCl && !failed && (Prefs.ditGpu || BackendProcess.ditOnCpu(caps))
+
+    /**
+     * ⭐ GPU route marked dead for this install: an OpenCL "backend 'GPUOpenCL' was not found" on a chip that HAS the
+     * driver library (GitHub #145, a tester's Xiaomi: `libOpenCL.so` present, the engine's loader still found nothing).
+     * One strike, remembered in prefs — every later launch goes straight to the CPU, no third failed wait.
+     */
+    @Volatile
+    var failed: Boolean = false
+        private set
+
+    private const val PREFS = "device_probe"
+    private const val FAILED_KEY = "gpu_route_failed"
+
+    /** ⭐ Called once at app start, before any render can pick the GPU route. */
+    fun load(context: android.content.Context) {
+        failed = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).getBoolean(FAILED_KEY, false)
+    }
+
+    /** ⭐ The loader's tell, in the launch's last lines. */
+    fun openClFailed(tail: List<String>): Boolean = tail.any { "backend 'GPUOpenCL' was not found" in it }
+
+    /** ⭐ Learn the death (returns whether it was NEW). */
+    fun learnFailed(context: android.content.Context, tail: List<String>): Boolean {
+        if (failed || !openClFailed(tail)) return false
+        failed = true
+        context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).edit().putBoolean(FAILED_KEY, true).apply()
+        android.util.Log.w("DitGpu", "GPU route failed once (OpenCL loader); the CPU takes over from here")
+        return true
+    }
+
 
     /** ⭐ Whether [spec] renders on the GPU: [wanted] and a model measured there ([ModelSpec.gpu]). */
     fun runs(spec: ModelSpec?, caps: DeviceProbe.Caps = DeviceProbe.caps()): Boolean =

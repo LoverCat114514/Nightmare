@@ -82,4 +82,13 @@ class PackFallbackTest {
         assertNull(DeviceProbe.packFallback)
         assertEquals(79, DeviceProbe.caps().arch)
     }
+
+    /** ⭐ GitHub #142: the SM8975, measured v85, is tabled; a QNN transport refusal there never makes it v81. */
+    @Test
+    fun theMeasuredSm8975NeverFallsBack() {
+        onChip("SM8975")
+        assertFalse(DeviceProbe.learnPackFallback(ctx, skel1002))
+        assertEquals(85, DeviceProbe.caps().arch)
+        assertEquals("85", BackendProcess.ditArchEnv(DeviceProbe.caps()))
+    }
 }

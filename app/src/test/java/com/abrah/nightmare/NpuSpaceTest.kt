@@ -32,6 +32,11 @@ class NpuSpaceTest {
         val s = npuSpaceRefused("DiT generation failed: generate_image failed", dit)!!
         assertTrue(s.contains("could not map the model's weights"))
         assertNull(npuSpaceRefused("DiT generation failed: generate_image failed", listOf("something else")))
+        // ⭐ GitHub #148: the same failure again within the hour is the phone's ceiling, and lowers the budget.
+        var learned = false
+        val again = npuSpaceRefused("DiT generation failed: generate_image failed", dit, strike = { 2 }) { learned = true; "1.25" }!!
+        assertTrue(again, again.contains("smaller budget (1.25 GiB)"))
+        assertTrue("the budget is lowered", learned)
     }
 
     @Test

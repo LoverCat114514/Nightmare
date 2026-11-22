@@ -3,7 +3,7 @@ package com.abrah.nightmare.reverse
 /**
  * ⭐⭐⭐ Module 4a — system prompts for the four reverse-output styles.
  *
- * MOSS_LAYOUT (v2, 2026-11-13) — normalized-coordinate rewrite from the user's
+ * MOSS_LAYOUT (v2.1, 2026-11-23) — normalized-coordinate rewrite from the user's
  * latest hand-maintained template (authoritative). Differences from v1:
  *   - bboxes are NORMALIZED to a [0,1000] scale, decoupled from the canvas —
  *     the mandatory photo_background item is [0,0,1000,1000] (a marker the
@@ -11,6 +11,9 @@ package com.abrah.nightmare.reverse
  *   - NO top-level width/height, NO canvas cheat sheet, NO @小萌新 watermark
  *     item — the draft is meant to adapt to whatever canvas it compiles on;
  *   - summary carries meta/caption only.
+ *   - v2.1 adds a complete output example: the four-item shape is the single
+ *     highest-failure mode on the 4B quantized models — without a concrete
+ *     instance they drift into empty `"items": []` or echo the schema itself.
  * Downstream contract: [MossJsonSanitizer] repairs on a virtual 1000×1000
  * canvas and strips width/height; [MossLayoutCompiler] detects the marker and
  * rescales [0,1000] → the sampler's actual width/height before centering.
@@ -83,6 +86,31 @@ Analyze the input image carefully and output ONLY a single valid JSON object. Do
      line, each button label, each overlay chip) — do NOT merge or summarize them.
    - A busy screenshot legitimately yields 20+ items; output them all. Do not
      truncate or shorten to save space — completeness is the requirement.
+
+### Output Example (format reference ONLY — copy the STRUCTURE, never the words)
+{
+  "summary": {
+    "meta": ["illustration", "indoor scene"],
+    "caption": "A young woman sits at a wooden desk facing a glowing laptop screen, a cat sleeping on the desk beside her, a warm lamp casting soft light over the room."
+  },
+  "items": [
+    {
+      "label": "character",
+      "caption": "Girl seated center-left, facing slightly right toward the laptop, both hands on the keyboard, long brown hair falling over her shoulders, gray knit sweater.",
+      "bbox": [180, 120, 520, 760]
+    },
+    {
+      "label": "object",
+      "caption": "Open silver laptop on the desk, screen glowing with a bright document, keyboard visible, tilted slightly toward the girl.",
+      "bbox": [300, 430, 660, 660]
+    },
+    {
+      "label": "object",
+      "caption": "photo_background: Warm interior with a wooden desk, a lamp glow on the left, soft bokeh wall behind, cozy evening mood.",
+      "bbox": [0, 0, 1000, 1000]
+    }
+  ]
+}
 """.trimIndent()
 
     val ANIMA: String = """

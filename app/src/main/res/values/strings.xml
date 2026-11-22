@@ -164,7 +164,7 @@
     <string name="segmenter_about">Tap an object in an Inpaint mask to select it. Turn on “Enable tap to select” in the mask editor.</string>
     <string name="loras_title">LoRAs</string>
     <string name="lora_experimental">A LoRA on this model can make a render noticeably slower.</string>
-    <string name="loras_body">A style or character as a small adapter file, applied on top of a checkpoint. FLUX.2 and Z‑Image only. Pick one on a sampler node’s LoRAs knob.</string>
+    <string name="loras_body">A style or character as a small adapter file, applied on top of a checkpoint. Put them in folders with the ⋮. Pick one on a sampler node’s LoRAs knob.</string>
     <string name="embeddings_title">Embeddings</string>
     <string name="embeddings_body">A trained concept as a file, not a checkpoint: a .safetensors from Civitai or similar. Name it in a prompt to use it.</string>
     <!-- Download source (mirror). Added 2026-09-20: huggingface.co is
@@ -290,6 +290,7 @@
     <!-- ⭐ 2026-11-10 port (upstream 1.6.288-292) -->
     <string name="run_sdxl_lowram_anyway">SDXL runs in low RAM mode on this phone whichever way the switch is set: without it SDXL fills a phone under 16 GB and Android closes apps.</string>
     <string name="run_moss_few_steps">This MOSS model is made for %1$d steps: with fewer, dark and flat areas come out in blocks. The 4-step model is the one for 4 steps.</string>
+    <string name="run_dit_all_cpu">This phone runs %1$s on its CPU: its NPU cannot run this model and the GPU route does not take it. Each step can take minutes, a large picture over an hour (a tester\'s 18 steps at 1024x1024 took 96 min). A smaller canvas or fewer steps finish sooner.</string>
     <string name="run_ref_fit_warning">%1$s with a reference: %2$s is probably too big for this phone and may fail. %3$s fits. Trying anyway</string>
     <string name="feature_missing_convert">This conversion has no %1$s. Convert it again in npuforge with %1$s ticked.</string>
     <string name="feature_missing_builtin">This download of the model has no %1$s. Delete it and download it again to get the version that has it.</string>
@@ -387,6 +388,10 @@
     <string name="describe_tags">Tags</string>
     <string name="describe_tags_hint">Danbooru tags, for anime models like Illustrious, Anima and Pony.</string>
     <string name="describe_words_hint">Sentences, for photo models, SDXL and FLUX.2.</string>
+    <string name="describe_vlm" translatable="false">Qwen3-VL</string>
+    <string name="describe_vlm_form">Write as</string>
+    <string name="describe_vlm_prose">Sentences</string>
+    <string name="describe_vlm_hint">Reads the picture with a vision model on your phone and writes it the way the wired model reads: tags for anime models, a layout for MOSS-Image, sentences for the rest. Slower than the others: about 15 seconds for sentences or tags, a minute for a layout.</string>
     <string name="tagger_about">Writes Danbooru tags from a picture, for anime models: the picture button on a prompt, Tags. SmilingWolf\'s WD tagger, run offline on the CPU.</string>
     <string name="tag_heavier">Heavier: weight +0.1</string>
     <string name="tag_lighter">Lighter: weight −0.1</string>
@@ -527,6 +532,7 @@
     <string name="results_unreadable">can\'t read this picture</string>
     <string name="results_info">Info</string>
     <string name="results_copy_all">Copy all</string>
+    <string name="results_run_log">Run log</string>
     <string name="transfer_hint">Long press the tinted rows to use them on the open flow.</string>
     <string name="transfer_use_n">Use %1$d</string>
     <string name="transfer_title">Use on the open flow</string>
@@ -838,6 +844,16 @@
     <string name="moss_open_canvas">Open canvas</string>
     <string name="moss_no_prompt_wire">Wire a prompt node first</string>
     <string name="run_moss_layout_compiled">MOSS layout draft compiled for this render</string>
+    <string name="run_moss_layout">rendering with its layout</string>
+    <string name="layout_tab">Layout</string>
+    <string name="layout_note">Draw a box for each thing in the picture and say what it is. The prompt describes the whole picture. Drag on an empty part to draw a box, drag a box to move it, drag a corner dot to resize it. Edges snap to the picture\'s middle and to the other boxes.</string>
+    <string name="layout_object">Object</string>
+    <string name="layout_character">Character</string>
+    <string name="layout_text">Text</string>
+    <string name="layout_add_box">Add box</string>
+    <string name="layout_clear">Clear</string>
+    <string name="layout_clear_title">Clear the layout?</string>
+    <string name="layout_clear_body">All %1$d boxes and what they say are removed. The prompt is kept.</string>
     <string name="hint_auto_colour">Fixes a dull or tinted picture: makes the darkest parts dark and the brightest bright, and removes a colour cast. A warm scene stays warm.</string>
     <string name="hint_adjust_colours">Shows four sliders (brightness, contrast, saturation, warmth) to tune the picture by hand, after Auto colour. Apply now shows the change on the last picture without rendering it again.</string>
     <string name="hint_warmth">Below 0 cooler (bluer), above 0 warmer (more orange).</string>
@@ -937,6 +953,14 @@
     <!-- Data-backed labels shown by model tools and the node palette. -->
     <string name="describe_promptgen_label">Describe (Florence-2 PromptGen)</string>
     <string name="describe_wd_label">Tags (WD ViT v3)</string>
+    <string name="describe_vlm_label">Smart describe (Qwen3-VL 4B)</string>
+    <string name="enhance_action">Enhance the prompt</string>
+    <string name="enhance_undo">Undo the enhance</string>
+    <string name="enhance_working">Writing a fuller prompt on the phone\u2026</string>
+    <string name="enhance_use">Use it</string>
+    <string name="enhance_again">Try again</string>
+    <string name="enhance_failed">Could not enhance the prompt: %1$s</string>
+    <string name="enhance_unusable">the answer was not a usable prompt</string>
     <string name="models_installed_named">installed %1$s</string>
     <string name="models_deleted_named">deleted %1$s</string>
     <string name="upscaler_anime_label">Anime 4x</string>
@@ -1315,6 +1339,7 @@
     <string name="schedule_radiance_shift">Radiance Shift</string>
     <string name="schedule_linear_quadratic">Linear Quadratic</string>
     <string name="schedule_unavailable">LCM uses its own schedule</string>
+    <string name="schedule_unavailable_spectral">Euler Spectral uses the model\'s own schedule</string>
     <string name="drawer_support">Support</string>
     <string name="support_coffee">Buy me a coffee</string>
     <string name="support_title">Support Nightmare</string>
@@ -1377,6 +1402,8 @@
     <string name="palette_about_animate">a photo of a face moved like the face in a video you choose (LivePortrait)</string>
     <!-- review fixes (2026-10-22): canvas, inspector, ui -->
     <string name="inspector_sweep_count">How many: %1$d</string>
+    <string name="inspector_sweep_prompts_note">One prompt per line, up to %1$d. Each picture takes the next one; everything else on the node stays as it is.</string>
+    <string name="inspector_sweep_prompts">%1$d runs, one for each prompt</string>
     <string name="inspector_sweep_seeds">%1$d runs, each with a new random seed</string>
     <string name="output_auto_upscale_on">this output already enlarges every render. Untick auto upscale to choose</string>
     <string name="inspector_sweep_this">sweep this parameter</string>
@@ -1480,7 +1507,9 @@ Nightmare shows "Powered by MiniMax-H3-Image" where it uses the model.</string>
     <string name="heat_title">Heat</string>
     <string name="heat_note">A video render keeps the phone\'s processors busy for minutes and the phone gets hot. The chip protects itself; the battery does not, and heat above about 45 °C wears it out faster. The run log warns when the battery is warm.</string>
     <string name="heat_pause">Pause video when the battery is hot</string>
-    <string name="heat_pause_hint">A video render waits between steps when the battery reaches 45 °C and carries on when it cools to 40 °C. Slower in a warm room, easier on the battery. Not for Neodragon, whose clips take seconds.</string>
+    <string name="heat_pause_hint">A video render waits between steps when the battery reaches the temperature below and carries on when it is 5 °C cooler. Slower in a warm room, easier on the battery. Not for Neodragon, whose clips take seconds.</string>
+    <string name="heat_pause_at">Pause at</string>
+    <string name="heat_pause_at_hint">40 °C is kindest to the battery and pauses most; 50 °C pauses least, and above 45 °C a battery wears faster.</string>
     <string name="gpu_title">GPU</string>
     <string name="gpu_note">For phones whose NPU cannot run the DiT models, and for anyone who wants to try the graphics chip.</string>
     <string name="dit_v69_npu">Try the NPU for DiT models (test)</string>
@@ -1541,4 +1570,5 @@ Nightmare shows "Powered by MiniMax-H3-Image" where it uses the model.</string>
     <string name="newui_lora_empty">No LoRA in the app yet — import one on Models → LoRA, then reopen this page</string>
     <string name="newui_size_hint">Snapped to the nearest multiple of 64 on run; very large totals may be tiled or refused</string>
     <string name="newui_model">Model %1$s</string>
+    <string name="dit_area_too_big">%1$dx%2$d is more than this model can render on a phone. Keep it to %3$dx%4$d pixels or fewer, in any shape: 3840x2160 (4K) fits.</string>
 </resources>

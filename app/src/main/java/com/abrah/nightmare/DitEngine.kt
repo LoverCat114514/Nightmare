@@ -192,9 +192,16 @@ object DitEngine {
     // `linear_quadratic`, `beta57` and `radiance_shift` (GitHub #111). CI 43537069630 (NPU),
     // 43537079267 (GPU), branch `dit-088-engine` on AbrahamPaulJ/nightmare-mobile. Still ABI 111; the
     // wrapper only, skels are `dit/091`'s. ⚠ An older engine reads an unknown schedule as the model's
-    // own, so old and new mix safely.
+    // own, so old and new mix safely. ⭐ Since 1.6.343 upstream: the line below + `dit/101` (attention's V cast,
+    // ~1 %), `dit/103` (FLUX.1's schedule counts 2x2 patches: no brick texture), `dit/102` + `dit/104` (H3 Image's
+    // Euler Spectral, per request: [ModelCatalog.H3_SPECTRAL]). CI 44953449665, branch `dit-104-engine`. Still ABI
+    // 111; the skels are unchanged (ggml only). Before it, since 1.6.341 (`dit/103`, branch `dit-103-engine`): FLUX.1's
+    // timestep shift counts 2x2 patches where sd.cpp counted latent pixels, so 1024x1024 asked for mu 3.23 when
+    // 1.15 was right — the fur/brick texture bug (GitHub #147); `dit/103` counts patches and matches sd.cpp's own,
+    // [dev], [schnell] and Klein re-tested spot on. It also carries `dit/101`: attention's V cast before its
+    // permute, Klein ~1% faster, same pictures. Both fixes rebuild the h3img100 engine as flux103 — no mode change.
     private const val NPU_URL =
-        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-h3img100/dit-engine-abi111-h3img100.zip"
+        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-h3spec104/dit-engine-abi111-h3spec104.zip"
 
     /**
      * ⭐⭐ The GPU variant ([DitGpu]): the same patch line + ggml's OpenCL backend with the Adreno kernels and `dit/067`
@@ -203,12 +210,24 @@ object DitEngine {
      * Its own tag and file name, so the stamp tells the two apart and a switch re-fetches.
      */
     private const val GPU_URL =
-        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-zscale099-gpu/dit-engine-abi111-zscale099-gpu.zip"
+        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-flux103-gpu/dit-engine-abi111-flux103-gpu.zip"
 
-    /** ⭐ Which of the two this phone runs: the GPU's wherever [DitGpu.wanted]. */
+    // ⭐ The engine is built `-march=armv8.7a+i8mm` (GitHub #147): its quantised matmuls use the int8 matrix
+    // instructions, which a Pixel 6's Tensor G1 (Cortex-X1/A76/A55: ARMv8.2 + dotprod) does not have — the first CPU
+    // matmul died of SIGILL (`exited 132`, signal 4). Such a phone gets this armv8.2 build instead ([CpuFeatures]).
+    private const val GPU_V82_URL =
+        "https://github.com/AbrahamPaulJ/nightmare-mobile/releases/download/dit-engine-abi111-flux103-gpu-v82/dit-engine-abi111-flux103-gpu-v82.zip"
+    private const val GPU_V82_BYTES = 24_006_123L
+    private const val GPU_V82_FILE_BYTES = 59_085_464L
+    private const val GPU_V82_SHA256 = "2b6df81a03be2f9e2af72372f6c5a133e2e72725c14df86db4ba0fddf59b3674"
+
+    /** ⭐ Which of the two this phone runs: the GPU's wherever [DitGpu.wanted], its armv8.2 build when the cores lack i8mm. */
     private val gpu: Boolean get() = DitGpu.wanted()
 
-    val URL: String get() = if (gpu) GPU_URL else NPU_URL
+    /** ⭐ The GPU cores carry the int8 matrix instructions ([CpuFeatures]): without them the armv8.7 engine SIGILLs. */
+    private val v82: Boolean get() = gpu && !CpuFeatures.hasI8mm
+
+    val URL: String get() = if (v82) GPU_V82_URL else if (gpu) GPU_URL else NPU_URL
 
     /**
      * ⭐ The same archive, byte for byte, on Hugging Face, where every model already comes from.
@@ -229,12 +248,12 @@ object DitEngine {
         if (downloadBase != Prefs.HF_ORIGIN) listOf(HF_URL, URL) else listOf(URL, HF_URL)
 
     /** ⚠ The ARCHIVE's size, measured off the file that was uploaded. */
-    val BYTES: Long get() = if (gpu) GPU_BYTES else 23_330_459L
+    val BYTES: Long get() = if (v82) GPU_V82_BYTES else if (gpu) GPU_BYTES else 23_338_223L
 
     /** The unpacked `.so`, checked after extraction. */
     /** ⚠ Public so a test can build an engine fixture without the network. */
-    val FILE_BYTES: Long get() = if (gpu) GPU_FILE_BYTES else NPU_FILE_BYTES
-    private const val NPU_FILE_BYTES = 56_260_232L
+    val FILE_BYTES: Long get() = if (v82) GPU_V82_FILE_BYTES else if (gpu) GPU_FILE_BYTES else NPU_FILE_BYTES
+    private const val NPU_FILE_BYTES = 56_271_360L
 
     /**
      * ⭐ The GPU variant: CI 41781422175 (branch `gpu-110`), the NPU list + 067 + 080 + 081 + `085`, `opencl=true`.
@@ -248,9 +267,9 @@ object DitEngine {
     // (`dit/025`). The plain Adreno Q4_0 GEMM accumulates in half8, so every Z-Image-family model (NitroFusion 2) came out
     // a flat green frame on any GPU without the dense DP4A kernel (item 84, an 8s Gen 4; the S25 with it off).
     // CI 44389663044, branch `dit-099-engine`. Still ABI 111, the wrapper only; the NPU engine is unchanged.
-    private const val GPU_BYTES = 24_006_569L
-    private const val GPU_FILE_BYTES = 59_087_592L
-    private const val GPU_SHA256 = "4bf209296ddc116389c4af87b0d9cc4d1e664b0d650f9f673e744952871f0756"
+    private const val GPU_BYTES = 24_007_012L
+    private const val GPU_FILE_BYTES = 59_087_560L
+    private const val GPU_SHA256 = "7131a323119076af0c3f0d87b5bf1dd3bd0d2f66520ab9be92cbcf1603c96e02"
 
     /**
      * ⚠ A deviation from [com.abrah.nightmare.segment.Segmenter], which checks
@@ -260,7 +279,8 @@ object DitEngine {
      * ⭐ It is the digest GitHub publishes for the release asset, so there is
      * no second place to keep it in step.
      */
-    private val SHA256: String get() = if (gpu) GPU_SHA256 else "172ccdc98c675584e667c82451cc53de102efaed32ce0163709825cd58b91a79"
+    private val SHA256: String get() =
+        if (v82) GPU_V82_SHA256 else if (gpu) GPU_SHA256 else "47a4efe991951b8287d0971a4bf9a2706349e71b538505526bde7d25707eada3"
 
     fun dir(context: Context): File = BackendProcess.runtimeDir(context)
 

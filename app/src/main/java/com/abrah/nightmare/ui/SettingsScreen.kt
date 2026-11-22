@@ -724,34 +724,11 @@ fun SettingsScreen(
                         body = stringResource(R.string.loras_body),
                         onImport = onImportLora,
                     )
-                    for (row in loras.orEmpty()) {
-                        Card(
-                            Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            ),
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(row.name, style = MaterialTheme.typography.titleSmall)
-                                    Text(
-                                        stringResource(R.string.installed_mb, row.bytes shr 20),
-                                        style = NoteTextStyle,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                if (onDeleteLora != null) {
-                                    StudioOutlinedButton(onClick = { deletingLora = row.name }) {
-                                        Text(stringResource(R.string.delete))
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // ⭐ GitHub #137: the same folders and the same ⋮ the node's picker has ([canvas.LoraLibraryList]).
+                    com.abrah.nightmare.canvas.LoraLibraryList(
+                        rows = loras.orEmpty().map { it.name to it.bytes },
+                        onDelete = onDeleteLora?.let { { name: String -> deletingLora = name } },
+                    )
                 }
             }
         }
@@ -808,6 +785,23 @@ fun SettingsScreen(
                             stringResource(R.string.heat_pause), stringResource(R.string.heat_pause_hint),
                             lowRam.heatPause, { onLowRam(Prefs.KEY_HEAT_PAUSE, it) },
                         )
+                        // ⭐ Where it pauses: 40, 45 or 50 °C (the user, 2026-11-21), the inspector's own slider.
+                        if (lowRam.heatPause) {
+                            val ctx = androidx.compose.ui.platform.LocalContext.current
+                            var at by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(Prefs.heatPauseAt) }
+                            com.abrah.nightmare.canvas.SliderRow(
+                                widget = com.abrah.nightmare.Widget(
+                                    name = Prefs.KEY_HEAT_PAUSE_AT, type = "int", default = Prefs.HEAT_PAUSE_DEFAULT.toString(),
+                                    min = Prefs.HEAT_PAUSE_STOPS.first().toDouble(), max = Prefs.HEAT_PAUSE_STOPS.last().toDouble(),
+                                    step = 5, hintRes = R.string.heat_pause_at_hint,
+                                ),
+                                current = at.toString(),
+                                onSet = { v -> at = v.toIntOrNull() ?: at },
+                                onCommit = { Prefs.setHeatPauseAt(ctx, at) },
+                                label = stringResource(R.string.heat_pause_at),
+                                unit = " °C",
+                            )
+                        }
                     }
                     // ⭐ An 8 Gen 1 asks its NPU again ([Prefs.v69Npu]): a trial, only on such a chip.
                     if (com.abrah.nightmare.BackendProcess.belowDitNpu(com.abrah.nightmare.DeviceProbe.caps())) StudioCard {
@@ -1183,8 +1177,8 @@ private fun TagDictionaryCard(
  */
 /**
  * ⭐ The app's own language (Android 13+, `LocaleManager`, which keeps it across launches and recreates the screen):
- * the phone's, or one of the three the app is written in, each named in itself. Hidden below Android 13, where there
- * is no per-app language to set. `res/xml/locales_config.xml` lists the same three for the system's App languages.
+ * the phone's, or one of the four the app is written in, each named in itself. Hidden below Android 13, where there
+ * is no per-app language to set. `res/xml/locales_config.xml` lists the same four for the system's App languages.
  */
 @Composable
 private fun AppLanguageCard() {
@@ -1208,7 +1202,7 @@ private fun AppLanguageCard() {
 }
 
 /** ⚠ Each language named in itself, never translated; null = the phone's ([R.string.language_system]). */
-private val APP_LANGUAGES = listOf("" to null, "en" to "English", "ru" to "Русский", "zh" to "中文")
+private val APP_LANGUAGES = listOf("" to null, "en" to "English", "ru" to "Русский", "zh" to "中文", "ja" to "日本語")
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable

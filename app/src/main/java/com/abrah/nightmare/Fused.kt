@@ -1146,13 +1146,13 @@ class SdSampler(
         // and saying it twice under two adjacent sliders is noise.
         Widget(
             "width", "int", ModelCatalog.DIT_RES.width.toString(),
-            ModelCatalog.DIT_MIN.toDouble(), ModelCatalog.DIT_MAX.toDouble(), step = ModelCatalog.DIT_STEP,
+            ModelCatalog.DIT_MIN.toDouble(), ModelCatalog.ditMax(family).toDouble(), step = ModelCatalog.DIT_STEP,
             hintRes = R.string.hint_dit_size,
             hintArgs = listOf(ModelCatalog.DIT_STEP),
         ),
         Widget(
             "height", "int", ModelCatalog.DIT_RES.height.toString(),
-            ModelCatalog.DIT_MIN.toDouble(), ModelCatalog.DIT_MAX.toDouble(), step = ModelCatalog.DIT_STEP,
+            ModelCatalog.DIT_MIN.toDouble(), ModelCatalog.ditMax(family).toDouble(), step = ModelCatalog.DIT_STEP,
         ),
         // ⚠⚠ **A `string` the inspector does NOT draw as a text field.** A
         // `NodeType.widgets` getter is a plain property with no Context, so it
@@ -1305,6 +1305,17 @@ class SdSampler(
         return own.takeIf { it in 6..10 && asked < it }
     }
 
+    /**
+     * ⭐ Every stage of [spec] on the CPU: the chip's NPU cannot run a DiT ([BackendProcess.ditOnCpu]) and the GPU route
+     * does not take this model, or the phone's GPU would not start ([DitGpu.failed], GitHub #145). The launch's own rule
+     * (`NM_DIT_BACKEND` = `CPU_ALL`), said for the run log.
+     */
+    internal fun ditAllOnCpu(spec: ModelSpec, caps: DeviceProbe.Caps): Boolean {
+        if (!spec.isDit) return false
+        val gpu = DitGpu.runs(spec, caps)
+        return (BackendProcess.ditOnCpu(caps) && !(gpu && !DitGpu.failed)) || (gpu && DitGpu.failed)
+    }
+
     /** ⭐ Where [HIRES] is offered: SD 1.5 / SDXL text- and image-to-image. Everywhere else, [ENLARGE]. */
     private val hasHires: Boolean get() = !inpaint && UltraFix.tileFor(family) != null
 
@@ -1319,6 +1330,13 @@ class SdSampler(
         fewMossSteps(effectiveParams(node))?.let { own ->
             ctx.warn(ctx.text(R.string.run_moss_few_steps,
                 "This MOSS model is made for %1\$d steps: with fewer, dark and flat areas come out in blocks. The 4-step model is the one for 4 steps.", own))
+        }
+        // ⭐ LIST item 33 (a tester waited 96 min for 18 steps of FLUX.3 Klein at 1024²): the whole DiT on the CPU, said
+        // before the wait, not after it.
+        ModelCatalog.byId(effectiveParams(node)["model"].orEmpty())?.takeIf { ditAllOnCpu(it, DeviceProbe.caps()) }?.let { spec ->
+            ctx.warn(ctx.text(R.string.run_dit_all_cpu,
+                "This phone runs %1\$s on its CPU: its NPU cannot run this model and the GPU route does not take it. Each step can take minutes, a large picture over an hour (a tester's 18 steps at 1024x1024 took 96 min). A smaller canvas or fewer steps finish sooner.",
+                spec.label))
         }
         // ⭐⭐ The picture under the fix, remembered without the fix's own params ([com.abrah.nightmare.detail.Detailer.PARAMS]): Fix faces
         // switched on, or a new Fix strength or Fix seed, redraws the faces on the picture already made (Saved #7072,
@@ -1522,8 +1540,8 @@ class SdSampler(
         // ⚠ A DiT INPAINT snaps here, before the cut is framed and padded to this canvas: [runDit]
         // snaps its own size, but [runDitMasked] got the raw one, so a hand-edited or agent-written
         // 1000x750 reached the engine at a size the grid never offers ([ModelCatalog.ditSnap]).
-        val w = int("width").let { if (family.dit && inpaint) ModelCatalog.ditSnap(it) else it }
-        val h = int("height").let { if (family.dit && inpaint) ModelCatalog.ditSnap(it) else it }
+        val w = int("width").let { if (family.dit && inpaint) ModelCatalog.ditSnap(it, ModelCatalog.ditMax(family)) else it }
+        val h = int("height").let { if (family.dit && inpaint) ModelCatalog.ditSnap(it, ModelCatalog.ditMax(family)) else it }
         // ⭐⭐ A DiT model renders whole, so it leaves here — EXCEPT an inpaint
         // one, which first needs the mask this function builds below. That
         // path rejoins at [runDitMasked] and returns before any op endpoint is
@@ -2295,8 +2313,18 @@ class SdSampler(
         // the grid would turn 752 into 768, a size it was never trained at.
         val fixed = ModelCatalog.byId(p["model"].orEmpty())?.takeIf { it.fixedSizes }
         val kept = fixed?.let { ModelCatalog.keptSize(it, w0, h0) }
-        val w = kept?.width ?: ModelCatalog.ditSnap(w0)
-        val h = kept?.height ?: ModelCatalog.ditSnap(h0)
+        val w = kept?.width ?: ModelCatalog.ditSnap(w0, ModelCatalog.ditMax(family))
+        val h = kept?.height ?: ModelCatalog.ditSnap(h0, ModelCatalog.ditMax(family))
+        // ⚠ Refused, not shrunk: a picture that comes back a different size from
+        // the one set is the bug the grid exists to prevent ([ModelCatalog.ditSnap]).
+        // The person picks a smaller size or a wider shape.
+        if (!ModelCatalog.ditAreaFits(family, w, h)) {
+            val side = kotlin.math.sqrt(ModelCatalog.ditMaxPixels(family)!!.toDouble()).toInt()
+            throw IllegalStateException(
+                ctx.android?.getString(R.string.dit_area_too_big, w, h, side, side)
+                    ?: "${w}x$h is more than this model renders (up to ${side}x$side pixels)"
+            )
+        }
         // ⚠ Kept for Match colours: the result is matched to the FRAMED picture it was made from,
         // as the SD path does. Matching the whole photo pulled a framed dark corner of a bright
         // photo toward the photo's brightness.

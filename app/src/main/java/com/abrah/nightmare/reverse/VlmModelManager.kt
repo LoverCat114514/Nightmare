@@ -68,22 +68,23 @@ object VlmModelManager {
         mmprojBytes = 918_167_360L,
     )
 
-    /** The original flagship (prithivMLmods Qwen3-VL-4B-Instruct-Unredacted-MAX),
-     *  kept as a second downloadable option per the user's multi-select request.
-     *  Sizes are the exact byte counts the app itself downloaded back then. */
-    val QWEN_4B = ModelDef(
-        id = "qwen3-vl-4b-unredacted",
-        displayName = "Qwen3-VL-4B-Instruct",
+    /** The 4B slot (2026-11-21, user request): mradermacher's
+     *  DeepSeek-V4-Pro-Qwen3.5-4B-UNCENSORED-heretic, q4_k_m main + f16 mmproj
+     *  (the vision tower stays f16 — quantization-sensitive, see the header).
+     *  Sizes are the exact HF file sizes. */
+    val DEEPSEEK_4B = ModelDef(
+        id = "deepseek-v4-pro-qwen35-4b",
+        displayName = "DeepSeek-V4-Pro-Qwen3.5-4B",
         shortName = "4B",
         badge = "旗舰 8GB+",
-        hfBase = "https://huggingface.co/prithivMLmods/Qwen3-VL-4B-Instruct-Unredacted-MAX-GGUF/resolve/main/",
-        mainFile = "Qwen3-VL-4B-Instruct-Unredacted-MAX.Q8_0.gguf",
-        mmprojFile = "mmproj-Qwen3-VL-4B-Instruct-Unredacted-MAX-f16.gguf",
-        mainBytes = 4_280_406_240L,
-        mmprojBytes = 839_326_048L,
+        hfBase = "https://huggingface.co/mradermacher/DeepSeek-V4-Pro-Qwen3.5-4B-UNCENSORED-heretic-GGUF/resolve/main/",
+        mainFile = "DeepSeek-V4-Pro-Qwen3.5-4B-UNCENSORED-heretic.Q4_K_M.gguf",
+        mmprojFile = "DeepSeek-V4-Pro-Qwen3.5-4B-UNCENSORED-heretic.mmproj-f16.gguf",
+        mainBytes = 2_783_449_152L,
+        mmprojBytes = 672_423_840L,
     )
 
-    val MODELS: List<ModelDef> = listOf(DEEPSEEK_9B, QWEN_4B)
+    val MODELS: List<ModelDef> = listOf(DEEPSEEK_9B, DEEPSEEK_4B)
 
     fun modelDef(context: Context, modelId: String): ModelDef =
         MODELS.firstOrNull { it.id == modelId } ?: selectedDef(context)
@@ -178,17 +179,41 @@ object VlmModelManager {
                 emit(status(context, def.id, downloading = true, progress = 1f, detail = "$label 已存在，跳过"))
                 return
             }
-            downloadFile(context, url, file, expected) { frac, extra ->
-                emit(
-                    status(
-                        context,
-                        def.id,
-                        downloading = true,
-                        progress = frac,
-                        detail = "$label ${(frac * 100).toInt()}%$extra",
-                    )
-                )
+            // ⭐ Mirror + foreign, two routes (2026-11-21, user request): huggingface.co
+            // is unreachable from mainland China, so try hf-mirror.com first and the
+            // foreign origin second — the same candidate discipline [VlmInstaller]
+            // uses for the engine zip. A mirror serving wrong bytes fails the
+            // byte-count check and the next candidate is tried, so no mirror can
+            // inject a wrong file; a dead one just costs a connection error.
+            val mirror = url.replace(Prefs.HF_ORIGIN, Prefs.HF_MIRROR)
+            val candidates = listOf(mirror, url)
+            var lastError: Exception? = null
+            for (candidate in candidates) {
+                // A partial from the previous candidate must never resume-mix
+                // into this one's bytes — start every attempt from zero.
+                File(file.parentFile, file.name + ".part").delete()
+                try {
+                    downloadFile(context, candidate, file, expected) { frac, extra ->
+                        emit(
+                            status(
+                                context,
+                                def.id,
+                                downloading = true,
+                                progress = frac,
+                                detail = "$label ${(frac * 100).toInt()}%$extra",
+                            )
+                        )
+                    }
+                    return@step
+                } catch (e: DownloadCancelled) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "model fetch failed from " +
+                        candidate.removePrefix("https://").substringBefore('/') + ": " + e.message)
+                    lastError = e
+                }
             }
+            throw lastError ?: IOException("no download candidate succeeded for $label")
         }
 
         try {
@@ -247,7 +272,11 @@ object VlmModelManager {
 
         onProgress(if (expected > 0) from.toFloat() / expected else 0f, if (from > 0) "（续传）" else "")
 
-        val conn = (URL(Prefs.apply(url)).openConnection() as HttpURLConnection).apply {
+        // ⭐ The candidate URL is used as-is: [step] already picked mirror or
+        // foreign, so re-running [Prefs.apply] here would collapse both routes
+        // back to the user's single download base and defeat the dual-route
+        // fallback (2026-11-21, user request).
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 30_000
             readTimeout = 60_000
             instanceFollowRedirects = true

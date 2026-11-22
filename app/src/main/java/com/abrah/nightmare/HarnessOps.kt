@@ -328,7 +328,12 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             // ⭐ The prompt's describe button, headless and timed (docs/FLORENCE.md).
             // `--es arg "short"` / `"detailed|/sdcard/Download/x.jpg"`; no path = the newest saved picture.
             "describe_install" -> describeInstall(arg)
+            // ⭐ The :vlm process is its own, so a harness probe of another NPU user needs it GONE (2026-11-21).
+            "describe_vlm_exit" -> { com.abrah.nightmare.vlm.VisionDescriber.trim(); say("describe_vlm_exit: sent") }
             "describe" -> describeProbe(arg)
+            // ⭐ The prompt enhancer, headless and timed (docs/FLORENCE.md §7): `--es arg "h3_text|a cat says hello"`;
+            // the idea may be a file path (`@/data/local/tmp/idea.txt`) for text the shell would mangle.
+            "enhance" -> enhanceProbe(arg)
             else -> say("unknown intent op \"$op\"", bad = true)
         }
     }
@@ -3836,12 +3841,14 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         }
     }
 
-    /** `describe_install [sentences|tags]` — one of the prompt's describe models, both when blank. */
+    /** `describe_install [sentences|tags|vlm]` — one of the prompt's describe models, the CPU ones when blank. */
     private suspend fun describeInstall(arg: String?) {
         val which = when (arg?.trim()) {
             "sentences" -> listOf(ImageCaption)
             "tags" -> listOf(ImageTagger)
-            else -> DescribeMode.models
+            "vlm" -> listOf(com.abrah.nightmare.vlm.VisionDescriber)
+            // ⚠ Named only: 5.1 GB is never part of "all".
+            else -> listOf(ImageCaption, ImageTagger)
         }
         for (c in which) {
             say("describe_install: ${c.label}, ${c.bytes} B")
@@ -3858,12 +3865,46 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
 
     /**
      * ⭐ The describe button's own call, timed: twice on one picture (cold, warm),
-     * with the peak RSS. `short` / `detailed` / `tags`, then `|<path>`.
+     * with the peak RSS. `short` / `detailed` / `tags` / `vlm_prose` / `vlm_tags` /
+     * `vlm_layout`, then `|<path>` / `|<devices>` (`none` for CPU alone, `HTP0` to
+     * pin the HTP device, `HTP0:0,HTP0:1` for both), then `|cpu` to pin the vision
+     * tower to the CPU, then `|<model.gguf>` to pin a model file.
+     * ⚠ The :vlm process reads the devices ONCE at start — `describe_vlm_exit`
+     * between two probes with different devices.
      */
+    /**
+     * ⭐ The prompt enhancer, headless and timed (docs/FLORENCE.md §7): `--es arg "h3_text|a cat says hello"`;
+     * the idea may be a file path (`@/data/local/tmp/idea.txt`) for text the shell would mangle.
+     */
+    private suspend fun enhanceProbe(arg: String?) {
+        val pe = com.abrah.nightmare.vlm.PromptEnhance
+        val target = com.abrah.nightmare.vlm.PromptEnhance.Target.entries.firstOrNull { it.name.equals(arg.orEmpty().substringBefore('|').trim(), ignoreCase = true) }
+            ?: return say("enhance: target is one of ${com.abrah.nightmare.vlm.PromptEnhance.Target.entries.joinToString { it.name.lowercase() }}", bad = true)
+        var idea = arg.orEmpty().substringAfter('|', "").trim()
+        if (idea.startsWith("@")) idea = runCatching { java.io.File(idea.drop(1)).readText() }.getOrDefault("")
+        if (idea.isBlank()) return say("enhance: no idea after the |", bad = true)
+        val vd = com.abrah.nightmare.vlm.VisionDescriber
+        if (!vd.isInstalled(ctx)) return say("enhance: ${vd.label} not installed. Run describe_install", bad = true)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            for (k in 0 until 2) {
+                val t = System.nanoTime()
+                val raw = runCatching { vd.rewrite(ctx, pe.ask(target, idea, seed = 1000 + k)) }
+                val ms = (System.nanoTime() - t) / 1_000_000
+                raw.onFailure { e -> say("  enhance ${target.name.lowercase()} FAILED in $ms ms: ${e.message}", bad = true) }
+                val text = raw.getOrNull()?.let { pe.finish(target, it) }
+                say("  enhance ${target.name.lowercase()} ${if (k == 0) "cold" else "warm"} $ms ms, ${raw.getOrNull()?.length ?: 0} chars, ${if (text == null) "UNUSABLE" else "ok"}")
+                (text ?: raw.getOrNull().orEmpty()).chunked(900).forEach { say("  | $it") }
+            }
+        }
+    }
+
     private suspend fun describeProbe(arg: String?) {
         val parts = arg.orEmpty().split("|")
         val mode = DescribeMode.entries.firstOrNull { it.name.equals(parts[0].trim(), ignoreCase = true) } ?: DescribeMode.SHORT
         val path = parts.getOrNull(1)?.takeIf { it.isNotBlank() }
+        com.abrah.nightmare.vlm.VisionDescriber.devicesOverride = parts.getOrNull(2)?.trim()?.takeIf { it.isNotEmpty() }
+        com.abrah.nightmare.vlm.VisionDescriber.visionOnCpu = parts.getOrNull(3)?.trim() == "cpu"
+        com.abrah.nightmare.vlm.VisionDescriber.modelOverride = parts.getOrNull(4)?.trim()?.takeIf { it.isNotEmpty() }
         val photo = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             if (path != null) BitmapFactory.decodeFile(path)
             else newestSavedImage()?.let { AddObjects.load(ctx, it) }
@@ -3873,11 +3914,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             for (k in 0 until 2) {
                 val t = System.nanoTime()
-                val text = when (mode) {
-                    DescribeMode.TAGS -> ImageTagger.tags(ctx, photo)
-                    DescribeMode.SHORT -> ImageCaption.caption(ctx, photo, ImageCaption.Length.SHORT)
-                    DescribeMode.DETAILED -> ImageCaption.caption(ctx, photo, ImageCaption.Length.DETAILED)
-                }
+                val text = mode.describe(ctx, photo)
                 val hwm = java.io.File("/proc/self/status").readLines().firstOrNull { it.startsWith("VmHWM") }
                 say("  ${mode.name.lowercase()} ${if (k == 0) "cold" else "warm"} ${(System.nanoTime() - t) / 1_000_000} ms ${hwm.orEmpty()}")
                 say("  \"$text\"")
@@ -5532,6 +5569,15 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 Prefs.setLowRam(ctx, Prefs.KEY_DIT_SPECTRUM, v == "1")
                 say("spillfill: dit spectrum = ${Prefs.ditSpectrum}")
             }
+            // ⭐ The battery heat pause (#137) and its slider, for a phone test without opening Settings.
+            k == "heat_pause" && v != null -> {
+                Prefs.setLowRam(ctx, Prefs.KEY_HEAT_PAUSE, v == "1")
+                say("spillfill: heat pause = ${Prefs.heatPause} at ${Prefs.heatPauseAt} °C")
+            }
+            k == "heat_pause_at" && v != null -> {
+                Prefs.setHeatPauseAt(ctx, v.toIntOrNull() ?: Prefs.HEAT_PAUSE_DEFAULT)
+                say("spillfill: heat pause at ${Prefs.heatPauseAt} °C")
+            }
             v != null -> {
                 SpillFill.setForTest(ctx, k, v.toLongOrNull() ?: 0L)
                 say("spillfill: $k = ${SpillFill.stored(ctx, k)}")
@@ -5557,6 +5603,12 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // the backend's constant, or no group at all ([SpillFill]): launch once
         // more with what the log taught. ⚠ Once — [SpillFill.learn] is false when
         // nothing is new, which is what makes this a retry and not a loop.
+        // ⭐ GitHub #145: the GPU's OpenCL would not start (a Mali): once more with the DiT on the CPU ([DitGpu.failed]).
+        if (DitGpu.learnFailed(ctx, BackendProcess.tail())) {
+            say("this phone's GPU would not start the engine. Starting again on the CPU: slower, but it runs")
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { BackendProcess.stop() }
+            return launchOnce(want, upscalerOnly)
+        }
         // ⭐ A v85 guess whose skel would not load (GitHub #62): once more on the V81 runtime the APK carries.
         if (DeviceProbe.learnPackFallback(ctx, BackendProcess.tail())) {
             say("this phone's NPU would not take the v85 runtime. Starting again as v${DeviceProbe.PACK_FALLBACK_ARCH}")
