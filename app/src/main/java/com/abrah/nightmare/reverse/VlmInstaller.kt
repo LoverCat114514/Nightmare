@@ -45,15 +45,15 @@ object VlmInstaller {
     const val URL: String =
         "https://github.com/LoverCat114514/Nightmare/releases/download/vlm-engine/vlm-engine.zip"
 
-    /** ⚠ The ARCHIVE's size, measured off the uploaded asset (19,887,890 bytes). */
-    const val BYTES: Long = 19_887_890L
+    /** ⚠ The ARCHIVE's size, measured off the uploaded asset (21,761,533 bytes). */
+    const val BYTES: Long = 21_761_533L
 
     /**
      * ⚠ Hash of the uploaded asset, exactly as [com.abrah.nightmare.DitEngine] does
      * it: native code the linker will mmap, so a length check alone cannot tell a
      * truncated-then-resumed download from a correct one. Hashing 20 MB is ~100 ms once.
      */
-    const val SHA256: String = "834f37d479949acf7a59e4d349a2bcf7d85b6be1066c80c1d72720b2f6f75a8f"
+    const val SHA256: String = "9dfbd702b0a6d510c98d73651be7b1835fb0cfe96879d7c7ff3801e925b15b59"
 
     /**
      * ⭐ GitHub release assets are unreachable from some networks — the very
