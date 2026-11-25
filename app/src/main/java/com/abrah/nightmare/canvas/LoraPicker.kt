@@ -253,6 +253,34 @@ fun LoraPickerContent(
         )
     }
 
+    // ⭐⭐ LoRA 配比/组合记忆 (the user, 2026-11-25): saved combinations, loadable from here.
+    var savedCombos by remember { mutableStateOf(com.abrah.nightmare.LoraLibrary.combos(ctx)) }
+    var savingCombo by remember { mutableStateOf(false) }
+    var deletingCombo by remember { mutableStateOf<String?>(null) }
+    savingCombo.let {
+        LoraComboNameDialog(
+            onDismiss = { savingCombo = false },
+            onSave = { name ->
+                com.abrah.nightmare.LoraLibrary.saveCombo(ctx, name, LoraSpec.format(chosen))
+                savedCombos = com.abrah.nightmare.LoraLibrary.combos(ctx)
+                savingCombo = false
+                android.widget.Toast.makeText(ctx, ctx.getString(R.string.lora_combo_saved, name), android.widget.Toast.LENGTH_SHORT).show()
+            },
+        )
+    }
+    deletingCombo?.let { name ->
+        com.abrah.nightmare.ui.ConfirmDelete(
+            title = ctx.getString(R.string.lora_combo_delete, name),
+            body = "",
+            onConfirm = {
+                com.abrah.nightmare.LoraLibrary.deleteCombo(ctx, name)
+                savedCombos = com.abrah.nightmare.LoraLibrary.combos(ctx)
+                deletingCombo = null
+            },
+            onDismiss = { deletingCombo = null },
+        )
+    }
+
     // ⚠⚠ Chosen ones FIRST and in their own order, then everything else
     // alphabetically. The order in the param is the order the engine applies
     // them in, so re-sorting the list would silently re-sort the stack.
@@ -313,6 +341,61 @@ fun LoraPickerContent(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+        }
+        // ⭐⭐ LoRA 配比/组合记忆 (the user, 2026-11-25): a row to save the current chosen
+        // set as a named combination, and a list of saved ones to load or delete.
+        if (chosen.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StudioOutlinedButton(onClick = { savingCombo = true }) {
+                    Text(stringResource(R.string.lora_combo_save))
+                }
+            }
+        }
+        if (savedCombos.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.lora_combo_save),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                for (c in savedCombos) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        com.abrah.nightmare.ui.Pill(
+                            c.name,
+                            false,
+                            onClick = {
+                                commit(LoraSpec.parse(c.spec))
+                                android.widget.Toast.makeText(ctx, ctx.getString(R.string.lora_combo_saved, c.name), android.widget.Toast.LENGTH_SHORT).show()
+                            },
+                        )
+                        com.abrah.nightmare.ui.StudioOutlinedButton(
+                            onClick = { deletingCombo = c.name },
+                            modifier = Modifier.size(28.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.MoreVert,
+                                contentDescription = stringResource(R.string.lora_combo_delete, c.name),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        } else if (chosen.isNotEmpty()) {
+            Text(
+                stringResource(R.string.lora_combo_empty),
+                style = com.abrah.nightmare.ui.NoteTextStyle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         // ⭐⭐ GitHub #36: the chosen LoRAs first (their order is the engine's), then the folders,
         // then the LoRAs in no folder. ⚠ Flat while searching: a match inside a closed folder must show.
@@ -684,6 +767,38 @@ internal fun LoraWeightDialog(
         },
         confirmButton = {
             StudioButton(onClick = { parsed?.let(onSet) }, enabled = parsed != null) { Text(stringResource(R.string.lora_weight_set)) }
+        },
+        dismissButton = { StudioOutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+/**
+ * ⭐⭐ LoRA 配比/组合记忆 (the user, 2026-11-25): name the combination being saved. The name is
+ * the only thing asked; the strengths are the ones already on the current node.
+ */
+@Composable
+internal fun LoraComboNameDialog(
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+) {
+    var text by remember { mutableStateOf("") }
+    val valid = text.trim().isNotBlank()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.lora_combo_name_title)) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                placeholder = { Text(stringResource(R.string.lora_combo_name_hint), style = NoteTextStyle) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            StudioButton(onClick = { if (valid) onSave(text.trim()) }, enabled = valid) {
+                Text(stringResource(R.string.lora_combo_save))
+            }
         },
         dismissButton = { StudioOutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )

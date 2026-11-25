@@ -28,7 +28,7 @@ class PrefsViewsTest {
 
     @Test
     fun someoneAlreadyAskedKeepsSideToSide() {
-        Prefs.setDefaultView(ctx, MainView.NODES)
+        Prefs.setDefaultView(ctx, MainView.NEWUI)
         Prefs.load(ctx)
         assertFalse(Prefs.nodesVertical)
     }

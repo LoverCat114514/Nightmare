@@ -4695,12 +4695,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      * inspector's pages, full screen) or Graph. Opens on [Prefs.defaultView]; until the person has
      * chosen one, on Nodes with the question asked ([askView]).
      */
-    var mainView by mutableStateOf(Prefs.defaultView ?: MainView.NODES)
+    var mainView by mutableStateOf(Prefs.defaultView ?: MainView.NEWUI)
         private set
     var askView by mutableStateOf(Prefs.defaultView == null)
         private set
     /** ⭐ What Settings shows as the default view. */
-    var defaultViewChoice by mutableStateOf(Prefs.defaultView ?: MainView.NODES)
+    var defaultViewChoice by mutableStateOf(Prefs.defaultView ?: MainView.NEWUI)
         private set
     var nodesVertical by mutableStateOf(Prefs.nodesVertical)
         private set
@@ -4720,16 +4720,16 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** ⭐ The flow view (Agent · Nodes · Graph) last shown — where leaving the library returns. */
-    private var lastFlowView: MainView = Prefs.defaultView ?: MainView.NODES
+    private var lastFlowView: MainView = Prefs.defaultView ?: MainView.NEWUI
 
     /** ⭐ The flow view the canvas shows — [mainView], or the last one while a library sheet is up. */
     val canvasView: MainView get() = if (mainView.isCanvas) mainView else lastFlowView
 
     fun showView(view: MainView) {
         // ⚠ Chat hidden: nothing lands on it, whoever asks.
-        val v = if (view == MainView.AGENT && hideChat) MainView.NODES else view
+        val v = view
         // ⚠ The Nodes view pages by `editing`; carried into Graph it would open the sheet at once.
-        if (v == MainView.GRAPH && mainView != MainView.GRAPH) editCanvas { it.copy(editing = null) }
+        // ⭐ Only NEWUI is a canvas now; no editing-state reset to carry.
         if (v.isCanvas) lastFlowView = v
         mainView = v
     }
@@ -4764,8 +4764,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun chooseHideChat(on: Boolean) {
         Prefs.setHideChat(getApplication(), on)
         hideChat = on
-        if (on && lastFlowView == MainView.AGENT) lastFlowView = MainView.NODES
-        if (on && mainView == MainView.AGENT) showView(MainView.NODES)
+        // ⭐ AGENT retired: hideChat has no canvas view to fall back from.
     }
 
     // ⭐ The agent's handle on the canvas (`agent/CanvasHost.kt`) — thin, so the rules stay here.
@@ -4816,10 +4815,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val outs = canvas.workflow.graph.nodes.filter { it.type == MediaOutputNode.name && r.outputs[it.id] != null }
         val first = outs.firstOrNull() ?: return
         when (mainView) {
-            MainView.NODES -> editCanvas { it.copy(editing = first.id) }
-            MainView.AGENT -> agent.showPictures(
-                outs.mapNotNull { n -> canvas.previews[n.id]?.first?.let { ops.images.get(it) } },
-            )
+            MainView.NEWUI -> editCanvas { it.copy(editing = first.id) }
             else -> Unit
         }
     }
@@ -9687,12 +9683,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // (the user's call, 2026-10-10). Elsewhere a sweep shows the canvas — [runCanvas]'s rule.
         // ⭐ …and a Default view run focuses its output page too, where the run's frame is drawn
         // (2026-10-10) — the other pages stay a swipe away.
-        val output = if (mainView == MainView.AGENT || mainView == MainView.NODES) {
+        val output = if (mainView == MainView.NEWUI) {
             canvas.workflow.graph.nodes.lastOrNull { it.type == MediaOutputNode.name }?.id
         } else null
         runStartsOn = output
         canvas = canvas.copy(editing = output, cropRequest = null)
-        if (output != null && mainView == MainView.AGENT) showView(MainView.NODES)
+        // ⭐ AGENT retired: no view switch after a run.
         val axes = BatchParams.axesOf(canvas.workflow.graph)
         if (axes.isEmpty()) { runCanvas(); return }
         runStartsOn = null

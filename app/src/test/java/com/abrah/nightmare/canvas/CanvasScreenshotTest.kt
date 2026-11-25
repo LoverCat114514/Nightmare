@@ -330,7 +330,7 @@ open class CanvasScreenshotTest {
             CanvasScreen(
                 version = GOLDEN_VERSION, state = opened(), types = NODE_TYPES, status = emptyMap(),
                 busy = false, image = null, onGesture = {}, onRun = {}, onBack = {},
-                mainView = com.abrah.nightmare.MainView.NODES,
+                mainView = com.abrah.nightmare.MainView.NEWUI,
             )
         }
     }
@@ -341,7 +341,7 @@ open class CanvasScreenshotTest {
             CanvasScreen(
                 version = GOLDEN_VERSION, state = opened(), types = NODE_TYPES, status = emptyMap(),
                 busy = false, image = null, onGesture = {}, onRun = {}, onBack = {},
-                mainView = com.abrah.nightmare.MainView.NODES, nodesVertical = true,
+                mainView = com.abrah.nightmare.MainView.NEWUI, nodesVertical = true,
             )
         }
     }

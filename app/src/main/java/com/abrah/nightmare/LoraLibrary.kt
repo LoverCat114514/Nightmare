@@ -208,4 +208,27 @@ object LoraLibrary {
             .filter { q.isEmpty() || q in it.name.lowercase() }
             .sortedWith(compareByDescending<Item> { it.name in favourites }.then(order))
     }
+
+    // ⭐⭐ **LoRA 配比/组合记忆** (the user, 2026-11-25): a named set of LoRAs with their strengths,
+    // saved so it can be recalled instead of re-picking and re-sliding every time.
+    private const val COMBO = "combo:"
+
+    /** ⭐ A saved LoRA combination: its name and the `loras` param string it holds. */
+    data class Combo(val name: String, val spec: String)
+
+    /** ⭐ Every saved combination, newest first. */
+    fun combos(context: Context): List<Combo> =
+        prefs(context).all.filterKeys { it.startsWith(COMBO) }
+            .mapNotNull { (k, v) -> (v as? String)?.let { s -> Combo(k.removePrefix(COMBO), s) } }
+            .sortedByDescending { it.name.lowercase() }
+
+    /** ⭐ Save [spec] under [name]; replaces any combo with that name. */
+    fun saveCombo(context: Context, name: String, spec: String) {
+        prefs(context).edit().putString(COMBO + name.trim(), spec).apply()
+    }
+
+    /** ⭐ Delete a combo; null or missing is a no-op. */
+    fun deleteCombo(context: Context, name: String) {
+        prefs(context).edit().remove(COMBO + name).apply()
+    }
 }

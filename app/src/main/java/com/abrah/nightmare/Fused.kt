@@ -1392,7 +1392,7 @@ class SdSampler(
         // layout DRAFT into the prompt box and this switch compiles it (abs/xyxy -> the
         // engine's centred yxyx) right before the render. MOSS only — the compiler speaks
         // the MOSS-Image prompt dialect; every other family ignores the switch entirely.
-        Widget(MOSS_LAYOUT, "bool", "false", hintRes = R.string.hint_moss_layout)
+        Widget(MOSS_LAYOUT, "bool", "false")
             .takeIf { family == Family.MOSS },
     ) + if (!offersDetail) emptyList() else listOf(
         Widget(com.abrah.nightmare.detail.Detailer.FIX_FACES, "bool", "false", hintRes = R.string.hint_fix_faces),

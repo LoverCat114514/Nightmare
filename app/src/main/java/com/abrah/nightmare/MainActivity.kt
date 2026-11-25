@@ -455,13 +455,8 @@ fun HarnessScreen(
             title = { Text(stringResource(R.string.view_ask_title)) },
             text = { Text(stringResource(R.string.view_ask_body)) },
             confirmButton = {
-                com.abrah.nightmare.ui.StudioButton(onClick = { vm.chooseDefaultView(MainView.NODES) }) {
-                    Text(stringResource(R.string.view_ask_nodes))
-                }
-            },
-            dismissButton = {
-                com.abrah.nightmare.ui.StudioOutlinedButton(onClick = { vm.chooseDefaultView(MainView.GRAPH) }) {
-                    Text(stringResource(R.string.view_ask_graph))
+                com.abrah.nightmare.ui.StudioButton(onClick = { vm.chooseDefaultView(MainView.NEWUI) }) {
+                    Text(stringResource(R.string.view_ask_newui))
                 }
             },
         )
@@ -756,34 +751,7 @@ fun HarnessScreen(
             },
             // [LOCAL-NEWUI 2026-11-05, ninth round] the workbench's flows entry.
             onFlows = { vm.showView(com.abrah.nightmare.MainView.FLOWS) },
-            // ⭐⭐ The Agent view — a full page below the top bar (the user's call, 2026-10-08: the
-            // panel fought the keyboard and covered Run).
-            agentContent = { m ->
-                val a = vm.agent
-                // ⭐ On its own card, like the Default view's pages (`PanelCard`, the user's containers).
-                com.abrah.nightmare.ui.PanelCard(m.padding(horizontal = com.abrah.nightmare.ui.SCREEN_GUTTER).padding(top = 8.dp)) {
-                    com.abrah.nightmare.ui.AgentScreen(
-                        com.abrah.nightmare.ui.AgentUi(
-                            items = a.items, busy = a.busy, config = a.config, mode = a.mode,
-                            models = a.models, modelsLoading = a.modelsLoading, modelsError = a.modelsError,
-                            runLog = vm.runLog, profiles = a.profiles, attached = a.attached,
-                            // ⚠ Only while the agent is working: a download from the browser is not the chat's.
-                            download = vm.loraDownload.takeIf { a.busy },
-                            runAspect = com.abrah.nightmare.canvas.runAspect(vm.canvas.workflow.graph, vm.nodeTypes),
-                        ),
-                        com.abrah.nightmare.ui.AgentActions(
-                            onSend = a::send, onStop = a::stop, onNewChat = a::newChat,
-                            onMode = { a.mode = it }, onAnswer = a::answer,
-                            onSaveConfig = a::saveConfig, onLoadModels = a::loadModels,
-                            onUseProfile = a::useProfile, onDeleteProfile = a::deleteProfile,
-                            onAttach = a::attach, onDetach = a::detach,
-                            onCancelDownload = vm::cancelModelInstall,
-                        ),
-                        // ⚠ No `imePadding` here: the page's own insets take the keyboard (`belowChrome`).
-                        Modifier.padding(com.abrah.nightmare.ui.PANEL_PAD),
-                    )
-                }
-            },
+            // ⭐⭐ AGENT view retired (the user, 2026-11-25): no agentContent.
             imageFor = vm::imageFor,
             // ⚠⚠ Not `onGesture` for these: a whole state captured at composition
             // time and written back late REVERTS the graph. See

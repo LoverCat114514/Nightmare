@@ -47,11 +47,6 @@ class MossCanvasActivity : ComponentActivity() {
         const val EXTRA_WIDTH = "sampler_width"
         const val EXTRA_HEIGHT = "sampler_height"
         const val EXTRA_DRAFT = "compiled_draft"
-
-        // ⭐ fix35x, demoted by fix35y: clear the OLD localStorage draft once per process, best-effort.
-        // The real fix is sessionStorage (see the class comment) — this only sweeps the legacy disk
-        // state versions before fix35y left behind, when the process actually is fresh.
-        private var draftClearedThisProcess = false
     }
 
     private lateinit var web: WebView
@@ -84,7 +79,6 @@ class MossCanvasActivity : ComponentActivity() {
                 return runCatching {
                     val html = assets.open("moss_canvas/index.html").use { it.readBytes() }
                         .toString(Charsets.UTF_8)
-                        .replace("localStorage.", "sessionStorage.")
                     android.webkit.WebResourceResponse(
                         "text/html", "utf-8", java.io.ByteArrayInputStream(html.toByteArray(Charsets.UTF_8))
                     )
@@ -102,12 +96,8 @@ class MossCanvasActivity : ComponentActivity() {
                 view.evaluateJavascript(js, null)
             }
         }
-        // ⭐ fix35x (kept by fix35y as legacy sweep): once per process, best-effort — the sessionStorage
-        // rewrite above is the real fix; this only clears the disk state old versions left behind.
-        if (!draftClearedThisProcess) {
-            draftClearedThisProcess = true
-            android.webkit.WebStorage.getInstance().deleteOrigin("file://")
-        }
+        // ⭐ [2026-11-25] moss_clear_on_restart removed entirely — the legacy disk sweep
+        // for old sessionStorage state is gone too; the canvas draft now always persists.
         web.loadUrl("file:///android_asset/moss_canvas/index.html")
     }
 

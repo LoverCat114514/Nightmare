@@ -5,9 +5,11 @@ import com.abrah.nightmare.ui.StudioOutlinedButton
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -218,9 +220,15 @@ internal fun kindLabel(k: ModelKind): String = stringResource(
 
 /** ⭐ A pill: filled violet when on, a quiet outline when off — the concept's chips. */
 @Composable
-internal fun Pill(label: String, selected: Boolean, onClick: () -> Unit) {
+@OptIn(ExperimentalFoundationApi::class)
+internal fun Pill(label: String, selected: Boolean, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
+    val clickableModifier = if (onLongClick != null) {
+        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+    } else {
+        Modifier.clickable(onClick = onClick)
+    }
     Surface(
-        onClick = onClick,
+        modifier = clickableModifier,
         shape = RoundedCornerShape(50),
         color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
         contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,

@@ -133,6 +133,13 @@ internal fun NewUiLoraPicker(
     var deleting by remember { mutableStateOf<String?>(null) }
     var typing by remember { mutableStateOf<String?>(null) }
     var showHint by remember { mutableStateOf(false) }
+    // ⭐⭐ LoRA 配比/组合记忆 (the user, 2026-11-25): save the current chosen set as a
+    // named combination, load or delete saved ones. Same storage as the legacy picker.
+    // ⚠ The save/delete dialogs are rendered INSIDE the main Dialog below so they
+    // appear above the LoRA list (the user, 2026-11-25: "弹在列表后面").
+    var savedCombos by remember { mutableStateOf(com.abrah.nightmare.LoraLibrary.combos(ctx)) }
+    var savingCombo by remember { mutableStateOf(false) }
+    var deletingCombo by remember { mutableStateOf<String?>(null) }
 
     // Sub-dialogs (Weight, Note, Delete)
     typing?.let { name ->
@@ -464,6 +471,69 @@ internal fun NewUiLoraPicker(
                         }
                     }
 
+                    // ⭐⭐ LoRA 配比/组合记忆 (the user, 2026-11-25)
+                    // ⚠ [2026-11-25] White background matching the LoRA list cards (the user:
+                    // "为什么是紫色？不应该是白色吗？和lora列表中的配色相同"). Delete via long-press
+                    // on the combo Pill (the user: "直接改成长按需要删除的组合进行删除").
+                    if (chosen.isNotEmpty()) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (Nm.customBgActive) Color.White.copy(alpha = 0.7f) else Color.White)
+                                .border(1.dp, Nm.line, RoundedCornerShape(12.dp))
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                stringResource(R.string.lora_combo_save),
+                                style = TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Nm.ink),
+                            )
+                            com.abrah.nightmare.ui.StudioOutlinedButton(onClick = { savingCombo = true }) {
+                                Text(
+                                    stringResource(R.string.lora_combo_save),
+                                    style = TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Nm.ink),
+                                )
+                            }
+                        }
+                    }
+                    if (savedCombos.isNotEmpty()) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(top = 6.dp)
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                stringResource(R.string.lora_combo_save),
+                                style = TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Nm.sub),
+                            )
+                            for (c in savedCombos) {
+                                // ⚠ Long-press the Pill to delete (the user, 2026-11-25: the delete
+                                // button was transparent and invisible; long-press is the way).
+                                com.abrah.nightmare.ui.Pill(
+                                    c.name,
+                                    false,
+                                    onLongClick = { deletingCombo = c.name },
+                                    onClick = {
+                                        commit(com.abrah.nightmare.LoraSpec.parse(c.spec))
+                                        android.widget.Toast.makeText(ctx, ctx.getString(R.string.lora_combo_saved, c.name), android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                )
+                            }
+                        }
+                    } else if (chosen.isNotEmpty()) {
+                        Text(
+                            stringResource(R.string.lora_combo_empty),
+                            style = TextStyle(fontSize = 11.5.sp, color = Nm.sub),
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+
                     // ── Search & Filter Controls ────────────────────────────
                     Row(
                         Modifier
@@ -732,6 +802,31 @@ internal fun NewUiLoraPicker(
                         }
                     }
                 }
+            }
+            // ⭐⭐ Combo save/delete dialogs — rendered INSIDE the main Dialog so they
+            // appear above the LoRA list (the user, 2026-11-25: "弹在列表后面").
+            if (savingCombo) {
+                com.abrah.nightmare.canvas.LoraComboNameDialog(
+                    onDismiss = { savingCombo = false },
+                    onSave = { name ->
+                        com.abrah.nightmare.LoraLibrary.saveCombo(ctx, name, com.abrah.nightmare.LoraSpec.format(chosen))
+                        savedCombos = com.abrah.nightmare.LoraLibrary.combos(ctx)
+                        savingCombo = false
+                        android.widget.Toast.makeText(ctx, ctx.getString(R.string.lora_combo_saved, name), android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                )
+            }
+            deletingCombo?.let { name ->
+                com.abrah.nightmare.ui.ConfirmDelete(
+                    title = ctx.getString(R.string.lora_combo_delete, name),
+                    body = "",
+                    onConfirm = {
+                        com.abrah.nightmare.LoraLibrary.deleteCombo(ctx, name)
+                        savedCombos = com.abrah.nightmare.LoraLibrary.combos(ctx)
+                        deletingCombo = null
+                    },
+                    onDismiss = { deletingCombo = null },
+                )
             }
         }
     }

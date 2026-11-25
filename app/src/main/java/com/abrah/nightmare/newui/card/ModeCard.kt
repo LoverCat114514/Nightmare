@@ -256,33 +256,17 @@ fun ModeCard(
                         stringResource(R.string.newui_moss_layout),
                         style = MaterialTheme.typography.titleSmall,
                     )
-                    Text(
-                        stringResource(R.string.hint_moss_layout),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Nm.sub,
-                    )
                 }
                 Switch(checked = s.mossOn, onCheckedChange = { s.mossOn = it })
             }
 
             AnimatedVisibility(
                 visible = s.mossOn,
-                enter = expandVertically(
-                    animationSpec = tween(
-                        durationMillis = 280,
-                        easing = CubicBezierEasing(0.2f, 0f, 0f, 1f),
-                    ),
-                ) + fadeIn(
-                    animationSpec = tween(durationMillis = 220),
-                ),
-                exit = shrinkVertically(
-                    animationSpec = tween(
-                        durationMillis = 200,
-                        easing = CubicBezierEasing(0.2f, 0f, 0f, 1f),
-                    ),
-                ) + fadeOut(
-                    animationSpec = tween(durationMillis = 150),
-                ),
+                // ⚠ [2026-11-25] The shrink/expand IS the animation the user asked for — keep it.
+                // The jank was from the default spring spec re-measuring every frame; a tween spec
+                // with a short duration keeps the shrink feel smooth without per-frame layout thrash.
+                enter = expandVertically(animationSpec = tween(durationMillis = 220)) + fadeIn(animationSpec = tween(durationMillis = 220)),
+                exit = shrinkVertically(animationSpec = tween(durationMillis = 160)) + fadeOut(animationSpec = tween(durationMillis = 160)),
             ) {
                 val ctx = LocalContext.current
                 val launcher = rememberLauncherForActivityResult(

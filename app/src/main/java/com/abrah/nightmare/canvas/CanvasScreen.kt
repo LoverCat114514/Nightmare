@@ -194,14 +194,12 @@ fun CanvasScreen(
     onResults: () -> Unit = {},
     onWorkflows: () -> Unit = {},
     /** ⭐⭐ Which of the three views shows (`com.abrah.nightmare.MainView`) and how to switch. */
-    mainView: com.abrah.nightmare.MainView = com.abrah.nightmare.MainView.GRAPH,
+    mainView: com.abrah.nightmare.MainView = com.abrah.nightmare.MainView.NEWUI,
     onView: (com.abrah.nightmare.MainView) -> Unit = {},
     /** ⭐ The Nodes view top to bottom (Settings). */
     nodesVertical: Boolean = false,
-    /** ⭐ Settings' "Hide chat view": the view button offers Default and Advanced only. */
+    /** ⭐ Settings' "Hide chat view" — retired with the AGENT view (the user, 2026-11-25). */
     hideChat: Boolean = false,
-    /** ⭐ The Agent view's body, below the top bar (`ui/AgentScreen.kt`). */
-    agentContent: @Composable (Modifier) -> Unit = {},
     // [LOCAL-NEWUI 2026-11-05] The web workbench's body — a fullscreen slot with no insets
     // padding of ours: the page owns the whole screen under the top bar.
     newUiContent: @Composable () -> Unit = {},
@@ -481,63 +479,7 @@ fun CanvasScreen(
         // what lies between them.
         // M-bM-^ZM-  Since 2026-11-04 BOTH bars are at the TOP (Run moved up for the bottom bar), so
         // the visible area runs from the Run bar's bottom edge down to the floating pill bar.
-        val graphShown = mainView == com.abrah.nightmare.MainView.GRAPH
-        LaunchedEffect(graphShown, state.framePending, canvasSize, topBarPx, runBarPx) {
-            if (graphShown && state.framePending && canvasSize.width > 0 && topBarPx > 0 && runBarPx > 0) {
-                onEdit { s ->
-                    s.framedIn(
-                        types, canvasSize.width.toFloat(), canvasSize.height.toFloat(), chrome.density,
-                        // ⭐ (2026-11-04) top chrome is the top bar alone; the bottom reserve is the
-                        // pill bar PLUS the graph's own floating Run bar sitting on top of it.
-                        topPx = topBarPx.toFloat(),
-                        bottomPx = com.abrah.nightmare.ui.BOTTOM_BAR_RESERVE.value * chrome.density + runBarPx.toFloat(),
-                    )
-                }
-            }
-        }
-
-        if (mainView == com.abrah.nightmare.MainView.GRAPH) GraphCanvas(
-            workflow = state.workflow,
-            types = types,
-            viewport = state.viewport,
-            selected = state.selection,
-            wire = state.wire,
-            wireConfirming = state.wireConfirming,
-            status = status,
-            pending = state.pending,
-            previews = state.previews,
-            beforePreviews = state.beforePreviews,
-            controlHints = state.controlHints,
-            imageFor = imageFor,
-            clipFrameFor = clipFrameFor,
-            // ⚠ Reads `clipTick` inside, like [clipFrameFor], so the loop animates.
-            controlClipFor = { id -> DrivingLoops.frames[id]?.let { f -> f[(clipTick / 2) % f.size] } },
-            modifier = Modifier
-                .fillMaxSize()
-                .canvasGestures(
-                    // ⚠⚠ Read through `rememberUpdatedState`, NOT `{ state }`.
-                    //
-                    // `state` is a function parameter, so `{ state }` captures
-                    // its VALUE at the composition that created the lambda —
-                    // and `pointerInput(Unit)` keeps the block it was first
-                    // given. The gesture loop therefore read the canvas as it
-                    // was when the screen opened, forever: press/drag/release
-                    // all computed against a stale Idle state, so nothing moved,
-                    // nothing zoomed and a tap opened nothing.
-                    //
-                    // ⚠ It looked correct — the old comment here even argued for
-                    // lambdas — and it survived a touch test, because that test
-                    // passed a delegated local `var` whose closure reads the
-                    // MutableState live. Only `CanvasTouchTest` driving THIS
-                    // composable catches it. Measured on device 2026-09-08: a
-                    // pan swipe moved the canvas by exactly zero pixels.
-                    state = { liveState.value },
-                    types = { liveTypes.value },
-                    density = density,
-                    onGesture = { liveOnState.value(it) },
-                ),
-        )
-
+        // ⭐ GraphCanvas/framedIn retired with the GRAPH view (the user, 2026-11-25).
         // ⚠ The old floating corner preview is GONE. A picture in the corner
         // belongs to no node, so with more than one image node on a canvas it
         // could not say which had produced it -- and it covered whatever was
@@ -562,104 +504,8 @@ fun CanvasScreen(
                 .background(MaterialTheme.colorScheme.background).statusBarsPadding(),
         )
 
-        // ⭐⭐ (2026-11-04, second round) GRAPH-ONLY: on Default the floating bar drew UNDER the
-        // step cards (an earlier sibling in the same Box — the user's "运行键丢失"), and Run
-        // lives in the top bar now anyway. The graph keeps its own bar (Add / locks / log) floating
-        // OVER the canvas — it is a later sibling than GraphCanvas, so nothing occludes it there.
-        if (mainView == com.abrah.nightmare.MainView.GRAPH) RunBar(
-            graphControls = mainView == com.abrah.nightmare.MainView.GRAPH,
-            folded = runBarFolded,
-            onToggleFold = { runBarFolded = !runBarFolded },
-            ram = ram,
-            plannedLoads = plannedLoads,
-            onResults = onResults,
-            state = state,
-            busy = busy,
-            onRun = onRun,
-            onCancelRun = onCancelRun,
-            onBatch = onBatch,
-            batchProgress = batchProgress,
-            onCancelBatch = onCancelBatch,
-            armedSweeps = armedSweeps,
-            onReleaseSweep = onReleaseSweep,
-            onAdd = { onEdit { s -> s.openPalette() } },
-            onBack = onBack,
-            onToggleZoomLock = { onEdit { s -> s.toggleZoomLock() } },
-            onTogglePanLock = { onEdit { s -> s.togglePanLock() } },
-            onSelectAll = { onEdit { s -> s.selectAll() } },
-            onDeleteSelected = { confirmingDelete = true },
-            // ⚠ No confirm: a clone is undone by deleting it, which is the
-            // control right beside it. `ConfirmDelete` is for what cannot be
-            // taken back (`docs/UI.md` §8.2).
-            onCloneSelected = { onEdit { s -> s.cloneSelected() } },
-            onClearSelection = { onEdit { s -> s.clearSelection() } },
-            runError = runError.takeIf { mainView != com.abrah.nightmare.MainView.AGENT },
-            onDismissRunError = onDismissRunError,
-            onDismissMessage = { onEdit { s -> s.copy(message = null) } },
-            runLog = if (mainView == com.abrah.nightmare.MainView.AGENT) RunLogState() else runLog,
-            // ⭐ The frame carries the lines while it runs ([RunFrame]); the panel shows them after.
-            logInFrame = mainView == com.abrah.nightmare.MainView.NODES,
-            onCloseRunLog = onCloseRunLog,
-            // ⚠⚠ ANY sampler ([com.abrah.nightmare.SAMPLER_TYPES]), not just
-            // `sd.sample`: the text-to-video recipe rolls a seed like every
-            // other recipe and had no lock at all, so a clip worth keeping
-            // could not be asked for again. Reported from the phone, 2026-09-12.
-            // ⭐⭐ EVERY sampler, in graph order — one lock each (2026-09-17). The
-            // label only appears when there is more than one to tell apart.
-            // ⚠ No seed row in the Agent view — the chat is the space there (the user, 2026-10-09).
-            seeds = if (mainView == com.abrah.nightmare.MainView.AGENT) emptyList() else state.workflow.graph.nodes.filter {
-                com.abrah.nightmare.isSampler(it.type)
-            }.let { samplers ->
-                samplers.flatMap { n ->
-                    val picture = SeedState(
-                        value = n.params["seed"]?.trim()?.takeIf { it.isNotEmpty() && it != "0" },
-                        lastRolled = seedFor(state.workflow.graph, n.id) { status[it]?.detail },
-                        nodeId = n.id,
-                        label = n.id.takeIf { samplers.size > 1 },
-                    )
-                    // ⭐ A second lock while Fix faces or Fix hands is on (com.abrah.nightmare.detail.Detailer.FIX_SEED, the user's call
-                    // 2026-10-23): the picture's seed locked and this one free, each Run keeps the picture and tries
-                    // another face.
-                    val fixOn = listOf(com.abrah.nightmare.detail.Detailer.FIX_FACES, com.abrah.nightmare.detail.Detailer.FIX_HANDS).any { n.params[it].equals("true", ignoreCase = true) }
-                    if (!fixOn) listOf(picture) else listOf(
-                        picture,
-                        SeedState(
-                            value = n.params[com.abrah.nightmare.detail.Detailer.FIX_SEED]?.trim()?.takeIf { it.isNotEmpty() && it != "0" },
-                            lastRolled = fixSeedFor(state.workflow.graph, n.id) { status[it]?.detail },
-                            nodeId = n.id,
-                            label = n.id.takeIf { samplers.size > 1 },
-                            param = com.abrah.nightmare.detail.Detailer.FIX_SEED,
-                        ),
-                    )
-                }
-            },
-            onToggleSeed = { chip ->
-                state.workflow.graph.byId[chip.nodeId]?.let { n ->
-                    val pinned = n.params[chip.param]?.trim()?.takeIf { it.isNotEmpty() && it != "0" }
-                    if (pinned != null) {
-                        onEdit { st -> st.setParam(n.id, chip.param, "0") }
-                    } else {
-                        // ⚠ Only when there IS a rolled seed to pin. Locking
-                        // before anything has run would pin nothing.
-                        (if (chip.isFix) fixSeedFor(state.workflow.graph, n.id) { status[it]?.detail }
-                        else seedFor(state.workflow.graph, n.id) { status[it]?.detail })
-                            ?.let { rolled -> onEdit { st -> st.setParam(n.id, chip.param, rolled) } }
-                    }
-                }
-            },
-            modifier = Modifier
-                // ⭐⭐⭐ BOTTOM again (2026-11-04, second round — the user marked the empty
-                // band under the slimmed card: "运行键缩小放到标记的位置"): the
-                // one-button bar floats just ABOVE the nav pill, where the thumb already is.
-                .align(Alignment.BottomCenter)
-                .onSizeChanged { runBarPx = it.height }
-                .padding(bottom = com.abrah.nightmare.ui.BOTTOM_BAR_RESERVE),
-        )
     }
 
-    if (mainView == com.abrah.nightmare.MainView.AGENT) {
-        agentContent(Modifier.fillMaxSize().padding(top = topPad).windowInsetsPadding(belowChrome(bottomPad)))
-    }
     // [LOCAL-NEWUI 2026-11-05] The web workbench fills the slot below the top bar.
     // ⭐⭐ (2026-11-05, second round) OPAQUE: the workbench draws no background of its
     // own, so the Default view behind it peeked out at the edges (the user: "newui和
@@ -707,117 +553,6 @@ fun CanvasScreen(
         onEdit { s -> s.consumePickRequest() }
         launchImagePick()
     }
-    // ⚠ Only where a node page belongs: the Nodes view draws it inline, Graph as a sheet.
-    if (mainView == com.abrah.nightmare.MainView.GRAPH || mainView == com.abrah.nightmare.MainView.NODES) NodeInspector(
-        // ⭐⭐ A Default view run: the output page shows the run's FRAME, log inside ([RunFrame]).
-        // The pages stay — the run opens on the output, and a swipe still leaves it (2026-10-10).
-        runFrame = runLog.takeIf { mainView == com.abrah.nightmare.MainView.NODES && it.running },
-        runFrameAspect = runAspect(state.workflow.graph, types),
-        state = state,
-        types = types,
-        onUpscale = onUpscaleNode,
-        onApplyPostNow = onApplyPostNow,
-        detailsOf = detailsOfNode,
-        onDropEnlargement = onDropEnlargement,
-        onDropReceived = onDropReceived,
-        onReset = { id -> onEdit { st -> st.resetNodeForItsModel(id, types) } },
-        onResetDefaults = { id -> onEdit { st -> st.resetSamplerDefaults(id, types) } },
-        onAddReference = { id, uri -> onEdit { st -> st.addReference(id, uri, types) } },
-        onRemoveReference = { id, port -> onEdit { st -> st.removeReference(id, port, types) } },
-        onInstallSegmenter = onInstallSegmenter,
-        onDeleteSegmenter = onDeleteSegmenter,
-        segmenterInstalled = segmenterInstalled,
-        segmenterRow = segmenterRow,
-        onCancelSegmenter = onCancelSegmenter,
-        onPickMask = onPickMask,
-        onTranslate = onTranslate,
-        onDescribe = onDescribe,
-        onEnhance = onEnhance,
-        parserInstalled = parserInstalled,
-        parserRow = parserRow,
-        onInstallParser = onInstallParser,
-        onDeleteParser = onDeleteParser,
-        onCancelParser = onCancelParser,
-        poseRow = poseRow,
-        onInstallPose = onInstallPose,
-        onDeletePose = onDeletePose,
-        depthRow = depthRow,
-        onInstallDepth = onInstallDepth,
-        onDeleteDepth = onDeleteDepth,
-        cnRows = cnRows,
-        onInstallControlNet = onInstallControlNet,
-        onDeleteControlNet = onDeleteControlNet,
-        busy = busy,
-        // ⚠ Inline, the canvas's Run bar sits under the pages; a second Run would be one too many.
-        onRun = onRun.takeIf { mainView == com.abrah.nightmare.MainView.GRAPH },
-        onCancelRun = onCancelRun,
-        onInspectNode = onInspectNode,
-        inline = if (mainView == com.abrah.nightmare.MainView.NODES) {
-            Modifier.fillMaxSize().padding(top = topPad).windowInsetsPadding(belowChrome(bottomPad))
-        } else null,
-        // ⭐ The Default view's layout only; Advanced's inspector stays left-right cards (2026-10-10).
-        vertical = nodesVertical && mainView == com.abrah.nightmare.MainView.NODES,
-        onImportLora = onImportLora,
-        onBrowseLoras = onBrowseLoras,
-        onDeleteLora = onDeleteLora,
-        loraEpoch = loraEpoch,
-        status = status,
-        onClearImage = onClearImage,
-        onSaveDrawing = onSaveDrawing,
-        onBlankPicture = onBlankPicture,
-        onSetVideoModel = onSetVideoModel,
-        swapFlows = swapFlows,
-        onSwapFlow = onSwapFlow,
-        onSaveImage = onSaveImage,
-        onShareImage = onShareImage,
-        onSendImage = onSendImage,
-        onKeepImage = onKeepImage,
-        isKept = isKept,
-        installedModels = installedModels,
-        onSetModel = onSetModel,
-        // ⚠⚠⚠ **All four, or the two surfaces disagree.** The inspector and the
-        // fullscreen viewer draw the SAME [PictureActions]; these were wired
-        // into the viewer and not here, so in the node view the star did nothing
-        // and the save tick stayed live while autosave dimmed it one tap away.
-        // Reported 2026-09-15 — *"the ticks in fullscreen view and node view
-        // aren't same behavior"*. ⚠ The rule this broke is the oldest one in
-        // `docs/ARCHITECTURE.md` §5.6: a rule honoured in N−1 of N places is a
-        // bug, and the missed place is the one the user opens first.
-        onStarImage = onStarImage,
-        isFavourite = isFavourite,
-        keepDisabledReason = keepDisabledReason,
-        onDisabledAction = onDisabledAction,
-        onClearOutput = onClearOutput,
-        imageFor = imageFor,
-        // ⚠ `s.editing` IS the node whose inspector is open, so the viewer
-        // opened from it knows its node too — same reason the canvas tap does.
-        // ⚠⚠ The Default view keeps its page open UNDER the viewer (GitHub #66): `editing = null` there made the
-        // pages fall back to the FIRST node, so closing the viewer landed on the prompt, and the `focusField` a
-        // prompt tap had left behind brought the keyboard up on it. The canvas still closes its sheet.
-        onViewFullscreen = { id ->
-            onEdit { s ->
-                s.copy(
-                    editing = s.editing.takeIf { mainView == com.abrah.nightmare.MainView.NODES },
-                    focusField = null,
-                    viewing = id,
-                    viewingNode = s.editing,
-                )
-            }
-        },
-        // ⭐ Through [swapWired]: a Swap node's ControlNet / IP-Adapter pictures
-        // are wired image nodes, kept in step with the tiles (`SwapWiring.kt`).
-        onSetParam = { node, name, value -> onEdit { s -> s.setParam(node, name, value).swapWired(node, name, value, s) } },
-        onSetParams = { node, values -> onEdit { s -> s.setParams(node, values) } },
-        onEditMask = onEditMask,
-        onTapMask = onTapMask,
-        onSetResolution = onSetResolution,
-        onSetAspect = onSetAspect,
-        // ⚠ A pure state edit, like every other canvas change: renameNode
-        // rewires the graph and moves every id-keyed map with it.
-        onRename = { from, to -> onEdit { s -> s.renameNode(from, to) } },
-        onDelete = { id -> onEdit { s -> s.removeNode(id) } },
-        onDismiss = { onEdit { s -> s.closeInspector() } },
-    )
 
     // ⭐⭐⭐ **The checkpoint swap's question**, over the inspector it came from.
     //
@@ -1219,7 +954,7 @@ private fun TopBar(
     if (explaining) ViewsInfoDialog { explaining = false }
 }
 
-/** ⭐ The ⓘ beside the views: what Chat, Default and Advanced each are. */
+/** ⭐ The ⓘ beside the views: what NEWUI is (2026-11-25: AGENT/NODES/GRAPH retired). */
 @Composable
 private fun ViewsInfoDialog(onDismiss: () -> Unit) {
     androidx.compose.material3.AlertDialog(
@@ -1228,14 +963,8 @@ private fun ViewsInfoDialog(onDismiss: () -> Unit) {
         title = { Text(stringResource(R.string.views_info_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                for ((icon, name, body) in listOf(
-                    Triple(com.abrah.nightmare.ui.NodesIcon, R.string.view_nodes, R.string.views_info_default),
-                    Triple(com.abrah.nightmare.ui.GraphIcon, R.string.view_graph, R.string.views_info_advanced),
-                    // ⚠ Chat last: it is optional (Settings), the other two are the app (the user's call, 2026-10-16).
-                    Triple(com.abrah.nightmare.ui.AgentIcon, R.string.agent_title, R.string.views_info_chat),
-                    // [LOCAL-NEWUI 2026-11-05] the fourth view's line.
-                    Triple(com.abrah.nightmare.ui.SparkleIcon, R.string.view_newui, R.string.views_info_newui),
-                )) {
+                val entry = Triple(com.abrah.nightmare.ui.SparkleIcon, R.string.view_newui, R.string.views_info_newui)
+                for ((icon, name, body) in listOf(entry)) {
                     Row(verticalAlignment = Alignment.Top) {
                         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 2.dp).size(20.dp))
                         Spacer(Modifier.width(12.dp))
@@ -1280,14 +1009,11 @@ private fun ViewSwitch(
     onInfo: () -> Unit = {},
 ) {
     val views = com.abrah.nightmare.MainView.entries.filter {
-        it.isCanvas && !(hideChat && it == com.abrah.nightmare.MainView.AGENT)
+        it.isCanvas
     }
     fun glyph(v: com.abrah.nightmare.MainView) = when (v) {
-        com.abrah.nightmare.MainView.AGENT -> com.abrah.nightmare.ui.AgentIcon to R.string.agent_title
-        com.abrah.nightmare.MainView.NODES -> com.abrah.nightmare.ui.NodesIcon to R.string.view_nodes
-        // [LOCAL-NEWUI 2026-11-05] the fourth view: the web workbench.
         com.abrah.nightmare.MainView.NEWUI -> com.abrah.nightmare.ui.SparkleIcon to R.string.view_newui
-        else -> com.abrah.nightmare.ui.GraphIcon to R.string.view_graph
+        else -> com.abrah.nightmare.ui.SparkleIcon to R.string.view_newui
     }
     var menu by remember { mutableStateOf(false) }
     val outer = RoundedCornerShape(12.dp)

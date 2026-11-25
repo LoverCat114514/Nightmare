@@ -812,7 +812,6 @@
     <string name="knob_saturation">饱和度</string>
     <string name="knob_warmth">色温</string>
     <string name="hint_match_colours">保持输入图片的颜色：图生图、局部重绘以及修复面部或手部的结果都沿用它的颜色，不留色差接缝。没有输入图片且不修复时不起作用。</string>
-    <string name="hint_moss_layout">Moss LayOut：开启后，贴在提示词里的布局草稿（画框＋描述的 JSON）会在生成前编译成引擎格式。普通文字提示词不受影响；草稿自带尺寸时以草稿为准，否则以本节点的宽高为画布。</string>
     <string name="moss_open_canvas">打开画布</string>
     <string name="moss_no_prompt_wire">请先连线提示词节点</string>
     <string name="run_moss_layout_compiled">已为本次生成编译 MOSS 布局草稿</string>
@@ -1062,6 +1061,7 @@
     <string name="newui_pick_unavailable">图片选择器尚未就绪。</string>
     <string name="view_ask_title">你想怎样使用？</string>
     <string name="view_ask_body">默认视图一次显示一步，提示词、图片设置、结果，是最简单的入门方式。高级视图以连接的方框显示整个工作流，适合自己搭建。随时可在顶部切换，也可在设置中更改。</string>
+    <string name="view_ask_newui">NEW UI（工作台）</string>
     <string name="view_ask_nodes">默认（简单）</string>
     <string name="view_ask_graph">高级（整个工作流）</string>
     <string name="views_title">视图</string>
@@ -1268,6 +1268,14 @@
     <string name="lora_folder_name_hint">文件夹名称</string>
     <string name="lora_folder_add">添加</string>
     <string name="lora_weight_title">LoRA 权重</string>
+    <string name="lora_combo_cd_load">加载组合 {0}</string>
+    <string name="lora_combo_empty">没有已保存的组合</string>
+    <string name="lora_combo_name_hint">给这个组合命名</string>
+    <string name="lora_combo_name_title">组合名称</string>
+    <string name="lora_combo_delete">删除</string>
+    <string name="lora_combo_load">加载</string>
+    <string name="lora_combo_saved">组合「%1$s」已保存</string>
+    <string name="lora_combo_save">保存组合</string>
     <string name="lora_weight_set">设置</string>
     <string name="lora_weight_range">从 %1$s 到 %2$s。负权重仅适用于 DiT 模型。</string>
     <string name="lora_weight_range_negative">从 %1$s 到 %2$s。低于 0 会远离 LoRA 学到的效果。</string>

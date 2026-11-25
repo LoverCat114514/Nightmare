@@ -13,7 +13,6 @@
     -->
 <string name="nav_canvas">キャンバス</string>
 <string name="nav_settings">設定</string>
-<string name="hint_moss_layout">Moss LayOut: オンにすると、レイアウト案（絵の中の何がどこにあるかを書いたボックスの JSON）がこのレンダリングに使われます。プロンプトのボックスを描いて書き込むか、画像からレイアウトを読み込んでください</string>
 <string name="moss_open_canvas">キャンバスを開く</string>
 <string name="moss_no_prompt_wire">先にプロンプトノードをつないでください</string>
 <string name="run_moss_layout_compiled">このレンダリング用に MOSS レイアウト案をコンパイルしました</string>
@@ -1312,6 +1311,14 @@
 <string name="lora_folder_name_hint">フォルダ名</string>
 <string name="lora_folder_add">追加</string>
 <string name="lora_weight_title">LoRA の重み</string>
+    <string name="lora_combo_cd_load">コンビネーション {0} を読み込む</string>
+    <string name="lora_combo_empty">保存されたコンビネーションはありません</string>
+    <string name="lora_combo_name_hint">このコンビネーションに名前を付けてください</string>
+    <string name="lora_combo_name_title">コンビネーション名</string>
+    <string name="lora_combo_delete">削除</string>
+    <string name="lora_combo_load">読み込む</string>
+    <string name="lora_combo_saved">コンビネーション「%1$s」を保存しました</string>
+    <string name="lora_combo_save">コンビネーションを保存</string>
 <string name="lora_weight_set">設定</string>
 <string name="lora_weight_range">%1$s から %2$s まで。負の重みは DiT モデルでのみ機能します。</string>
 <string name="lora_weight_range_negative">%1$s から %2$s まで。0 未満では、LoRA が学習した内容から遠ざける方向に作用します。</string>

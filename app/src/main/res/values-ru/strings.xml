@@ -827,7 +827,6 @@
     <string name="knob_saturation">Насыщенность</string>
     <string name="knob_warmth">Теплота</string>
     <string name="hint_match_colours">Сохраняет цвета входной картинки: изображение в изображение, инпейнт и исправление лиц или рук возвращаются в её цветах, без цветного шва. Ничего не делает, если картинки на входе нет и ничего не исправляется.</string>
-    <string name="hint_moss_layout">Черновик раскладки MOSS: при включении черновик раскладки (JSON с рамками и подписями), вставленный в промпт, компилируется для движка прямо перед генерацией. Обычный текстовый промпт не меняется; если у черновика нет своего размера, холст берётся из ширины и высоты этого узла.</string>
     <string name="moss_open_canvas">Открыть холст</string>
     <string name="moss_no_prompt_wire">Сначала подключите узел промпта</string>
     <string name="run_moss_layout_compiled">Черновик раскладки MOSS скомпилирован для этого запуска</string>
@@ -1083,6 +1082,7 @@
     <string name="newui_pick_unavailable">Выбор картинки пока недоступен.</string>
     <string name="view_ask_title">Как вы хотите работать?</string>
     <string name="view_ask_body">«Обычный» показывает по одному шагу: описание, настройки картинки, результат. Это самый простой путь. «Расширенный» показывает всю схему соединёнными блоками, чтобы собирать свои. Переключаться можно вверху в любой момент; это меняется и в Настройках.</string>
+    <string name="view_ask_newui">New UI (рабочая область)</string>
     <string name="view_ask_nodes">Обычный (просто)</string>
     <string name="view_ask_graph">Расширенный (вся схема)</string>
     <string name="views_title">Виды</string>
@@ -1295,6 +1295,14 @@
     <string name="lora_folder_name_hint">Название папки</string>
     <string name="lora_folder_add">Добавить</string>
     <string name="lora_weight_title">Вес LoRA</string>
+    <string name="lora_combo_cd_load">Загрузить комбинацию {0}</string>
+    <string name="lora_combo_empty">Нет сохранённых комбинаций</string>
+    <string name="lora_combo_name_hint">Назовите эту комбинацию</string>
+    <string name="lora_combo_name_title">Название комбинации</string>
+    <string name="lora_combo_delete">Удалить</string>
+    <string name="lora_combo_load">Загрузить</string>
+    <string name="lora_combo_saved">Комбинация «%1$s» сохранена</string>
+    <string name="lora_combo_save">Сохранить комбинацию</string>
     <string name="lora_weight_set">Задать</string>
     <string name="lora_weight_range">От %1$s до %2$s. Отрицательный вес работает только на моделях DiT.</string>
     <string name="lora_weight_range_negative">От %1$s до %2$s. Ниже 0 уводит от того, чему научилась LoRA.</string>

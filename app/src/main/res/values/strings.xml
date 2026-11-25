@@ -840,7 +840,6 @@
     <string name="knob_saturation">Saturation</string>
     <string name="knob_warmth">Warmth</string>
     <string name="hint_match_colours">Keeps the colours of the picture going in: image to image, inpaint and Fix faces or hands come back in its colours, with no tinted seam. Does nothing when no picture goes in and nothing is fixed.</string>
-    <string name="hint_moss_layout">Moss LayOut: with this on, a layout draft (a JSON of boxes and captions) pasted into the prompt is compiled for the engine right before the render. Plain prose prompts are untouched, and a draft without its own size is centred on this node\'s width and height.</string>
     <string name="moss_open_canvas">Open canvas</string>
     <string name="moss_no_prompt_wire">Wire a prompt node first</string>
     <string name="run_moss_layout_compiled">MOSS layout draft compiled for this render</string>
@@ -1092,6 +1091,7 @@
     <string name="newui_pick_unavailable">The picture picker is not ready yet.</string>
     <string name="view_ask_title">How do you want to work?</string>
     <string name="view_ask_body">Default shows one step at a time: prompt, then the picture settings, then the result. It is the easy way in. Advanced shows the whole flow as connected boxes, for building your own. You can switch at the top at any time, and change this in Settings.</string>
+    <string name="view_ask_newui">New UI (workbench)</string>
     <string name="view_ask_nodes">Default (simple)</string>
     <string name="view_ask_graph">Advanced (the whole flow)</string>
     <string name="views_title">Views</string>
@@ -1300,6 +1300,14 @@
     <string name="lora_folder_name_hint">Folder name</string>
     <string name="lora_folder_add">Add</string>
     <string name="lora_weight_title">LoRA weight</string>
+    <string name="lora_combo_cd_load">Load combination {0}</string>
+    <string name="lora_combo_empty">No saved combinations</string>
+    <string name="lora_combo_name_hint">Name this combination</string>
+    <string name="lora_combo_name_title">Combination name</string>
+    <string name="lora_combo_delete">Delete</string>
+    <string name="lora_combo_load">Load</string>
+    <string name="lora_combo_saved">Combination "%1$s" saved</string>
+    <string name="lora_combo_save">Save combination</string>
     <string name="lora_weight_set">Set</string>
     <string name="lora_weight_range">From %1$s to %2$s. Negative weights work on DiT models only.</string>
     <string name="lora_weight_range_negative">From %1$s to %2$s. Below 0 it pushes away from what the LoRA learned.</string>

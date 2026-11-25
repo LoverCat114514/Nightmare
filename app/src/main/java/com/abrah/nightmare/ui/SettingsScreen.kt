@@ -169,7 +169,7 @@ fun SettingsScreen(
     onRegenerateApiToken: () -> Unit = {},
     onApiCors: (Boolean) -> Unit = {},
     /** ⭐ The view the app opens on, and the Nodes view's direction (the user's three views). */
-    defaultView: com.abrah.nightmare.MainView = com.abrah.nightmare.MainView.NODES,
+    defaultView: com.abrah.nightmare.MainView = com.abrah.nightmare.MainView.NEWUI,
     onDefaultView: (com.abrah.nightmare.MainView) -> Unit = {},
     nodesVertical: Boolean = false,
     onNodesVertical: (Boolean) -> Unit = {},
@@ -360,74 +360,30 @@ fun SettingsScreen(
                     onBackgroundDim = onBackgroundDim,
                     onCardOpacity = onCardOpacity,
                 )
-                // [LOCAL-NEWUI 2026-11-05] Interface mode: the SAME choice the top-left toggle makes
-                // (the flow views of MainView), now also in Settings — the three original views
-                // stay, the fourth (newui) is the web workbench. It writes through
-                // onDefaultView → chooseDefaultView (persists + applies at once), the same
-                // channel the pickers below use.
+                // [LOCAL-NEWUI 2026-11-05] Interface mode: NEWUI is the only canvas view
+                // (the user, 2026-11-25: AGENT/NODES/GRAPH retired). It writes through
+                // onDefaultView → chooseDefaultView (persists + applies at once).
                 StudioCard {
                     SectionHeading(stringResource(R.string.settings_ui_mode), stringResource(R.string.settings_ui_mode_note))
-                    for (v in listOf(
-                        com.abrah.nightmare.MainView.AGENT,
-                        com.abrah.nightmare.MainView.NODES,
-                        com.abrah.nightmare.MainView.GRAPH,
-                        com.abrah.nightmare.MainView.NEWUI,
-                    )) {
-                        Row(
-                            Modifier.fillMaxWidth().clickable { onDefaultView(v) },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(selected = defaultView == v, onClick = { onDefaultView(v) })
-                            Column {
-                                Text(
-                                    stringResource(
-                                        when (v) {
-                                            com.abrah.nightmare.MainView.AGENT -> R.string.agent_title
-                                            com.abrah.nightmare.MainView.NODES -> R.string.view_nodes
-                                            com.abrah.nightmare.MainView.GRAPH -> R.string.view_graph
-                                            else -> R.string.view_newui
-                                        },
-                                    ),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                                if (v == com.abrah.nightmare.MainView.AGENT) {
-                                    Text(stringResource(R.string.settings_ui_mode_agent_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onDefaultView(com.abrah.nightmare.MainView.NEWUI) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = defaultView == com.abrah.nightmare.MainView.NEWUI,
+                            onClick = { onDefaultView(com.abrah.nightmare.MainView.NEWUI) },
+                        )
+                        Text(
+                            stringResource(R.string.view_newui),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
                     }
                 }
-                // ⭐ The views (2026-10-08): which one opens, and Nodes side to side or top to bottom.
-                // ⚠ Agent is not offered as the default — it needs a key first.
+                // ⭐ [2026-11-25] The "Views" card (NODES/GRAPH picker + nodes_vertical/hide_chat)
+                // retired with those views. Only the per-model flow-draft toggle stays:
                 StudioCard {
-                    SectionHeading(stringResource(R.string.views_title), stringResource(R.string.views_note))
-                    Row(Modifier.fillMaxWidth()) {
-                        for (v in listOf(com.abrah.nightmare.MainView.NODES, com.abrah.nightmare.MainView.GRAPH)) {
-                            Row(
-                                Modifier.weight(1f).clickable { onDefaultView(v) },
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                RadioButton(selected = defaultView == v, onClick = { onDefaultView(v) })
-                                Text(
-                                    stringResource(if (v == com.abrah.nightmare.MainView.NODES) R.string.views_open_nodes else R.string.views_open_graph),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                            }
-                        }
-                    }
-                    androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                    com.abrah.nightmare.canvas.BoolKnobRow(
-                        stringResource(R.string.views_nodes_vertical), stringResource(R.string.views_nodes_vertical_hint),
-                        nodesVertical, onNodesVertical,
-                    )
-                    androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                    com.abrah.nightmare.canvas.BoolKnobRow(
-                        stringResource(R.string.views_hide_chat), stringResource(R.string.views_hide_chat_hint),
-                        hideChat, onHideChat,
-                    )
                     // ⭐ Saved #8050 (the user, 2026-11-14): the per-model flow drafts can be turned off ([Prefs.keepFlowEdits]). [1.6.297]
                     if (lowRam != null) {
-                        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outline)
                         com.abrah.nightmare.canvas.BoolKnobRow(
                             stringResource(R.string.views_keep_edits), stringResource(R.string.views_keep_edits_hint),
                             lowRam.keepFlowEdits, { onLowRam(Prefs.KEY_KEEP_FLOW_EDITS, it) },
@@ -844,6 +800,9 @@ fun SettingsScreen(
         }
         Page.ADVANCED -> Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (api != null) ApiSection(api, onApi, onRegenerateApiToken, onApiCors)
+            // ⭐ [2026-11-25] moss_clear_restart switch removed entirely (the user:
+            // "重启moss画布清空依旧不生效，直接删了这个功能吧"). The canvas draft now
+            // always persists in localStorage across restarts.
             // ⭐⭐ **Clean temp files** — ported from upstream at the user's ask,
             // 2026-09-20. ⚠⚠ It SCANS first and shows the total, because the
             // honest question is "delete 3.4 GB?" and not "delete some files?".
